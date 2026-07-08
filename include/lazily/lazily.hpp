@@ -2,12 +2,14 @@
 #define LAZILY_LAZILY_HPP
 
 #include <lazily/collections.hpp>
+#include <lazily/command.hpp>
 #include <lazily/context.hpp>
 #include <lazily/crdt.hpp>
 #include <lazily/ffi.hpp>
 #include <lazily/hlc.hpp>
 #include <lazily/ipc.hpp>
 #include <lazily/receipt.hpp>
+#include <lazily/sem_tree.hpp>
 #include <lazily/stable_id.hpp>
 #include <lazily/state_machine.hpp>
 #include <lazily/statechart.hpp>
