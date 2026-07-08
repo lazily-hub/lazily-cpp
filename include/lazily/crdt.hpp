@@ -32,6 +32,7 @@ struct OpId {
     return 0;
   }
   bool operator<(const OpId& o) const { return compare(o) < 0; }
+  bool operator>(const OpId& o) const { return compare(o) > 0; }
 };
 
 }  // namespace lazily
