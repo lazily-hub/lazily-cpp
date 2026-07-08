@@ -68,6 +68,24 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
 and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
 
+## Benchmark highlights
+
+Micro-benchmarks on `x86_64` with GCC 16, C++17. Full results in
+[BENCHMARKS.md](BENCHMARKS.md).
+
+| Benchmark | Context | ThreadSafeContext |
+|---|---:|---:|
+| cached read | 304 ns | 411 ns |
+| cold first get | 2.52 us | 2.79 us |
+| fan-out 256 | 88 us | 94 us |
+| set_cell high_fan_out 512 | 125 us | — |
+| memo equality suppression | 988 ns | 912 ns |
+| batch storms 64 | 63 us | 63 us |
+
+**Scale (1M cells, 2M nodes):** build ~1.28 s, cold recalc ~1.09 s, viewport
+recalc (edit 1, read 1k) **~439 us** — independent of sheet size thanks to the
+lazy pull-based model.
+
 ## Usage
 
 ```cpp
@@ -154,6 +172,17 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+### Benchmarks
+
+```bash
+cmake -S . -B build -DLAZILY_BUILD_BENCHMARKS=ON
+cmake --build build --target lazily_bench
+./build/benches/lazily_bench
+```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for full results, scale benchmarks (≥1M
+cells), and a cross-language comparison with lazily-rs.
 
 ### CMake integration
 
