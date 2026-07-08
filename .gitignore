@@ -1,0 +1,27 @@
+# C++ build artifacts
+/build/
+/out/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.gcno
+*.gcda
+/coverage.info
+/coverage-html/
+
+# IDE / editor
+.vscode/
+.idea/
+.cache/
+compile_commands.json
+*.swp
+.DS_Store
