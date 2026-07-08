@@ -28,7 +28,6 @@ if(LAZILY_BUILD_FFI)
   target_link_libraries(lazily_ffi PUBLIC lazily)
   set_target_properties(lazily_ffi PROPERTIES
     POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET hidden
   )
 endif()
 

@@ -4,6 +4,8 @@
 #include <lazily/types.hpp>
 
 #include <algorithm>
+#include <optional>
+#include <unordered_map>
 
 namespace lazily {
 
