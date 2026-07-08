@@ -13,3 +13,7 @@ add_test(NAME statechart COMMAND test_statechart)
 add_executable(test_collections test_collections.cpp)
 target_link_libraries(test_collections PRIVATE lazily)
 add_test(NAME collections COMMAND test_collections)
+
+add_executable(test_crdt test_crdt.cpp)
+target_link_libraries(test_crdt PRIVATE lazily)
+add_test(NAME crdt COMMAND test_crdt)
