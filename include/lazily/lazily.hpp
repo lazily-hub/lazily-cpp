@@ -10,6 +10,7 @@
 #include <lazily/hlc.hpp>
 #include <lazily/ipc.hpp>
 #include <lazily/lossless_tree_crdt.hpp>
+#include <lazily/queue.hpp>
 #include <lazily/receipt.hpp>
 #include <lazily/sem_tree.hpp>
 #include <lazily/signaling.hpp>

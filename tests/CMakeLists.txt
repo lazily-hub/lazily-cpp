@@ -21,3 +21,7 @@ add_test(NAME crdt COMMAND test_crdt)
 add_executable(test_ipc test_ipc.cpp)
 target_link_libraries(test_ipc PRIVATE lazily lazily_ffi)
 add_test(NAME ipc COMMAND test_ipc)
+
+add_executable(test_queue test_queue.cpp)
+target_link_libraries(test_queue PRIVATE lazily)
+add_test(NAME queue COMMAND test_queue)

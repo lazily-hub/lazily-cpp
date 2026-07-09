@@ -44,7 +44,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Keyed cell collections (`CellMap` / `CellTree`) + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | — | — | — | — | — | — | — | — |
+| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | — | — | ✅ | — | — | — | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -145,6 +145,29 @@ b.apply_delta(delta);
 assert(b.text() == "hello world");
 ```
 
+### Reactive queue
+
+```cpp
+lazily::Context ctx;
+auto q = lazily::QueueCell<std::string>::bounded(ctx, 2);
+
+q.push(ctx, "a");
+q.push(ctx, "b");
+assert(q.try_push(ctx, "c") == lazily::PushResult::Full);  // backpressure
+
+// A reactive reader observing the head — invalidated only when head changes.
+auto head = ctx.computed<std::optional<std::string>>([&](lazily::Context& c) {
+  return q.head(c);
+});
+assert(ctx.get(head).value() == "a");
+
+assert(q.pop(ctx).value() == "a");
+assert(ctx.get(head).value() == "b");  // head reader sees the new head
+
+q.close(ctx);
+assert(q.try_pop(ctx).is_closed());    // closed + empty → Closed (≠ Empty)
+```
+
 ## Architecture
 
 - **Context owns all nodes** in a `std::vector<std::optional<Node>>` indexed by
@@ -201,6 +224,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |
+| `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
 | `thread_safe.hpp` | ThreadSafeContext (recursive_mutex-wrapped Context) |
 | `async_context.hpp` | AsyncContext (Empty/Computing/Resolved/Error lifecycle) |
