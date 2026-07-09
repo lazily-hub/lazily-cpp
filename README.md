@@ -82,9 +82,10 @@ Micro-benchmarks on `x86_64` with GCC 16, C++17 (`-O3`). Full results in
 | memo equality suppression | 34 ns | 39 ns |
 | batch storms 64 | 4.45 us | 4.22 us |
 
-**Scale (1M cells, 2M nodes):** build ~169 ms, cold recalc ~94 ms, viewport
-recalc (edit 1, read 1k) **~39 us** — independent of sheet size thanks to the
-lazy pull-based model.
+**Scale (up to 10M cells — Google Sheets capacity, 20M nodes):** build ~1.3 s,
+cold recalc ~1.1 s, viewport recalc (edit 1, read 1k) **~72 us** — independent
+of sheet size thanks to the lazy pull-based model. Full table in
+[BENCHMARKS.md](BENCHMARKS.md#scale-up-to-10m-cells--google-sheets-capacity--lzscalebench).
 
 ## Usage
 

@@ -336,7 +336,7 @@ void bench_ts_contention() {
 
 // -- Scale benchmark --
 void bench_scale() {
-  for (int n : {100000, 1000000}) {
+  for (long long n : {100000, 1000000, 2000000, 10000000}) {
     // Build
     double build_ns;
     {
@@ -347,8 +347,8 @@ void bench_scale() {
       std::vector<SlotHandle<int>> formulas;
       inputs.reserve(n);
       formulas.reserve(n);
-      for (int i = 0; i < n; ++i) inputs.push_back(ctx.cell(i));
-      for (int i = 0; i < n; ++i) {
+      for (long long i = 0; i < n; ++i) inputs.push_back(ctx.cell(static_cast<int>(i)));
+      for (long long i = 0; i < n; ++i) {
         if (i == 0) {
           formulas.push_back(ctx.computed<int>([&](Context& c) {
             return c.get_cell(inputs[0]);
@@ -377,7 +377,7 @@ void bench_scale() {
 
       // Full recalc invalidate all
       start = clk::now();
-      for (int i = 0; i < n; ++i) ctx.set_cell(inputs[i], i + 1);
+      for (long long i = 0; i < n; ++i) ctx.set_cell(inputs[i], static_cast<int>(i + 1));
       for (auto& f : formulas) (void)ctx.get(f);
       end = clk::now();
       label = "full_recalc_invalidate_all / " + std::to_string(n);
@@ -387,7 +387,7 @@ void bench_scale() {
       // Viewport recalc (edit 1, read 1000)
       start = clk::now();
       ctx.set_cell(inputs[0], 999);
-      for (int i = 0; i < std::min(1000, n); ++i) (void)ctx.get(formulas[i]);
+      for (int i = 0; i < std::min(1000LL, n); ++i) (void)ctx.get(formulas[i]);
       end = clk::now();
       label = "viewport_recalc / " + std::to_string(n);
       results.push_back({"scale", label,
