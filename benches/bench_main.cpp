@@ -372,6 +372,7 @@ void ts_contention_for(const std::string& policy) {
 void bench_ts_contention() {
   ts_contention_for<ThreadSafeContext>("recursive");
   ts_contention_for<RwThreadSafeContext>("rw");
+  ts_contention_for<ScalableThreadSafeContext>("scalable");
 }
 
 // -- Thread-safe read scaling --
@@ -429,6 +430,7 @@ void read_scaling_for(const std::string& policy) {
 void bench_read_scaling() {
   read_scaling_for<ThreadSafeContext>("recursive");
   read_scaling_for<RwThreadSafeContext>("rw");
+  read_scaling_for<ScalableThreadSafeContext>("scalable");
 }
 
 // -- Scale benchmark --

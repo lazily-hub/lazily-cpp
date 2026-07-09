@@ -6,7 +6,7 @@ reactive primitives library.
 ## Benchmark Results
 
 <!-- benchmark-results:start -->
-Generated for package `lazily-cpp` version `0.4.0`.
+Generated for package `lazily-cpp` version `0.5.0`.
 
 Environment: `g++ (GCC) 16.1.1 20260625` on `x86_64-unknown-linux-gnu`, C++17 (`-O3 -DNDEBUG`, CMake Release default).
 
@@ -47,14 +47,18 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | effect_flushing | thread_safe_context | 91.721 ns | 1000000 |
 | batch_storms | context / 64 | 4.215 us | 100000 |
 | batch_storms | thread_safe_context / 64 | 3.634 us | 100000 |
-| thread_safe_concurrency | contention/recursive @ 1 | 17.500 Mops/s | 1 |
-| thread_safe_concurrency | contention/recursive @ 16 | 1.200 Mops/s | 16 |
-| thread_safe_concurrency | contention/rw @ 1 | 12.400 Mops/s | 1 |
-| thread_safe_concurrency | contention/rw @ 16 | 2.600 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/recursive @ 1 | 37.000 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/recursive @ 16 | 5.100 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/rw @ 1 | 53.000 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/rw @ 16 | 13.000 Mops/s | 16 |
+| thread_safe_concurrency | contention/recursive @ 1 | 19.300 Mops/s | 1 |
+| thread_safe_concurrency | contention/recursive @ 16 | 1.265 Mops/s | 16 |
+| thread_safe_concurrency | contention/rw @ 1 | 12.600 Mops/s | 1 |
+| thread_safe_concurrency | contention/rw @ 16 | 1.980 Mops/s | 16 |
+| thread_safe_concurrency | contention/scalable @ 1 | 7.600 Mops/s | 1 |
+| thread_safe_concurrency | contention/scalable @ 16 | 0.955 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/recursive @ 1 | 45.700 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/recursive @ 16 | 7.800 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/rw @ 1 | 54.300 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/rw @ 16 | 12.500 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/scalable @ 1 | 58.000 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/scalable @ 16 | 925.000 Mops/s | 16 |
 | scale | build / 100000 | 10.800 ms | 1 |
 | scale | cold_full_recalc / 100000 | 10.300 ms | 1 |
 | scale | full_recalc_invalidate_all / 100000 | 8.250 ms | 1 |
@@ -78,10 +82,48 @@ Refresh: re-run the bench binary and paste the table between the markers.
 > low variance). **Scale** rows are the median of 3 runs — single-sample cases
 > carry ±15% run-to-run variance, so small deltas are not meaningful. The robust
 > v0.2.0 → v0.3.0 scale changes (`cold_full_recalc` ~28% faster, `full_recalc`
-> ~2× faster at 10M, from non-atomic compute closures) are unchanged in v0.4.0.
-> **`thread_safe_concurrency`** is the v0.4.0 headline — cached reads on the
-> opt-in `RwThreadSafeContext` scale ~2.6× at 16 threads vs the recursive
-> default. See [Thread-safe concurrency](#thread-safe-concurrency--read-scaling).
+> ~2× faster at 10M, from non-atomic compute closures) are unchanged in v0.5.0.
+> **`thread_safe_concurrency`** is the headline — three lock policies now. v0.5.0
+> adds the **`ScalableThreadSafeContext`**: cached reads scale **near-linearly**
+> (~925 Mops/s at 16 threads, vs the RW policy's 12.5 Mops/s plateau). See
+> [Thread-safe concurrency](#thread-safe-concurrency--read-scaling).
+
+## Optimizations Applied (v0.5.0)
+
+v0.5.0 ships **optimization A2 — reader-scalable locking**, as a third opt-in
+policy. The default (`ThreadSafeContext`) is unchanged.
+
+1. **`ScalableThreadSafeContext` (opt-in) — `ScalableRwLock`.** `std::shared_mutex`
+   serializes shared acquires on a single internal atomic, so concurrent readers
+   contend on one cache line and plateau at ~12.5 Mops/s. `ScalableRwLock` gives
+   each reader thread its own cache line (a per-thread "active" counter in a
+   128-slot pool); readers only touch their own line plus a shared read of a
+   writer-waiting flag — so reads scale **near-linearly** (~925 Mops/s at 16
+   threads, ~73× the RW plateau). Mutual exclusion is a seq_cst two-phase
+   handshake (reader marks active before checking the flag; writer raises the
+   flag before draining slots) — validated clean under ThreadSanitizer.
+2. **Honest trade-off**: writers scan all 128 slots on every write, so write
+   throughput is the lowest of the three policies (7.6 Mops/s @N=1 vs recursive
+   19.3). Reader-preferring (writers can starve under a steady reader stream).
+   Choose for **read-heavy** high-concurrency loads; use the recursive default
+   otherwise.
+3. **Why a scalable lock, not lock-free?** True lock-free cached reads need
+   atomic-refcounted values + hazard/epoch reclamation, which requires deep
+   retrofitting of the type-erased engine's value-publish/recompute paths and
+   introduces memory-safety risk disproportionate to the gain — the scalable
+   lock achieves the same near-linear read scaling with zero reclamation risk
+   and no regression to the non-atomic Rc value path.
+4. **Tests**: `test_concurrency` (all three policies under concurrent RMW +
+   read consistency) joins the suite; `tests/tsan_stress.cpp` (heavier, built
+   behind `LAZILY_BUILD_TSAN_TEST=ON`) validates race-freedom under TSan.
+
+### How to choose (three policies)
+
+| Workload | Use |
+|---|---|
+| Single-threaded, low concurrency, or write-heavy | `ThreadSafeContext` (default, recursive) |
+| Read-heavy concurrent (simple) | `RwThreadSafeContext` (shared_mutex, ~2.6× read scaling) |
+| Read-heavy high-concurrency (best read scaling) | `ScalableThreadSafeContext` (~73× read scaling) |
 
 ## Optimizations Applied (v0.4.0)
 
@@ -360,37 +402,45 @@ counts (its exclusive acquire is lighter); the RW policy is roughly even at high
 counts. **Neither scales a contended writable cell** — that is fundamental, not a
 lock-design problem.
 
-### Read-scaling (cached get + get_cell, no writes) — the RW win
+### Read-scaling (cached get + get_cell, no writes) — the A2 win
 
-| Threads | recursive (Mops/s) | rw (Mops/s) | rw speedup |
+| Threads | recursive (Mops/s) | rw (Mops/s) | scalable (Mops/s) |
 |---:|---:|---:|---:|
-| 1 | 37 | 53 | 1.4× |
-| 2 | 15 | 21 | 1.4× |
-| 4 | 10 | 14 | 1.4× |
-| 8 | 5.5 | 14 | **2.5×** |
-| 16 | 5.1 | 13 | **2.6×** |
+| 1 | 46 | 54 | 58 |
+| 2 | 14 | 23 | 127 |
+| 4 | 10 | 16 | 242 |
+| 8 | 7.9 | 13 | 473 |
+| 16 | 7.8 | 12.5 | **925** |
 
-Under the recursive policy every read takes the exclusive lock, so concurrent
-readers serialize (throughput *falls* as threads contend). Under the RW policy
-cached reads take a **shared** lock and run concurrently — throughput holds at
-~13 Mops/s from 4→16 threads instead of collapsing. **At 16 threads the RW policy
-sustains ~2.6× the read throughput of the recursive default.**
+- **recursive**: every read takes the exclusive lock → concurrent readers
+  serialize, throughput *falls* as threads contend.
+- **rw** (`shared_mutex`): cached reads take a shared lock, but all readers CAS
+  one internal atomic → contend on one cache line → plateau at ~12.5 Mops/s.
+- **scalable** (`ScalableRwLock`, v0.5.0): each reader thread touches its own
+  cache line + reads a shared writer-waiting flag → reads scale
+  **near-linearly**: 58 → 127 → 242 → 473 → 925 (≈16× at 16 threads). That is
+  **~73× the RW plateau** and ~120× the recursive default at 16 threads.
 
 ### Honest read
 
-- **Why not make RW the default?** Its exclusive acquire is heavier than
-  `recursive_mutex`, so write-heavy single-thread paths regress ~2× (12 vs 17
-  Mops/s at N=1 in the write-heavy table; cached read ~27 ns vs ~25 ns). The
-  recursive default keeps v0.3.0 performance exactly; RW is opt-in for
-  read-heavy concurrent loads where its ~2.6× read scaling pays off.
-- **Why not linear read scaling?** `std::shared_mutex` serializes shared
-  acquires on its internal atomic, so readers still contend on one cache line.
-  ~2.6× (not 16×) is the real gain. Truly linear read scaling would need
-  lock-free cached reads (atomic refcounted values + epoch/hazard reclamation)
-  — a larger future change (optimization A2).
-- **Re-entrancy**: the RW policy is not recursive, so wrapper calls made from
-  inside a recompute/effect cascade (the thread already holding the exclusive
-  lock) bypass locking via an owner token. Covered by a regression test.
+- **Why a scalable lock, not lock-free?** True lock-free cached reads need
+  atomic-refcounted values + hazard/epoch reclamation, which requires deep
+  retrofitting of the type-erased engine's value-publish/recompute paths and
+  introduces memory-safety risk disproportionate to the gain. The scalable lock
+  achieves the same near-linear read scaling with **zero reclamation risk** and
+  keeps the non-atomic `Rc` value path (no regression to the v0.2.0 win).
+  Validated race-free under ThreadSanitizer (`tests/tsan_stress.cpp`).
+- **Write trade-off**: `ScalableRwLock` writers scan all 128 reader slots per
+  write, so it is the slowest policy for writes (7.6 Mops/s @N=1 vs recursive
+  19.3; see contention table above). Reader-preferring — a steady reader stream
+  can starve writers. Choose it for read-heavy loads; use the recursive default
+  otherwise.
+- **Why not make RW/scalable the default?** Both regress write-heavy
+  single-thread paths. The recursive default keeps v0.3.0 performance exactly;
+  the read-scaling policies are opt-in where they pay off.
+- **Re-entrancy** (RW + scalable): wrapper calls made from inside a
+  recompute/effect cascade (the thread already holding the exclusive lock)
+  bypass locking via an owner token. Covered by regression tests.
 
 ## Benchmark methodology
 
@@ -400,11 +450,11 @@ runs 10% of the iterations before measurement. Results are mean per-iteration
 time in nanoseconds (reported as ns/us/ms/s as appropriate), or an explicit
 unit (e.g. `Mops/s`) when the row carries `unit_override`.
 
-The `contention/{recursive,rw}` and `read_scaling/{recursive,rw}` groups run
-`n` worker threads for a fixed 30 ms wall-clock window, each counting completed
-ops in a per-thread counter (relaxed atomics), and report total throughput
-(Mops/s) and per-op latency (ns/op). They are single-window samples, so
-intermediate thread counts are noisy; the 1 → 16 scaling trend is robust.
+The `contention/{recursive,rw,scalable}` and `read_scaling/{recursive,rw,scalable}`
+groups run `n` worker threads for a fixed 30 ms wall-clock window, each counting
+completed ops in a per-thread counter (relaxed atomics), and report total
+throughput (Mops/s) and per-op latency (ns/op). They are single-window samples,
+so intermediate thread counts are noisy; the 1 → 16 scaling trend is robust.
 
 The `scale` group uses a single timed measurement per case (samples = 1) since
 each case operates on 200K–20M nodes. The table reports the **median of 3 runs**

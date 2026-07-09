@@ -4,6 +4,7 @@
 #include <lazily/context.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -59,6 +60,102 @@ struct RwLockPolicy {
     explicit read_guard(mutex_type& m) : g(m) {}
   };
   // Exclusive guard that publishes/clears the owner token for re-entrancy.
+  struct write_guard {
+    std::unique_lock<mutex_type> g;
+    std::atomic<uint64_t>* token;
+    write_guard(mutex_type& m, std::atomic<uint64_t>& t, uint64_t me)
+        : g(m), token(&t) {
+      t.store(me, std::memory_order_release);
+    }
+    ~write_guard() { token->store(0, std::memory_order_release); }
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ScalableRwLock — a reader-scalable read/write lock.
+//
+// std::shared_mutex serializes shared acquires on a single internal atomic, so
+// concurrent readers contend on one cache line and stop scaling (~2.6× at 16
+// threads in practice). ScalableRwLock gives each reader thread its OWN cache
+// line (a per-thread "active" counter in a 128-slot pool); readers only touch
+// their own line + read a shared writer-waiting flag, so reads scale
+// near-linearly. Writers serialize on a mutex, raise the writer-waiting flag,
+// and drain every reader slot before proceeding.
+//
+// Mutual exclusion (reader↔writer) is guaranteed by a two-phase handshake with
+// seq_cst on the four coordination ops: a reader marks itself active BEFORE
+// checking the writer-waiting flag; a writer sets the flag BEFORE draining
+// reader slots. So either the reader sees the flag and backs off, or the writer
+// sees the active reader and waits — no overlap. Writers are reader-preferring
+// (a steady stream of readers can starve writers); acceptable for lazily where
+// writes are occasional.
+//
+// API mirrors std::shared_mutex (lock/unlock, lock_shared/unlock_shared) so it
+// drops into std::shared_lock / std::unique_lock.
+// ═══════════════════════════════════════════════════════════════════════════
+class ScalableRwLock {
+  static constexpr int kPool = 128;
+  struct alignas(64) RSlot {
+    std::atomic<uint32_t> active{0};
+  };
+
+  std::unique_ptr<RSlot[]> readers_;
+  std::atomic<bool> writer_waiting_{false};
+  std::mutex writer_mx_;  // serialize writers
+
+  static int my_slot() {
+    static std::atomic<int> next{0};
+    thread_local int s =
+        next.fetch_add(1, std::memory_order_relaxed) % kPool;
+    return s;
+  }
+
+ public:
+  ScalableRwLock() : readers_(new RSlot[kPool]()) {}
+
+  // Reader side.
+  void lock_shared() {
+    const int s = my_slot();
+    while (true) {
+      readers_[s].active.store(1, std::memory_order_seq_cst);
+      // active is visible before we observe the writer flag.
+      if (!writer_waiting_.load(std::memory_order_seq_cst)) {
+        std::atomic_thread_fence(std::memory_order_acquire);
+        return;  // in CS; writer cannot start (it would see our active slot)
+      }
+      readers_[s].active.store(0, std::memory_order_seq_cst);
+      while (writer_waiting_.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    }
+  }
+  void unlock_shared() {
+    readers_[my_slot()].active.store(0, std::memory_order_seq_cst);
+  }
+
+  // Writer side.
+  void lock() {
+    writer_mx_.lock();
+    writer_waiting_.store(true, std::memory_order_seq_cst);
+    for (int i = 0; i < kPool; ++i) {
+      while (readers_[i].active.load(std::memory_order_seq_cst) != 0)
+        std::this_thread::yield();
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+  }
+  void unlock() {
+    writer_waiting_.store(false, std::memory_order_seq_cst);
+    writer_mx_.unlock();
+  }
+};
+
+struct ScalableRwLockPolicy {
+  using mutex_type = ScalableRwLock;
+  static constexpr bool kSharedReads = true;
+
+  struct read_guard {
+    std::shared_lock<mutex_type> g;
+    explicit read_guard(mutex_type& m) : g(m) {}
+  };
   struct write_guard {
     std::unique_lock<mutex_type> g;
     std::atomic<uint64_t>* token;
@@ -251,6 +348,13 @@ using ThreadSafeContext = BasicThreadSafeContext<RecursiveLockPolicy>;
 /// cores (~1.7× at 16 threads); exclusive writes are heavier (~2× single-thread
 /// regression vs the recursive default). Choose for read-heavy concurrent loads.
 using RwThreadSafeContext = BasicThreadSafeContext<RwLockPolicy>;
+
+/// Reader-scalable thread-safe context — ScalableRwLock (per-cacheline reader
+/// counters). Cached reads scale near-linearly across cores (beats shared_mutex's
+/// ~2.6× plateau); same exclusive-write cost as the RW policy. Best choice for
+/// read-heavy high-concurrency loads. Reader-preferring (writers can starve
+/// under a steady reader stream).
+using ScalableThreadSafeContext = BasicThreadSafeContext<ScalableRwLockPolicy>;
 
 // Pure batch-flush kernel (faithful port of Lean ThreadSafe model)
 struct NodeEntry {

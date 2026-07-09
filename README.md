@@ -87,11 +87,13 @@ cold recalc ~0.83 s, viewport recalc (edit 1, read 1k) **~44 us** — independen
 of sheet size thanks to the lazy pull-based model. Full table in
 [BENCHMARKS.md](BENCHMARKS.md#scale-up-to-10m-cells--google-sheets-capacity--lzscalebench).
 
-**Thread-safe concurrency (v0.4.0):** the default `ThreadSafeContext`
-(recursive mutex) is unchanged from v0.3.0. The new opt-in
-`RwThreadSafeContext` (`shared_mutex`) scales cached reads **~2.6× at 16
-threads** (13 vs 5.1 Mops/s) for read-heavy concurrent loads, at the cost of a
-~2× write-heavy single-thread regression — so it is opt-in, not default. See
+**Thread-safe concurrency (v0.5.0):** three opt-in lock policies ship. The
+default `ThreadSafeContext` (recursive mutex) is unchanged. `RwThreadSafeContext`
+(`shared_mutex`) scales cached reads ~2.6× at 16 threads; the new
+`ScalableThreadSafeContext` (`ScalableRwLock`, per-cacheline reader counters)
+scales cached reads **near-linearly — ~925 Mops/s at 16 threads (~73× the RW
+plateau)**, at the cost of slower writes (writer scans a 128-slot reader pool).
+Validated race-free under ThreadSanitizer. Choose by workload — see
 [BENCHMARKS.md](BENCHMARKS.md#thread-safe-concurrency--read-scaling).
 
 ## Usage
@@ -242,7 +244,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
-| `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex, read-scaling opt-in) |
+| `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex) + `ScalableThreadSafeContext` (reader-scalable lock) |
 | `async_context.hpp` | AsyncContext (Empty/Computing/Resolved/Error lifecycle) |
 | `hlc.hpp` | Hybrid logical clock, StampFrontier |
 | `crdt.hpp` | TextCrdt (+ delta sync), SeqCrdt, LwwRegister, MvRegister, PnCounter |
