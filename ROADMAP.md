@@ -67,6 +67,12 @@ optimizations:
 
 Remaining distributed work (measured, queued):
 
+- ✅ **msgpack wire codec** (`include/lazily/msgpack.hpp` + `codec.hpp`) — the
+  foundational serialization layer lazily was missing (`kDefaultCodec` was a
+  stub). Zero-dep hand-rolled MessagePack; self-describing maps (forward-compat
+  skip-unknown-key); round-trip tests for every `IpcMessage` variant branch.
+  Chosen over protobuf (schema-less flexibility) and capnproto (not needed).
+  Benchmark: ~1.7 GB/s encode / ~0.5 GB/s decode at 619 KB. Unblocks cross-wire.
 - **ShmBlobArena read copy** — `read` still returns the payload **by value**
   (a copy). Eliminating it needs an API change (return a `const
   std::vector<uint8_t>*` / span view) and is the natural follow-up to the
@@ -76,10 +82,15 @@ Remaining distributed work (measured, queued):
   O(n²) (100k-char build did not finish in the bench window). Algorithmic; a
   maintained visible-order index would make insertion O(log n). **Next CRDT
   lever.**
-- **IPC zero-copy across the FFI/process boundary** — extend ShmBlobArena so hot
-  snapshot/delta/CrdtSync messages pass a `ShmBlobRef` descriptor across
-  processes instead of copying `IpcValueInline` bytes. The checksum cache + the
-  read-copy API change above are prerequisites.
+- **IPC zero-copy across the FFI/process boundary** — with the codec + checksum
+  cache landed, extend so hot snapshot/delta/CrdtSync messages pass a
+  `ShmBlobRef` descriptor across processes instead of copying `IpcValueInline`
+  bytes. Remaining prereq: the ShmBlob read-copy API change above.
+- **Codec compactness / decode allocation** — string-keyed maps are ~62 B/node;
+  a positional-array encoding (still msgpack, schema-versioned) would be ~2–3×
+  smaller. Decode does per-key `std::string` / per-bin `std::vector` allocation
+  (string-view keys / in-place decode would speed it). Quantified by the
+  `codec` benchmark.
 - **SeqCrdt / LosslessTreeCrdt merge throughput** — benchmark + optimize
   `delta_since` / `apply_delta` / dotted-frontier merge on the other CRDTs
   (currently correctness-first; the TextCrdt map change is a template for them).
@@ -124,9 +135,10 @@ low payoff since typical closures exceed the inline buffer.)
 
 1. ~~**B**~~ ✅ v0.6.0 + ~~**E**~~ ✅ v0.6.0.
 2. ~~**Distributed measure-first**~~ ✅ (CRDT `unordered_map` + ShmBlob checksum
-   cache landed post-0.6.0; benchmarks added). **Remaining distributed work:**
-   ShmBlob read-copy API change → then TextCrdt O(n²)-insertion fix → then
-   cross-process zero-copy + SeqCrdt/LosslessTree merge.
+   cache + **msgpack wire codec** landed; benchmarks added). **Remaining
+   distributed work:** ShmBlob read-copy API change → then TextCrdt O(n²)-insertion
+   fix → then cross-process zero-copy + SeqCrdt/LosslessTree merge. (Codec
+   compactness / decode-alloc are optional later levers.)
 3. **D** (SoA nodes) — only if re-measured large-graph scale (≥10M cells) is a
    real product target; B reduced its payoff.
 4. **A3** — only if a real distributed workload proves read-tail-latency-under-

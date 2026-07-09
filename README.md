@@ -257,6 +257,8 @@ target_link_libraries(your_target PRIVATE lazily)
 | `lossless_tree_crdt.hpp` | LosslessTreeCrdt (M1, dotted-frontier anti-entropy) |
 | `stable_id.hpp` | Manufactured identity (anchors, content hashes, word-LCS alignment) |
 | `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake |
+| `codec.hpp` | msgpack wire codec — `encode`/`decode` the `IpcMessage` tree |
+| `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker |
 | `receipt.hpp` | Causal receipts, StateProjectionMirror |
 | `command.hpp` | Command plane (command-plane-v1), CrdtPlaneRuntime, instrumentation |
 | `signaling.hpp` | WebRTC signaling room (peer discovery, SDP/ICE relay) |

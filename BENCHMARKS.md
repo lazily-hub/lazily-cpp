@@ -63,6 +63,8 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | distributed | crdt_sync delta_since_empty @ 10k | 92.000 us | 20 |
 | distributed | shm_blob read @ 64KB | 666.000 ns | 10000 |
 | distributed | shm_blob read @ 4KB | 53.000 ns | 10000 |
+| distributed | codec encode @ 10k nodes/619KB | 355.000 us | 20 |
+| distributed | codec decode @ 10k nodes/619KB | 1.187 ms | 20 |
 | scale | build / 100000 | 10.800 ms | 1 |
 | scale | cold_full_recalc / 100000 | 10.300 ms | 1 |
 | scale | full_recalc_invalidate_all / 100000 | 8.250 ms | 1 |
@@ -530,6 +532,37 @@ write and cached**; `read` validates against the cached value.
 read cost is the payload **copy** (`return entry->payload`); eliminating that
 needs an API change (return a `const std::vector<uint8_t>*` / span view instead
 of a value) and is a follow-up.
+
+### msgpack codec (IPC wire serialization)
+
+The foundational serialization layer lazily was missing (`kDefaultCodec` was a
+stub). A zero-dependency hand-rolled MessagePack packer/unpacker
+(`include/lazily/msgpack.hpp`) plus a codec for the closed `IpcMessage` tree
+(`include/lazily/codec.hpp`). msgpack was chosen over protobuf (schema-less
+flexibility) and capnproto (not needed — wire types are int/str/bytes only).
+
+Self-describing **maps with string keys** (forward-compatible: unknown keys are
+skipped on decode; the protocol is versioned via `kProtocolMajorVersion`).
+Variant types carry a discriminator (`type`/`op`/`kind`) written first.
+
+Encode/decode of a Snapshot carrying N keyed nodes:
+
+| Message | Encode | Decode | Size |
+|---|---:|---:|---:|
+| 100 nodes | 3.5 µs | 8.4 µs | 5.8 KB |
+| 1 000 nodes | 34 µs | 85 µs | 60 KB |
+| 10 000 nodes | 355 µs | 1.19 ms | 619 KB |
+
+Throughput at 10k nodes: **~1.7 GB/s encode, ~0.5 GB/s decode**. Decode is ~3×
+encode (string-key matching + per-field allocation). Round-trip tests cover
+every variant branch (`Snapshot` × 3 `NodeState`, `Delta` × all 7 `DeltaOp`,
+`CrdtSync`) plus canonical re-encode equality.
+
+**Future compactness win:** string-keyed maps are ~62 B/node. A positional-array
+encoding (still msgpack, schema-versioned) would be ~2–3× smaller. The
+benchmark quantifies the map-key overhead so the trade-off (self-describing vs
+compact) is data-driven. Decode allocation (per-key `std::string`, per-bin
+`std::vector`) is the other lever (string-view keys / in-place decode).
 
 ### Finding (not yet addressed): TextCrdt insertion is O(n²)
 

@@ -25,7 +25,7 @@ struct SlotId {
 inline constexpr int kProtocolVersion = 1;
 inline constexpr const char* kProtocolId = "lazily-ipc";
 inline constexpr int kProtocolMajorVersion = 1;
-inline constexpr const char* kDefaultCodec = "json";
+inline constexpr const char* kDefaultCodec = "msgpack";
 inline constexpr int64_t kDefaultMaxFrameSize = 1 << 20;
 inline constexpr const char* kBindingName = "lazily-cpp";
 

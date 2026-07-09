@@ -2,6 +2,7 @@
 #define LAZILY_LAZILY_HPP
 
 #include <lazily/async_context.hpp>
+#include <lazily/codec.hpp>
 #include <lazily/collections.hpp>
 #include <lazily/command.hpp>
 #include <lazily/context.hpp>

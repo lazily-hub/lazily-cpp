@@ -457,6 +457,29 @@ void bench_crdt_sync() {
   }
 }
 
+// -- msgpack codec (serialization throughput) --
+//
+// Measures encode/decode of a Snapshot carrying N nodes (each a small payload +
+// keyed path). This is the per-message cost of the IPC wire codec — the
+// foundational serialization layer for distributed use.
+void bench_codec() {
+  for (long long n : {100, 1000, 10000}) {
+    Snapshot s;
+    s.epoch = n;
+    for (long long i = 0; i < n; ++i) {
+      s.nodes.push_back({static_cast<NodeId>(i), "cell",
+                         NodeStatePayload{{0xAB, 0xCD, 0xEF, 0x01}},
+                         NodeKey::create("doc/n" + std::to_string(i))});
+    }
+    IpcMessage m = IpcMessageSnapshot{std::move(s)};
+    auto bytes = encode(m);
+    std::string label = std::to_string(n) + "n/" + std::to_string(bytes.size()) + "B";
+
+    bench("codec", "encode_snapshot / " + label, 20, [&]() { (void)encode(m); });
+    bench("codec", "decode_snapshot / " + label, 20, [&]() { (void)decode(bytes); });
+  }
+}
+
 // -- ShmBlobArena (IPC shared-memory blob path) --
 //
 // Measures per-blob write (Entry alloc + payload copy) and per-blob read
@@ -555,6 +578,7 @@ int main() {
   bench_read_scaling();
   bench_crdt_sync();
   bench_shm_blob();
+  bench_codec();
   bench_scale();
 
   print_results();
