@@ -60,8 +60,15 @@ class RcPtr {
   RcPtr(std::nullptr_t) noexcept {}
 
   /// Adopt a raw pointer without incrementing (ref starts at 1 from `new`).
+  //
+  // RcBase initializes rc_strong to 0; adopt claims the first strong reference
+  // by setting it to 1. (Leaving it at 0 would make the release check
+  // `--rc_strong == 0` underflow on the first release of a singly-held value,
+  // and delete early once any copy bumps 0 -> 1.)
   struct adopt_t {};
-  RcPtr(T* p, adopt_t) noexcept : ptr_(p) {}
+  RcPtr(T* p, adopt_t) noexcept : ptr_(p) {
+    if (p) p->rc_strong = 1;
+  }
 
   /// Take a raw pointer and increment its ref count.
   explicit RcPtr(T* p) noexcept : ptr_(p) { add_ref(); }
@@ -136,7 +143,9 @@ class ArcPtr {
   ArcPtr(std::nullptr_t) noexcept {}
 
   struct adopt_t {};
-  ArcPtr(T* p, adopt_t) noexcept : ptr_(p) {}
+  ArcPtr(T* p, adopt_t) noexcept : ptr_(p) {
+    if (p) p->arc_strong.store(1, std::memory_order_relaxed);
+  }
   explicit ArcPtr(T* p) noexcept : ptr_(p) { add_ref(); }
 
   ArcPtr(const ArcPtr& o) noexcept : ptr_(o.ptr_) { add_ref(); }

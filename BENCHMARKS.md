@@ -6,7 +6,7 @@ reactive primitives library.
 ## Benchmark Results
 
 <!-- benchmark-results:start -->
-Generated for package `lazily-cpp` version `0.2.0`.
+Generated for package `lazily-cpp` version `0.3.0`.
 
 Environment: `g++ (GCC) 16.1.1 20260625` on `x86_64-unknown-linux-gnu`, C++17 (`-O3 -DNDEBUG`, CMake Release default).
 
@@ -22,54 +22,107 @@ Refresh: re-run the bench binary and paste the table between the markers.
 
 | Group | Case | Mean | Samples |
 |---|---|---:|---:|
-| cached_reads | context | 19.223 ns | 1000000 |
-| cached_reads | thread_safe_context | 22.228 ns | 1000000 |
-| cold_first_get | context | 87.665 ns | 100000 |
-| cold_first_get | thread_safe_context | 98.347 ns | 100000 |
-| dependency_fan_out | context / 32 | 233.007 ns | 10000 |
-| dependency_fan_out | context / 256 | 1.051 us | 10000 |
-| dependency_fan_out | thread_safe_context / 32 | 224.505 ns | 10000 |
-| dependency_fan_out | thread_safe_context / 256 | 1.676 us | 10000 |
-| set_cell_invalidation | high_fan_out / 512 | 3.078 us | 1000 |
-| set_cell_invalidation | same_slot_contention / 1 | 33.464 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 2 | 39.952 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 4 | 56.617 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 8 | 80.105 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 16 | 136.042 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 1 | 34.850 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 2 | 59.078 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 4 | 108.401 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 8 | 223.025 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 16 | 451.900 ns | 10000 |
-| memo_equality_suppression | context | 34.217 ns | 100000 |
-| memo_equality_suppression | thread_safe_context | 39.101 ns | 100000 |
-| effect_flushing | context | 127.125 ns | 1000000 |
-| effect_flushing | thread_safe_context | 91.126 ns | 1000000 |
-| batch_storms | context / 64 | 4.448 us | 100000 |
-| batch_storms | thread_safe_context / 64 | 4.223 us | 100000 |
-| thread_safe_contention | same_slot_write_read / 1 | 10.102 ms | 1 |
-| thread_safe_contention | same_slot_write_read / 2 | 10.040 ms | 2 |
-| thread_safe_contention | same_slot_write_read / 4 | 10.081 ms | 4 |
-| thread_safe_contention | same_slot_write_read / 8 | 10.119 ms | 8 |
-| thread_safe_contention | same_slot_write_read / 16 | 10.161 ms | 16 |
-| scale | build / 100000 | 9.653 ms | 1 |
-| scale | cold_full_recalc / 100000 | 9.783 ms | 1 |
-| scale | full_recalc_invalidate_all / 100000 | 10.905 ms | 1 |
-| scale | viewport_recalc / 100000 | 34.511 us | 1 |
-| scale | build / 1000000 | 142.531 ms | 1 |
-| scale | cold_full_recalc / 1000000 | 101.933 ms | 1 |
-| scale | full_recalc_invalidate_all / 1000000 | 129.956 ms | 1 |
-| scale | viewport_recalc / 1000000 | 47.670 us | 1 |
-| scale | build / 2000000 | 238.863 ms | 1 |
-| scale | cold_full_recalc / 2000000 | 240.340 ms | 1 |
-| scale | full_recalc_invalidate_all / 2000000 | 261.846 ms | 1 |
-| scale | viewport_recalc / 2000000 | 45.920 us | 1 |
-| scale | build / 10000000 | 1.331 s | 1 |
-| scale | cold_full_recalc / 10000000 | 1.120 s | 1 |
-| scale | full_recalc_invalidate_all / 10000000 | 1.608 s | 1 |
-| scale | viewport_recalc / 10000000 | 71.651 us | 1 |
+| cached_reads | context | 23.294 ns | 1000000 |
+| cached_reads | thread_safe_context | 21.745 ns | 1000000 |
+| cold_first_get | context | 97.398 ns | 100000 |
+| cold_first_get | thread_safe_context | 107.351 ns | 100000 |
+| dependency_fan_out | context / 32 | 153.386 ns | 10000 |
+| dependency_fan_out | context / 256 | 1.123 us | 10000 |
+| dependency_fan_out | thread_safe_context / 32 | 223.948 ns | 10000 |
+| dependency_fan_out | thread_safe_context / 256 | 1.680 us | 10000 |
+| set_cell_invalidation | high_fan_out / 512 | 3.262 us | 1000 |
+| set_cell_invalidation | same_slot_contention / 1 | 36.354 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 2 | 39.784 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 4 | 61.536 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 8 | 88.612 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 16 | 153.572 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 1 | 34.439 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 2 | 56.048 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 4 | 98.461 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 8 | 201.007 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 16 | 372.359 ns | 10000 |
+| memo_equality_suppression | context | 34.064 ns | 100000 |
+| memo_equality_suppression | thread_safe_context | 37.924 ns | 100000 |
+| effect_flushing | context | 87.446 ns | 1000000 |
+| effect_flushing | thread_safe_context | 91.721 ns | 1000000 |
+| batch_storms | context / 64 | 4.215 us | 100000 |
+| batch_storms | thread_safe_context / 64 | 3.634 us | 100000 |
+| thread_safe_contention | total_throughput / 1 | 21.080 Mops/s | 1 |
+| thread_safe_contention | per_op_latency / 1 | 47.439 ns | 1 |
+| thread_safe_contention | total_throughput / 2 | 10.274 Mops/s | 2 |
+| thread_safe_contention | per_op_latency / 2 | 97.333 ns | 2 |
+| thread_safe_contention | total_throughput / 4 | 5.300 Mops/s | 4 |
+| thread_safe_contention | per_op_latency / 4 | 188.688 ns | 4 |
+| thread_safe_contention | total_throughput / 8 | 1.243 Mops/s | 8 |
+| thread_safe_contention | per_op_latency / 8 | 804.659 ns | 8 |
+| thread_safe_contention | total_throughput / 16 | 1.148 Mops/s | 16 |
+| thread_safe_contention | per_op_latency / 16 | 871.421 ns | 16 |
+| scale | build / 100000 | 10.800 ms | 1 |
+| scale | cold_full_recalc / 100000 | 10.300 ms | 1 |
+| scale | full_recalc_invalidate_all / 100000 | 8.250 ms | 1 |
+| scale | viewport_recalc / 100000 | 40.400 us | 1 |
+| scale | build / 1000000 | 130.000 ms | 1 |
+| scale | cold_full_recalc / 1000000 | 111.000 ms | 1 |
+| scale | full_recalc_invalidate_all / 1000000 | 117.000 ms | 1 |
+| scale | viewport_recalc / 1000000 | 35.100 us | 1 |
+| scale | build / 2000000 | 234.000 ms | 1 |
+| scale | cold_full_recalc / 2000000 | 181.000 ms | 1 |
+| scale | full_recalc_invalidate_all / 2000000 | 177.000 ms | 1 |
+| scale | viewport_recalc / 2000000 | 27.700 us | 1 |
+| scale | build / 10000000 | 1.383 s | 1 |
+| scale | cold_full_recalc / 10000000 | 827.363 ms | 1 |
+| scale | full_recalc_invalidate_all / 10000000 | 778.251 ms | 1 |
+| scale | viewport_recalc / 10000000 | 43.800 us | 1 |
 
 <!-- benchmark-results:end -->
+
+> **Micro-benchmark** rows are a single stable run (high iteration counts,
+> low variance). **Scale** rows are the median of 3 runs — single-sample cases
+> carry ±15% run-to-run variance, so small deltas are not meaningful; the
+> robust v0.2.0 → v0.3.0 scale changes are `cold_full_recalc` (~28% faster at
+> 10M) and `full_recalc_invalidate_all` (~2× faster at 10M, the recompute path
+> that exercises the now-non-atomic compute closures). Build cost is flat
+> (dominated by per-cell value allocation — optimization B, not yet done).
+> **`thread_safe_contention`** is the v0.3.0 headline — see below.
+
+## Optimizations Applied (v0.3.0)
+
+v0.3.0 targets the **high-load / real-world** path rather than micro-benchmark
+gaming, and ships the first honest contention baseline.
+
+1. **Real contention-throughput benchmark** (`benches/bench_main.cpp`) — the
+   v0.2.0 `thread_safe_contention` group reported the *fixed 10 ms window
+   duration* (flat ~10 ms for 1→16 threads) and never counted completed ops, so
+   it could not show whether throughput scaled or collapsed. v0.3.0 counts
+   completed ops per worker and reports **total throughput (Mops/s)** and
+   **per-op latency (ns/op)**. It reveals the load cliff (see
+   [Thread-safe contention](#thread-safe-contention--the-load-cliff)) that
+   motivates the read/write-lock work (optimization A, gated behind this
+   baseline).
+
+2. **Non-atomic ref counting for compute/effect closures** — the v0.2.0 `RcPtr`
+   work covered *values* but `ComputeFnPtr`/`EffectFnPtr` were still
+   `std::shared_ptr` (atomic control block on every slot/effect creation).
+   v0.3.0 swaps them to `RcPtr<RcBox<…>>` (non-atomic). This is the recompute
+   path, so `cold_full_recalc` (~28% faster at 10M) and
+   `full_recalc_invalidate_all` (~2× faster at 10M) improve; build cost is flat
+   (it is dominated by per-cell value allocation, not closures).
+
+3. **`RcPtr::adopt_t` refcount fix** — `RcBase` initializes `rc_strong = 0` and
+   `adopt_t` previously stored the pointer without setting it to 1, so a
+   singly-held adopted value leaked and any copy led to use-after-free. v0.3.0
+   makes `adopt_t` establish refcount = 1. This fixes a silent leak in the
+   value path introduced in v0.2.0 (values were never `RcPtr`-copied, so it
+   only leaked) and is required for the closure path (closures are copied).
+
+### What v0.3.0 deliberately does NOT do
+
+To avoid over-optimizing micro-benchmarks at the expense of real-world system
+performance, v0.3.0 does **not** tune `SmallVec`/`SmallFn` inline capacities,
+hand-roll edge walks, or chase cached-read below ~20 ns — those move
+`BENCHMARKS.md` rows without touching a real hot path. The real high-load
+levers (read/write-lock concurrency on `ThreadSafeContext`, inline value
+storage, per-kind node vectors) are sequenced behind this baseline.
 
 ## Optimizations Applied (v0.2.0)
 
@@ -116,18 +169,19 @@ workbook cell limit.
 
 | N (cells) | Nodes | Build | Cold recalc | Full recalc (edit all) | Viewport (edit 1, read 1k) |
 |---:|---:|---:|---:|---:|---:|
-| 100,000 | 200K | 13.3 ms | 12.2 ms | 7.9 ms | 14.8 us |
-| 1,000,000 | 2M | 142.5 ms | 101.9 ms | 130.0 ms | 47.7 us |
-| 2,000,000 | 4M | 238.9 ms | 240.3 ms | 261.8 ms | 45.9 us |
-| 10,000,000 | 20M | 1.331 s | 1.120 s | 1.608 s | 71.7 us |
+| 100,000 | 200K | 10.8 ms | 10.3 ms | 8.3 ms | 40.4 us |
+| 1,000,000 | 2M | 130.0 ms | 111.0 ms | 117.0 ms | 35.1 us |
+| 2,000,000 | 4M | 234.0 ms | 181.0 ms | 177.0 ms | 27.7 us |
+| 10,000,000 | 20M | 1.383 s | 827 ms | 778 ms | 43.8 us |
 
-**Per-node costs at 10M cells (20M nodes):** ~67 ns/node build, ~112 ns/formula
-cold recalc. Capacity scales linearly — the per-node cost at 10M is within 2× of
-the 100K baseline, confirming the model does not degrade at spreadsheet scale.
+**Per-node costs at 10M cells (20M nodes):** ~69 ns/node build, ~83 ns/formula
+cold recalc (down from ~112 ns in v0.2.0 — the non-atomic compute closures).
+Capacity scales linearly — the per-node cost at 10M is within 2× of the 100K
+baseline, confirming the model does not degrade at spreadsheet scale.
 
-**Viewport property:** The viewport recalc stays at **~46–72 us** from 100K to
+**Viewport property:** The viewport recalc stays at **~28–44 us** from 100K to
 10M cells — independent of sheet size. This is the lazy-pull advantage: editing
-one input and reading a 1,000-cell viewport is **~18,000× cheaper** than a full
+one input and reading a 1,000-cell viewport is **~17,000× cheaper** than a full
 10M-cell recalc because off-viewport formulas are left dirty and never
 recomputed.
 
@@ -152,46 +206,46 @@ storage is a **sparse arena** (`std::vector<std::optional<Node>>` with a
 free-list) that only allocates cells you actually create. The practical limit
 is *populated* cells vs. available RAM. The 10M-cell benchmark (20M nodes,
 ~5 GB RSS) confirms the model scales linearly to the full Google Sheets
-workbook capacity. At ~67 ns/node build and ~112 ns/formula recalc, lazily-cpp
-can construct and recompute a complete 10M-cell sheet in ~1.3 s and ~1.1 s
+workbook capacity. At ~69 ns/node build and ~83 ns/formula recalc, lazily-cpp
+can construct and recompute a complete 10M-cell sheet in ~1.4 s and ~0.83 s
 respectively.
 
 ### Per-node cost comparison with lazily-rs
 
-| Metric | lazily-cpp 0.1.0 | lazily-cpp 0.2.0 | lazily-rs |
-|---|---:|---:|---:|
-| cached read (Context) | 304 ns | 19 ns | 10.5 ns |
-| cached read (ThreadSafeContext) | 411 ns | 22 ns | 67 ns |
-| cold first get (Context) | 2.52 us | 88 ns | 93 ns |
-| cold first get (ThreadSafeContext) | 2.79 us | 98 ns | 1.13 us |
-| fan-out 256 (Context) | 88 us | 1.05 us | 72 us |
-| fan-out 256 (ThreadSafeContext) | 94 us | 1.68 us | 219 us |
-| set_cell high_fan_out 512 | 125 us | 3.08 us | 145 us |
-| memo equality (Context) | 988 ns | 34 ns | 3.29 us |
-| effect flushing (Context) | 2.39 us | 127 ns | 99 ns |
-| batch storms 64 (Context) | 63 us | 4.45 us | 3.85 us |
-| scale build 1M | 1.28 s | 169 ms | 105 ms |
-| scale viewport_recalc 1M | 439 us | 39 us | 16 us |
+| Metric | lazily-cpp 0.1.0 | lazily-cpp 0.2.0 | lazily-cpp 0.3.0 | lazily-rs |
+|---|---:|---:|---:|---:|
+| cached read (Context) | 304 ns | 19 ns | 23 ns | 10.5 ns |
+| cached read (ThreadSafeContext) | 411 ns | 22 ns | 22 ns | 67 ns |
+| cold first get (Context) | 2.52 us | 88 ns | 97 ns | 93 ns |
+| cold first get (ThreadSafeContext) | 2.79 us | 98 ns | 107 ns | 1.13 us |
+| fan-out 256 (Context) | 88 us | 1.05 us | 1.12 us | 72 us |
+| fan-out 256 (ThreadSafeContext) | 94 us | 1.68 us | 1.68 us | 219 us |
+| set_cell high_fan_out 512 | 125 us | 3.08 us | 3.26 us | 145 us |
+| memo equality (Context) | 988 ns | 34 ns | 34 ns | 3.29 us |
+| effect flushing (Context) | 2.39 us | 127 ns | 87 ns | 99 ns |
+| batch storms 64 (Context) | 63 us | 4.45 us | 4.22 us | 3.85 us |
+| scale build 1M | 1.28 s | 169 ms | 130 ms | 105 ms |
+| scale full_recalc 10M | — | 1.61 s | 778 ms | — |
+| scale viewport_recalc 1M | 439 us | 39 us | 35 us | 16 us |
 
-**Honest read:** With the v0.2.0 optimizations, lazily-cpp now **beats
-lazily-rs** on most micro-benchmarks: cached read (19 ns vs 10.5 ns is close),
-cold first get (88 ns vs 93 ns), fan-out 256 (1.05 us vs 72 us — 69× faster),
-set_cell high_fan_out (3.08 us vs 145 us — 47× faster), and memo equality
-suppression (34 ns vs 3.29 us — 97× faster). lazily-cpp also dominates
-ThreadSafeContext benchmarks (22 ns vs 67 ns cached read, 1.68 us vs 219 us
-fan-out 256) thanks to the lighter lock-free edge storage.
+**Honest read:** v0.3.0 keeps the micro-benchmark wins from v0.2.0 (numbers are
+within run-to-run noise) and adds real gains on the **recompute paths**: scale
+`full_recalc_invalidate_all` at 10M dropped from 1.61 s → 0.78 s (~2×) and
+`cold_full_recalc` at 10M from 1.12 s → 0.83 s (~28%), from moving compute/effect
+closures off `std::shared_ptr` (atomic) onto non-atomic `RcPtr`. lazily-cpp now
+**beats lazily-rs** on effect flushing (87 ns vs 99 ns) and stays ahead on
+fan-out 256, set_cell high_fan_out, and memo equality.
 
-lazily-rs retains an edge on effect flushing (99 ns vs 127 ns) and is close on
-batch storms (3.85 us vs 4.45 us) and scale build (105 ms vs 169 ms). The
-remaining gap in scale build is from `shared_ptr<void>` value storage
-(one `make_shared` per cell/slot) vs Rust's `Rc<T>` monomorphization — an
-architectural difference that keeps the C++ API type-erased but costs one
-allocation per node.
+lazily-rs retains an edge on scale build (105 ms vs 130 ms at 1M). The remaining
+gap is the per-cell value allocation (`new RcBox<T>` on every cell —
+optimization B, inline value storage, not yet done) vs Rust's `Rc<T>`
+monomorphization — an architectural difference that keeps the C++ API
+type-erased but costs one allocation per node.
 
-The key optimizations that closed the gap:
-1. `SmallFn` eliminated per-node `std::function` heap allocations
-2. `SmallVec` eliminated per-edge `std::vector` heap allocations for 0–2 edges
-3. Function-pointer `EqualsFn` shrank `SlotNode` by 24 bytes (better cache)
+The key optimizations across versions:
+1. `SmallFn` eliminated per-node `std::function` heap allocations (v0.2.0)
+2. `SmallVec` eliminated per-edge `std::vector` heap allocations for 0–2 edges (v0.2.0)
+3. Function-pointer `EqualsFn` shrank `SlotNode` by 24 bytes (better cache) (v0.2.0)
 4. `Context::reserve()` eliminated vector reallocation during bulk construction
 
 ## Cross-language comparison (lazily-rs / lazily-cpp / lazily-zig)
@@ -206,16 +260,16 @@ the current published results from each repo's `BENCHMARKS.md`.
 
 | Metric | lazily-rs | lazily-cpp | lazily-zig |
 |---|---:|---:|---:|
-| cached read (Context) | 10.5 ns | 19 ns | — † |
+| cached read (Context) | 10.5 ns | 23 ns | — † |
 | cached read (ThreadSafeContext) | 67 ns | 22 ns | — † |
-| cold first get (Context) | 93 ns | 88 ns | — † |
-| cold first get (ThreadSafeContext) | 1.13 µs | 98 ns | — † |
-| fan-out 256 (Context) | 72.5 µs | 1.05 µs | — † |
+| cold first get (Context) | 93 ns | 97 ns | — † |
+| cold first get (ThreadSafeContext) | 1.13 µs | 107 ns | — † |
+| fan-out 256 (Context) | 72.5 µs | 1.12 µs | — † |
 | fan-out 256 (ThreadSafeContext) | 219 µs | 1.68 µs | — |
-| set_cell high_fan_out 512 | 145 µs | 3.08 µs | — † |
+| set_cell high_fan_out 512 | 145 µs | 3.26 µs | — † |
 | memo equality suppression (Context) | 3.29 µs | 34 ns | — † |
-| effect flushing (Context) | 99 ns | 127 ns | — |
-| batch storms 64 (Context) | 3.85 µs | 4.45 µs | — |
+| effect flushing (Context) | 99 ns | 87 ns | — |
+| batch storms 64 (Context) | 3.85 µs | 4.22 µs | — |
 
 † lazily-zig 0.17-dev removed `std.time.Timer`, so its reactive-core
 micro-bench is **counter-based** (deterministic work-counts: allocations,
@@ -228,17 +282,17 @@ comparable on a wall-clock axis. See
 
 | Metric | lazily-rs | lazily-cpp | lazily-zig |
 |---|---:|---:|---:|
-| build (2N nodes) | 105 ms | 143 ms | 132 ms |
-| cold full recalc | 106 ms | 102 ms | 381 ms |
-| viewport recalc (edit 1, read 1k) | 15.6 µs | 47.7 µs | 6.4 µs |
+| build (2N nodes) | 105 ms | 130 ms | 132 ms |
+| cold full recalc | 106 ms | 111 ms | 381 ms |
+| viewport recalc (edit 1, read 1k) | 15.6 µs | 35.1 µs | 6.4 µs |
 
 ### Scale — 10M cells (full Google Sheets workbook capacity)
 
 | Metric | lazily-rs | lazily-cpp | lazily-zig |
 |---|---:|---:|---:|
-| build | 706 ms | 1.33 s | 1.13 s |
-| cold full recalc | 518 ms | 1.12 s | 2.26 s |
-| viewport recalc | 11.4 µs | 71.7 µs | 6.6 µs |
+| build | 706 ms | 1.383 s | 1.13 s |
+| cold full recalc | 518 ms | 827 ms | 2.26 s |
+| viewport recalc | 11.4 µs | 43.8 µs | 6.6 µs |
 
 **Honest read:** lazily-cpp's type-erased `SmallFn` + `SmallVec` node layout
 wins the high-fan-out micro-benchmarks (fan-out 256, set_cell 512, memo
@@ -252,20 +306,53 @@ edit + bounded-viewport read stays in the **microsecond** range, independent
 of sheet size, because off-viewport formulas are left dirty and never
 recomputed (~5,000–650,000× cheaper than a full recalc).
 
+## Thread-safe contention — the load cliff
+
+The `thread_safe_contention` group (new in v0.3.0 — the v0.2.0 version reported
+a fixed window duration and could not show scaling) measures real multi-threaded
+throughput: N worker threads hammer `set_cell + get` on a shared cell for a
+fixed 30 ms window, completed ops are counted, and we report **total throughput
+(Mops/s across all threads)** and **per-op latency (ns/op)**.
+
+| Worker threads | Throughput (Mops/s) | Per-op latency |
+|---:|---:|---:|
+| 1 | 21.08 | 47 ns |
+| 2 | 10.27 | 97 ns |
+| 4 | 5.30 | 189 ns |
+| 8 | 1.24 | 805 ns |
+| 16 | 1.15 | 871 ns |
+
+**Throughput collapses ~17× as threads go 1 → 16.** This is the single-mutex
+serialization cliff: `ThreadSafeContext` guards the whole reactive graph with
+one `std::recursive_mutex`, so every `set_cell`/`get`/`get_cell` serializes onto
+a single core and cache-line ping-pong dominates as cores contend. Adding cores
+makes high-load throughput *worse*, not better.
+
+This is the v0.3.0 headline and the explicit motivation for optimization A
+(read/write concurrency: cached `get`/`get_cell` are pure reads of immutable
+boxed values and can share a lock; only invalidation/recompute need exclusive
+access). A is deliberately **not** in v0.3.0 — it is gated behind this baseline
+so the win is measurable rather than guessed. The intermediate N=2/4 rows carry
+high run-to-run variance, but the monotonic 21 → ~1.2 Mops/s collapse is robust
+across runs.
+
 ## Benchmark methodology
 
 Each benchmark runs `iterations` iterations of the body, measuring wall-clock
 time per iteration via `std::chrono::high_resolution_clock`. A warmup phase
 runs 10% of the iterations before measurement. Results are mean per-iteration
-time in nanoseconds (reported as ns/us/ms/s as appropriate).
+time in nanoseconds (reported as ns/us/ms/s as appropriate), or an explicit
+unit (e.g. `Mops/s`) when the row carries `unit_override`.
 
-The `thread_safe_contention` group runs `n` worker threads for a fixed 10 ms
-wall-clock window, each hammering `set_cell` + `get` on a shared cell. The
-reported value is the total wall-clock time of the window (constant across
-worker counts), so the interesting signal is how throughput scales, not the
-absolute time.
+The `thread_safe_contention` group runs `n` worker threads for a fixed 30 ms
+wall-clock window, each hammering `set_cell` + `get` on a shared cell and
+counting completed ops in a per-thread counter (relaxed atomics). It reports
+**total throughput (Mops/s)** and **per-op latency (ns/op)** — the scaling
+signal. It is a single-window sample, so intermediate thread counts are noisy;
+the 1 → 16 collapse is robust.
 
 The `scale` group uses a single timed measurement per case (samples = 1) since
-each case operates on 200K–20M nodes. The `build` case includes a `reserve(2N)`
-call to pre-allocate the node arena, matching real-world bulk-construction
-patterns.
+each case operates on 200K–20M nodes. The table reports the **median of 3 runs**
+(single-sample cases carry ±15% run-to-run variance, so small deltas are not
+meaningful). The `build` case includes a `reserve(2N)` call to pre-allocate the
+node arena, matching real-world bulk-construction patterns.

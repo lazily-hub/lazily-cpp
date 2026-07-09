@@ -75,17 +75,23 @@ Micro-benchmarks on `x86_64` with GCC 16, C++17 (`-O3`). Full results in
 
 | Benchmark | Context | ThreadSafeContext |
 |---|---:|---:|
-| cached read | 19 ns | 22 ns |
-| cold first get | 88 ns | 98 ns |
-| fan-out 256 | 1.05 us | 1.68 us |
-| set_cell high_fan_out 512 | 3.08 us | — |
-| memo equality suppression | 34 ns | 39 ns |
-| batch storms 64 | 4.45 us | 4.22 us |
+| cached read | 23 ns | 22 ns |
+| cold first get | 97 ns | 107 ns |
+| fan-out 256 | 1.12 us | 1.68 us |
+| set_cell high_fan_out 512 | 3.26 us | — |
+| memo equality suppression | 34 ns | 38 ns |
+| batch storms 64 | 4.22 us | 3.63 us |
 
-**Scale (up to 10M cells — Google Sheets capacity, 20M nodes):** build ~1.3 s,
-cold recalc ~1.1 s, viewport recalc (edit 1, read 1k) **~72 us** — independent
+**Scale (up to 10M cells — Google Sheets capacity, 20M nodes):** build ~1.4 s,
+cold recalc ~0.83 s, viewport recalc (edit 1, read 1k) **~44 us** — independent
 of sheet size thanks to the lazy pull-based model. Full table in
 [BENCHMARKS.md](BENCHMARKS.md#scale-up-to-10m-cells--google-sheets-capacity--lzscalebench).
+
+**Thread-safe contention (v0.3.0):** the first real multi-threaded throughput
+baseline reveals a ~17× throughput collapse from 1 → 16 threads (21 → 1.15
+Mops/s) — the single-mutex serialization cliff. This motivates the read/write
+concurrency work sequenced as the next optimization. See
+[BENCHMARKS.md](BENCHMARKS.md#thread-safe-contention--the-load-cliff).
 
 ## Usage
 
@@ -229,6 +235,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `context.hpp` | Reactive graph core (Context, Slot, Cell, Signal, Effect, Memo, batch) |
 | `small_fn.hpp` | SmallFn — small-buffer-optimized type-erased callable |
 | `small_vec.hpp` | SmallVec — inline edge storage (0–2 elements inline, heap fallback) |
+| `rc_ptr.hpp` | RcPtr/ArcPtr smart pointers, RcAny/ArcAny type-erased values, RcTraits/ArcTraits |
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |

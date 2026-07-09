@@ -17,6 +17,8 @@ struct BenchResult {
   std::string case_name;
   double mean_ns;
   int samples;
+  // When non-empty, overrides the duration auto-formatting (e.g. "Mops/s").
+  std::string unit_override;
 };
 
 static std::vector<BenchResult> results;
@@ -38,7 +40,13 @@ void bench(const std::string& group, const std::string& case_name,
   double sum = 0;
   for (auto t : times) sum += t;
   double mean = sum / times.size();
-  results.push_back({group, case_name, mean, iterations});
+  results.push_back({group, case_name, mean, iterations, {}});
+}
+
+// Report a derived (non-duration) metric with an explicit unit.
+void report(const std::string& group, const std::string& case_name,
+            double value, int samples, const std::string& unit) {
+  results.push_back({group, case_name, value, samples, unit});
 }
 
 void print_results() {
@@ -46,10 +54,15 @@ void print_results() {
   std::cout << "|---|---|---:|---:|\n";
   for (auto& r : results) {
     double val = r.mean_ns;
-    std::string unit = "ns";
-    if (val >= 1e9) { val /= 1e9; unit = "s"; }
-    else if (val >= 1e6) { val /= 1e6; unit = "ms"; }
-    else if (val >= 1e3) { val /= 1e3; unit = "us"; }
+    std::string unit;
+    if (!r.unit_override.empty()) {
+      unit = r.unit_override;
+    } else {
+      unit = "ns";
+      if (val >= 1e9) { val /= 1e9; unit = "s"; }
+      else if (val >= 1e6) { val /= 1e6; unit = "ms"; }
+      else if (val >= 1e3) { val /= 1e3; unit = "us"; }
+    }
     std::cout << "| " << r.group << " | " << r.case_name << " | "
               << std::fixed << std::setprecision(3) << val << " " << unit
               << " | " << r.samples << " |\n";
@@ -299,7 +312,17 @@ void bench_batch_storms() {
 }
 
 // -- Thread-safe contention --
+//
+// Measures real multi-threaded scaling under the ThreadSafeContext. Each worker
+// thread hammers `set_cell + get` on a shared cell for a fixed wall-clock
+// window; we count COMPLETED ops and report:
+//   - total_throughput (Mops/s) across all N threads  → grows with N if it scales
+//   - per_op_latency  (ns/op)  amortized over all threads
+// Under a single-mutex design throughput stays flat (serialized onto one core)
+// and per-op latency rises ~linearly with N; under a read/write-scalable design
+// throughput climbs and latency stays flat.
 void bench_ts_contention() {
+  constexpr int kWindowMs = 30;
   for (int n : {1, 2, 4, 8, 16}) {
     ThreadSafeContext ctx;
     auto cell = ctx.cell(0);
@@ -308,29 +331,41 @@ void bench_ts_contention() {
 
     std::atomic<int> barrier{n};
     std::atomic<bool> stop{false};
+    std::atomic<uint64_t> ops{0};
     std::vector<std::thread> threads;
     for (int t = 0; t < n; ++t) {
       threads.emplace_back([&]() {
-      --barrier;
-      while (barrier > 0) std::this_thread::yield();
-      while (!stop.load()) {
-        ctx.set_cell(cell, 1);
-        (void)ctx.get(slot);
-        ctx.set_cell(cell, 0);
-      }
+        --barrier;
+        while (barrier > 0) std::this_thread::yield();
+        uint64_t local = 0;
+        int v = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+          ctx.set_cell(cell, v);
+          (void)ctx.get(slot);
+          v ^= 1;
+          ++local;
+        }
+        ops.fetch_add(local, std::memory_order_relaxed);
       });
     }
 
-    // Measure for 10ms
     auto start = clk::now();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    stop.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kWindowMs));
+    stop.store(true, std::memory_order_relaxed);
     for (auto& t : threads) t.join();
     auto end = clk::now();
-    double ns = std::chrono::duration<double, std::nano>(end - start).count();
-    // Convert to per-iteration (approximate: just report total)
-    std::string label = "same_slot_write_read / " + std::to_string(n);
-    results.push_back({"thread_safe_contention", label, ns, n});
+
+    double window_ns =
+        std::chrono::duration<double, std::nano>(end - start).count();
+    uint64_t total_ops = ops.load();
+    double throughput_mops = (total_ops / (window_ns / 1e9)) / 1e6;  // ops/s → Mops/s
+    double per_op_ns = total_ops ? window_ns / static_cast<double>(total_ops) : 0.0;
+
+    std::string nthr = std::to_string(n);
+    report("thread_safe_contention", "total_throughput / " + nthr,
+           throughput_mops, n, "Mops/s");
+    report("thread_safe_contention", "per_op_latency / " + nthr,
+           per_op_ns, n, {});
   }
 }
 

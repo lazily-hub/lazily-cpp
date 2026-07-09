@@ -114,10 +114,14 @@ class ContextImpl {
  public:
   using AnyValue = typename Traits::AnyValue;
   using ComputeFn = SmallFn<AnyValue(ContextImpl&)>;
-  using ComputeFnPtr = std::shared_ptr<ComputeFn>;
+  // Non-atomic ref counting for the compute/effect closures (≈ Rust Rc).
+  // Safe: Context is single-threaded; ThreadSafeContext guards it with a mutex.
+  // Each slot/effect creation previously paid an atomic control-block via
+  // std::shared_ptr; RcPtr<RcBox<...>> drops that to a plain integer inc/dec.
+  using ComputeFnPtr = RcPtr<RcBox<ComputeFn>>;
   using EqualsFn = bool (*)(const void*, const void*);
   using EffectFn = SmallFn<CleanupFn(ContextImpl&)>;
-  using EffectFnPtr = std::shared_ptr<EffectFn>;
+  using EffectFnPtr = RcPtr<RcBox<EffectFn>>;
 
  private:
   struct SlotNode {
@@ -271,7 +275,8 @@ class ContextImpl {
     auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
       return f(ctx);
     });
-    node.run = std::make_shared<EffectFn>(std::move(run_fn));
+    node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
+                           typename EffectFnPtr::adopt_t{});
     node.force_run = true;
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
@@ -287,7 +292,8 @@ class ContextImpl {
       f(ctx);
       return CleanupFn{};
     });
-    node.run = std::make_shared<EffectFn>(std::move(run_fn));
+    node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
+                           typename EffectFnPtr::adopt_t{});
     node.force_run = true;
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
@@ -489,7 +495,8 @@ class ContextImpl {
         ComputeFn([f = std::forward<F>(compute)](ContextImpl& ctx) -> AnyValue {
           return Traits::template make<T>(f(ctx));
         });
-    node.compute = std::make_shared<ComputeFn>(std::move(compute_fn));
+    node.compute = ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)),
+                                typename ComputeFnPtr::adopt_t{});
     node.equals = std::move(eq);
     insert_node(id, Node(std::move(node)));
     return SlotHandle<T>(id);
@@ -578,7 +585,7 @@ class ContextImpl {
       remove_dependent_edge(dep_id, id);
 
     push_tracking_frame(id);
-    AnyValue result = (*compute)(*this);
+    AnyValue result = (*compute).value(*this);
     pop_tracking_frame();
 
     bool changed;
@@ -754,7 +761,7 @@ class ContextImpl {
     if (cleanup && *cleanup) (*cleanup)();
 
     push_tracking_frame(id);
-    auto next_cleanup = (*run)(*this);
+    auto next_cleanup = (*run).value(*this);
     pop_tracking_frame();
 
     auto* node = get_node(id);
