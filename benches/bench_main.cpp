@@ -440,7 +440,7 @@ void bench_read_scaling() {
 // TextOps for an initial sync), and apply_delta(all) (insert all into a fresh
 // peer). These dominate distributed convergence speed.
 void bench_crdt_sync() {
-  for (long long n : {1000, 10000}) {
+  for (long long n : {1000, 10000, 100000}) {
     TextCrdt a = TextCrdt::from_str(1, std::string(static_cast<size_t>(n), 'x'));
     TextCrdt::VersionVector vv_empty;
     auto delta = a.delta_since(vv_empty);
@@ -497,6 +497,9 @@ void bench_shm_blob() {
           [&]() { (void)arena.write(payload); });
     bench("shm_blob", "read / " + label + "B", 10000, [&]() {
       (void)arena.read(ref);
+    });
+    bench("shm_blob", "read_view / " + label + "B", 10000, [&]() {
+      (void)arena.read_view(ref);
     });
   }
 }

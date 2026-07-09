@@ -275,14 +275,24 @@ class ShmBlobArena {
   }
 
   std::vector<uint8_t> read(const ShmBlobRef& ref) const {
-    if (ref.offset < 0 || static_cast<size_t>(ref.offset) >= entries_.size()) return {};
+    const std::vector<uint8_t>* v = read_view(ref);
+    return v ? *v : std::vector<uint8_t>{};
+  }
+
+  // Zero-copy read: returns a pointer to the (immutable) cached payload, or
+  // nullptr if the descriptor is invalid/stale. No payload copy, no checksum
+  // recompute — the hot path for large blobs transferred over the IPC plane.
+  // The pointer is valid as long as the arena keeps the entry alive (entries are
+  // shared_ptr-backed and never mutated in place).
+  const std::vector<uint8_t>* read_view(const ShmBlobRef& ref) const {
+    if (ref.offset < 0 || static_cast<size_t>(ref.offset) >= entries_.size()) return nullptr;
     auto& entry = entries_[ref.offset];
-    if (!entry) return {};
-    if (entry->generation != ref.generation) return {};
-    if (entry->epoch != ref.epoch) return {};
-    if (static_cast<int64_t>(entry->payload.size()) != ref.len) return {};
-    if (entry->checksum_cached != ref.checksum) return {};
-    return entry->payload;
+    if (!entry) return nullptr;
+    if (entry->generation != ref.generation) return nullptr;
+    if (entry->epoch != ref.epoch) return nullptr;
+    if (static_cast<int64_t>(entry->payload.size()) != ref.len) return nullptr;
+    if (entry->checksum_cached != ref.checksum) return nullptr;
+    return &entry->payload;
   }
 
   void advance_epoch() {

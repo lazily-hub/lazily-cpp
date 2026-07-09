@@ -86,11 +86,16 @@ class TextCrdt {
 
   void insert(size_t index, const std::string& ch) {
     if (ch.empty()) return;
+    ensure_visible();
     auto origin = find_origin(index);
     OpId id = next_id();
     TextElem elem{ch, origin, std::nullopt};
     elems_[id] = elem;
     by_origin_[origin.value_or(kTextRootKey)].push_back(id);
+    // Maintain the visible cache: the new element (highest local OpId) sorts
+    // first among its siblings, so it becomes the `index`-th visible element.
+    size_t pos = std::min(index, visible_order_.size());
+    visible_order_.insert(visible_order_.begin() + pos, id);
   }
 
   void insert_str(size_t index, const std::string& s) {
@@ -100,9 +105,9 @@ class TextCrdt {
   }
 
   void del(size_t index) {
-    auto visible = visible_ids();
-    if (index >= visible.size()) return;
-    OpId target = visible[index];
+    ensure_visible();
+    if (index >= visible_order_.size()) return;
+    OpId target = visible_order_[index];
     OpId del_id = next_id();
     auto& elem = elems_[target];
     if (!elem.deleted) {
@@ -113,6 +118,7 @@ class TextCrdt {
         elem.deleted = del_id;
       }
     }
+    visible_order_.erase(visible_order_.begin() + index);
   }
 
   std::string text() const {
@@ -123,7 +129,10 @@ class TextCrdt {
     return result;
   }
 
-  size_t visible_len() const { return visible_ids().size(); }
+  size_t visible_len() const {
+    ensure_visible();
+    return visible_order_.size();
+  }
   bool is_empty() const { return visible_len() == 0; }
   size_t tombstone_count() const {
     size_t count = 0;
@@ -144,6 +153,7 @@ class TextCrdt {
   TextCrdt clone() const { return fork(peer_); }
 
   bool merge(const TextCrdt& other) {
+    visible_valid_ = false;  // remote ops restructure the visible order
     bool changed = false;
     for (auto& [id, elem] : other.elems_) {
       auto it = elems_.find(id);
@@ -207,6 +217,7 @@ class TextCrdt {
   }
 
   bool apply_delta(const std::vector<TextOp>& ops) {
+    visible_valid_ = false;  // remote ops restructure the visible order
     bool changed = false;
     for (auto& op : ops) {
       auto it = elems_.find(op.id);
@@ -231,6 +242,7 @@ class TextCrdt {
   }
 
   size_t gc_with(std::function<bool(OpId)> is_stable) {
+    visible_valid_ = false;  // removing tombstones changes the element set
     size_t collected = 0;
     // Collect tombstones that are stable AND not referenced as an origin
     std::unordered_set<OpId> referenced;
@@ -264,22 +276,40 @@ class TextCrdt {
   std::unordered_map<OpId, TextElem> elems_;
   std::unordered_map<OpId, std::vector<OpId>> by_origin_;
 
+  // Lazily-rebuilt cache of the visible (non-deleted) OpId sequence in visible
+  // order. Makes local insert/del/visible_len O(1) lookup instead of a full
+  // O(n) traverse per op (insertion was O(n^2) for a build). Invariant: local
+  // ops use strictly-increasing OpIds, so a newly inserted element always sorts
+  // first among its siblings → splicing at the insertion index matches traverse.
+  // Remote ops (merge/apply_delta) and gc carry arbitrary OpIds / restructure
+  // elems_, so they invalidate the cache; the next access rebuilds via traverse.
+  mutable std::vector<OpId> visible_order_;
+  mutable bool visible_valid_ = false;
+
+  void rebuild_visible() const {
+    visible_order_.clear();
+    traverse(kTextRootKey, visible_order_);
+    visible_valid_ = true;
+  }
+  void ensure_visible() const {
+    if (!visible_valid_) rebuild_visible();
+  }
+
   OpId next_id() { return {++counter_, peer_}; }
 
   std::optional<OpId> find_origin(size_t visible_index) const {
-    auto visible = visible_ids();
+    ensure_visible();
     if (visible_index == 0) return std::nullopt;
-    if (visible_index - 1 < visible.size()) {
-      return visible[visible_index - 1];
+    if (visible_index - 1 < visible_order_.size()) {
+      return visible_order_[visible_index - 1];
     }
-    if (!visible.empty()) return visible.back();
+    if (!visible_order_.empty()) return visible_order_.back();
     return std::nullopt;
   }
 
   std::vector<OpId> visible_ids() const {
-    std::vector<OpId> result;
-    traverse(kTextRootKey, result);
-    return result;
+    ensure_visible();
+    return visible_order_;
   }
 
   void traverse(const OpId& origin, std::vector<OpId>& out) const {

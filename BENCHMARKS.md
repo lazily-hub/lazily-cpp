@@ -59,10 +59,11 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | thread_safe_concurrency | read_scaling/rw @ 16 | 12.500 Mops/s | 16 |
 | thread_safe_concurrency | read_scaling/scalable @ 1 | 58.000 Mops/s | 1 |
 | thread_safe_concurrency | read_scaling/scalable @ 16 | 925.000 Mops/s | 16 |
-| distributed | crdt_sync apply_delta_full @ 10k | 792.000 us | 20 |
-| distributed | crdt_sync delta_since_empty @ 10k | 92.000 us | 20 |
-| distributed | shm_blob read @ 64KB | 666.000 ns | 10000 |
-| distributed | shm_blob read @ 4KB | 53.000 ns | 10000 |
+| distributed | crdt_sync apply_delta_full @ 10k | 818.000 us | 20 |
+| distributed | crdt_sync apply_delta_full @ 100k | 11.181 ms | 20 |
+| distributed | crdt_sync delta_since_empty @ 10k | 82.000 us | 20 |
+| distributed | shm_blob read @ 4KB | 56.000 ns | 10000 |
+| distributed | shm_blob read_view @ 64KB | 16.000 ns | 10000 |
 | distributed | codec encode @ 10k nodes/619KB | 355.000 us | 20 |
 | distributed | codec decode @ 10k nodes/619KB | 1.187 ms | 20 |
 | scale | build / 100000 | 10.800 ms | 1 |
@@ -522,16 +523,18 @@ checksum on every read** — the hash was ~99% of read cost for large blobs. The
 payload is immutable after `write`, so the checksum is now **computed once at
 write and cached**; `read` validates against the cached value.
 
-| read size | rehash-per-read (baseline) | cached (now) | Speedup |
-|---|---:|---:|---:|
-| 64 B | 68 ns | 19 ns | 3.6× |
-| 4 KB | 3.14 µs | 53 ns | **59×** |
-| 64 KB | 49.0 µs | 0.67 µs | **74×** |
+| read size | rehash-per-read (baseline) | `read` copy (cached) | `read_view` zero-copy | vs copy |
+|---|---:|---:|---:|---:|
+| 64 B | 68 ns | 19 ns | 16 ns | 1.2× |
+| 4 KB | 3.14 µs | 56 ns | 16 ns | **3.4×** |
+| 64 KB | 49.0 µs | 0.58 µs | 16 ns | **35×** |
 
-`write` is unchanged (copy + one checksum compute — necessary). The remaining
-read cost is the payload **copy** (`return entry->payload`); eliminating that
-needs an API change (return a `const std::vector<uint8_t>*` / span view instead
-of a value) and is a follow-up.
+`write` is unchanged (copy + one checksum compute — necessary). `read` (copy)
+remains for callers that need an owning `vector`; the new **`read_view`** returns
+a `const std::vector<uint8_t>*` into the immutable cached payload with **no copy
+and no checksum work** — constant ~16 ns regardless of blob size. This is the
+zero-copy read path for large blobs transferred across the IPC plane (entries
+are `shared_ptr`-backed and never mutated in place, so the pointer is stable).
 
 ### msgpack codec (IPC wire serialization)
 
@@ -564,13 +567,25 @@ benchmark quantifies the map-key overhead so the trade-off (self-describing vs
 compact) is data-driven. Decode allocation (per-key `std::string`, per-bin
 `std::vector`) is the other lever (string-view keys / in-place decode).
 
-### Finding (not yet addressed): TextCrdt insertion is O(n²)
+### TextCrdt insertion: O(n²) → O(n) (fixed)
 
-`TextCrdt::insert()` calls `find_origin()` → `visible_ids()` → `traverse()` per
-insert, so building/editing a large doc is O(n²) (a 100k-char build did not
-finish in the benchmark window). This is an algorithmic issue separate from the
-map change and is the next CRDT lever — a maintained visible-order index would
-make insertion O(log n). Tracked in `ROADMAP.md`.
+`TextCrdt::insert()` previously called `find_origin()` → `visible_ids()` →
+`traverse()` per insert, so building/editing a large doc was O(n²) (a 100k-char
+build did not finish). Fixed with a lazily-rebuilt **`visible_order_` cache**:
+local `insert`/`del`/`visible_len` are now O(1) lookup + an O(n)-amortized splice
+(O(1) `push_back` for the common append case), so a build is O(n) total.
+
+Invariant: local ops use strictly-increasing OpIds, so a newly inserted element
+always sorts first among its siblings → splicing at the insertion index matches
+`traverse()`. Remote ops (`merge`/`apply_delta`) and `gc_with` carry arbitrary
+OpIds / restructure `elems_`, so they **invalidate** the cache; the next access
+rebuilds via `traverse`. Correctness preserved — all CRDT tests pass, plus new
+mid-edit-sequence and 50k-build round-trip tests. The 100k-cell `crdt_sync`
+benchmark is now feasible (previously hung on the build).
+
+Pathological case still O(n)/op: arbitrary-position inserts into the middle of a
+very large doc pay the vector splice (shift). A truly O(log n) order-statistics
+tree is not warranted until that pattern is a measured bottleneck.
 
 ## Benchmark methodology
 

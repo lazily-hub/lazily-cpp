@@ -137,6 +137,36 @@ TEST(test_textcrdt_insert_delete) {
   assert(crdt.text() == "ello world");
 }
 
+// Exercises the visible_order_ cache (optimization) across mixed mid/front
+// inserts and deletes; text() reads the cache, so each step cross-checks it.
+TEST(test_textcrdt_cache_mid_edit_sequence) {
+  TextCrdt c(1);
+  c.insert_str(0, "abcd");
+  assert(c.text() == "abcd");
+  c.insert_str(2, "XY");
+  assert(c.text() == "abXYcd");
+  c.insert(0, "Z");
+  assert(c.text() == "ZabXYcd");
+  c.del(1);
+  assert(c.text() == "ZbXYcd");
+  c.del(0);
+  assert(c.text() == "bXYcd");
+  c.insert_str(1, "12");
+  assert(c.text() == "b12XYcd");
+  c.del(4);
+  assert(c.text() == "b12Xcd");
+  assert(c.visible_len() == 6);
+}
+
+// O(n) build via from_str (was O(n^2)); round-trips to the same string at scale.
+TEST(test_textcrdt_large_build_roundtrip) {
+  const size_t N = 50000;
+  std::string s(N, 'q');
+  TextCrdt c = TextCrdt::from_str(1, s);
+  assert(c.text() == s);
+  assert(c.visible_len() == N);
+}
+
 TEST(test_textcrdt_merge_converges) {
   TextCrdt a(1);
   TextCrdt b(2);

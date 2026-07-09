@@ -73,19 +73,20 @@ Remaining distributed work (measured, queued):
   skip-unknown-key); round-trip tests for every `IpcMessage` variant branch.
   Chosen over protobuf (schema-less flexibility) and capnproto (not needed).
   Benchmark: ~1.7 GB/s encode / ~0.5 GB/s decode at 619 KB. Unblocks cross-wire.
-- **ShmBlobArena read copy** — `read` still returns the payload **by value**
-  (a copy). Eliminating it needs an API change (return a `const
-  std::vector<uint8_t>*` / span view) and is the natural follow-up to the
-  checksum cache. Low risk once the API is updated.
-- **TextCrdt insertion is O(n²)** — `insert()` runs `find_origin()` →
-  `visible_ids()` → `traverse()` per insert, so building/editing a large doc is
-  O(n²) (100k-char build did not finish in the bench window). Algorithmic; a
-  maintained visible-order index would make insertion O(log n). **Next CRDT
-  lever.**
+- ✅ **ShmBlobArena zero-copy read** — `read_view(ref)` returns a `const
+  std::vector<uint8_t>*` into the immutable cached payload with no copy and no
+  checksum work (constant ~16 ns vs 0.58 µs copy at 64 KB → 35×). `read` (copy)
+  kept for callers needing an owning vector. Completes the checksum-cache work;
+  the IPC zero-copy chain now has its read-side primitive.
+- ✅ **TextCrdt insertion O(n²) → O(n)** — lazily-rebuilt `visible_order_` cache;
+  local `insert`/`del`/`visible_len` are O(1) lookup + amortized splice (O(1)
+  push_back for append). Remote ops invalidate; rebuild via `traverse`. 100k-cell
+  build now completes (previously hung). Pathological mid-inserts still O(n)/op
+  (vector splice) — O(log n) order-statistics tree deferred until measured.
 - **IPC zero-copy across the FFI/process boundary** — with the codec + checksum
-  cache landed, extend so hot snapshot/delta/CrdtSync messages pass a
-  `ShmBlobRef` descriptor across processes instead of copying `IpcValueInline`
-  bytes. Remaining prereq: the ShmBlob read-copy API change above.
+  cache + `read_view` landed, the remaining work is the transport: pass a
+  `ShmBlobRef` descriptor across processes (over the msgpack codec) instead of
+  copying `IpcValueInline` bytes. All primitives are now in place.
 - **Codec compactness / decode allocation** — string-keyed maps are ~62 B/node;
   a positional-array encoding (still msgpack, schema-versioned) would be ~2–3×
   smaller. Decode does per-key `std::string` / per-bin `std::vector` allocation
@@ -93,7 +94,8 @@ Remaining distributed work (measured, queued):
   `codec` benchmark.
 - **SeqCrdt / LosslessTreeCrdt merge throughput** — benchmark + optimize
   `delta_since` / `apply_delta` / dotted-frontier merge on the other CRDTs
-  (currently correctness-first; the TextCrdt map change is a template for them).
+  (currently correctness-first; the TextCrdt `unordered_map` + `visible_order_`
+  changes are a template for them).
 
 ### D — per-kind node vectors (SoA)  ·  **MEDIUM**  ·  helps large-graph scale
 
@@ -135,10 +137,12 @@ low payoff since typical closures exceed the inline buffer.)
 
 1. ~~**B**~~ ✅ v0.6.0 + ~~**E**~~ ✅ v0.6.0.
 2. ~~**Distributed measure-first**~~ ✅ (CRDT `unordered_map` + ShmBlob checksum
-   cache + **msgpack wire codec** landed; benchmarks added). **Remaining
-   distributed work:** ShmBlob read-copy API change → then TextCrdt O(n²)-insertion
-   fix → then cross-process zero-copy + SeqCrdt/LosslessTree merge. (Codec
-   compactness / decode-alloc are optional later levers.)
+   cache + **msgpack wire codec** + ShmBlob `read_view` zero-copy + TextCrdt
+   O(n²)→O(n) all landed; benchmarks added). **Remaining distributed work:** the
+   IPC cross-process zero-copy transport (all primitives now in place — pass
+   `ShmBlobRef` over the msgpack codec instead of inline bytes) → then
+   SeqCrdt/LosslessTree merge. (Codec compactness / decode-alloc + CRDT
+   order-statistics tree are optional later levers, gated on measurement.)
 3. **D** (SoA nodes) — only if re-measured large-graph scale (≥10M cells) is a
    real product target; B reduced its payoff.
 4. **A3** — only if a real distributed workload proves read-tail-latency-under-

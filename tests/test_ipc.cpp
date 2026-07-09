@@ -50,6 +50,29 @@ TEST(test_shm_blob_arena) {
   assert(stale.empty() && "stale ref after epoch advance");
 }
 
+// Zero-copy read_view (optimization): returns the cached payload pointer
+// without copying; nullptr on invalid/stale descriptors.
+TEST(test_shm_blob_read_view) {
+  ShmBlobArena arena(0);
+  auto ref = arena.write({1, 2, 3, 4});
+  const std::vector<uint8_t>* v = arena.read_view(ref);
+  assert(v && v->size() == 4 && (*v)[2] == 3);
+
+  ShmBlobRef bad = ref;
+  bad.checksum = -1;  // corrupt checksum
+  assert(arena.read_view(bad) == nullptr);
+
+  arena.advance_epoch();
+  assert(arena.read_view(ref) == nullptr && "stale ref returns nullptr");
+
+  // read (copy) still works and is consistent with read_view when valid.
+  ShmBlobArena a2(0);
+  auto ref2 = a2.write({9, 9});
+  const std::vector<uint8_t>* vv = a2.read_view(ref2);
+  auto copy = a2.read(ref2);
+  assert(vv && copy == *vv);
+}
+
 // -- PeerPermissions --
 
 TEST(test_permissions_default_deny) {
