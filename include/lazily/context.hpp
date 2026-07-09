@@ -4,6 +4,7 @@
 #include <lazily/types.hpp>
 #include <lazily/small_fn.hpp>
 #include <lazily/small_vec.hpp>
+#include <lazily/rc_ptr.hpp>
 
 #include <cassert>
 #include <deque>
@@ -18,16 +19,15 @@
 
 namespace lazily {
 
-class Context;
+// ── Forward declarations ──
+template <typename Traits = RcTraits>
+class ContextImpl;
 
-using AnyValue = std::shared_ptr<void>;
-using CleanupFn = std::function<void()>;
-using ComputeFn = SmallFn<AnyValue(Context&)>;
-using ComputeFnPtr = std::shared_ptr<ComputeFn>;
-using EqualsFn = bool (*)(const void*, const void*);
-using EffectFn = SmallFn<CleanupFn(Context&)>;
-using EffectFnPtr = std::shared_ptr<EffectFn>;
+/// Default Context — uses non-atomic RcPtr (≈ Rust Rc).
+using Context = ContextImpl<RcTraits>;
+
 using EdgeVec = SmallVec<SlotId, 2>;
+using CleanupFn = std::function<void()>;
 
 inline bool edge_insert(EdgeVec& edges, SlotId id) {
   for (auto& e : edges)
@@ -46,6 +46,7 @@ inline bool edge_remove(EdgeVec& edges, SlotId id) {
   }
   return false;
 }
+
 inline void deque_erase(std::deque<SlotId>& dq, SlotId id) {
   for (size_t i = 0; i < dq.size(); ++i) {
     if (dq[i] == id) {
@@ -56,42 +57,7 @@ inline void deque_erase(std::deque<SlotId>& dq, SlotId id) {
   }
 }
 
-struct SlotNode {
-  AnyValue value;
-  std::type_index type_id;
-  ComputeFnPtr compute;
-  std::optional<EqualsFn> equals;
-  EdgeVec dependencies;
-  EdgeVec dependents;
-  bool dirty;
-  bool force_recompute;
-  bool in_progress;
-
-  SlotNode()
-      : type_id(std::type_index(typeid(void))),
-        dirty(false),
-        force_recompute(false),
-        in_progress(false) {}
-};
-
-struct CellNode {
-  AnyValue value;
-  std::type_index type_id;
-  EdgeVec dependents;
-
-  CellNode() : type_id(std::type_index(typeid(void))) {}
-};
-
-struct EffectNode {
-  EffectFnPtr run;
-  EdgeVec dependencies;
-  std::optional<CleanupFn> cleanup;
-  bool force_run;
-
-  EffectNode() : force_run(false) {}
-};
-
-using Node = std::variant<SlotNode, CellNode, EffectNode>;
+// ── Handle types (Traits-independent — just SlotId wrappers) ──
 
 template <typename T>
 struct SlotHandle {
@@ -134,11 +100,67 @@ struct SignalHandle {
   bool is_active(Context& ctx) const;
 };
 
-class Context {
+// ═══════════════════════════════════════════════════════════════════════════
+// ContextImpl — the reactive graph engine.
+//
+// Templated on Traits to select Rc (non-atomic, default) or Arc (atomic)
+// reference counting for type-erased values. Context = ContextImpl<RcTraits>.
+// ThreadSafeContext wraps Context with a recursive_mutex; the mutex makes
+// non-atomic counting safe.
+// ═══════════════════════════════════════════════════════════════════════════
+
+template <typename Traits>
+class ContextImpl {
  public:
-  Context() = default;
-  Context(const Context&) = delete;
-  Context& operator=(const Context&) = delete;
+  using AnyValue = typename Traits::AnyValue;
+  using ComputeFn = SmallFn<AnyValue(ContextImpl&)>;
+  using ComputeFnPtr = std::shared_ptr<ComputeFn>;
+  using EqualsFn = bool (*)(const void*, const void*);
+  using EffectFn = SmallFn<CleanupFn(ContextImpl&)>;
+  using EffectFnPtr = std::shared_ptr<EffectFn>;
+
+ private:
+  struct SlotNode {
+    AnyValue value;
+    std::type_index type_id;
+    ComputeFnPtr compute;
+    std::optional<EqualsFn> equals;
+    EdgeVec dependencies;
+    EdgeVec dependents;
+    bool dirty;
+    bool force_recompute;
+    bool in_progress;
+
+    SlotNode()
+        : type_id(std::type_index(typeid(void))),
+          dirty(false),
+          force_recompute(false),
+          in_progress(false) {}
+  };
+
+  struct CellNode {
+    AnyValue value;
+    std::type_index type_id;
+    EdgeVec dependents;
+
+    CellNode() : type_id(std::type_index(typeid(void))) {}
+  };
+
+  struct EffectNode {
+    EffectFnPtr run;
+    EdgeVec dependencies;
+    std::optional<CleanupFn> cleanup;
+    bool force_run;
+
+    EffectNode() : force_run(false) {}
+  };
+
+  using Node = std::variant<SlotNode, CellNode, EffectNode>;
+
+ public:
+  ContextImpl() = default;
+  ContextImpl(const ContextImpl&) = delete;
+  ContextImpl& operator=(const ContextImpl&) = delete;
 
   // -- Slot API --
   template <typename T, typename F>
@@ -172,7 +194,7 @@ class Context {
     auto* slot = get_slot_node(handle.id);
     assert(slot && slot->value && "get_rc on unset/non-slot");
     assert(slot->type_id == std::type_index(typeid(T)));
-    return std::static_pointer_cast<T>(slot->value);
+    return std::make_shared<T>(*Traits::template cast<T>(slot->value));
   }
 
   // -- Cell API --
@@ -180,7 +202,7 @@ class Context {
   CellHandle<T> cell(T value) {
     auto id = alloc_id();
     CellNode node;
-    node.value = std::make_shared<T>(std::move(value));
+    node.value = Traits::template make<T>(std::move(value));
     node.type_id = std::type_index(typeid(T));
     insert_node(id, Node(std::move(node)));
     return CellHandle<T>(id);
@@ -193,7 +215,7 @@ class Context {
     auto* cell = get_cell_node(handle.id);
     assert(cell && "get_cell on non-cell");
     assert(cell->type_id == std::type_index(typeid(T)));
-    return *static_cast<const T*>(cell->value.get());
+    return *Traits::template cast<T>(cell->value);
   }
 
   template <typename T>
@@ -203,7 +225,7 @@ class Context {
     auto* cell = get_cell_node(handle.id);
     assert(cell && "get_cell_rc on non-cell");
     assert(cell->type_id == std::type_index(typeid(T)));
-    return std::static_pointer_cast<T>(cell->value);
+    return std::make_shared<T>(*Traits::template cast<T>(cell->value));
   }
 
   template <typename T>
@@ -213,12 +235,12 @@ class Context {
       auto* cell = get_cell_node(handle.id);
       assert(cell && "set_cell on non-cell");
       assert(cell->type_id == std::type_index(typeid(T)));
-      changed = (*static_cast<const T*>(cell->value.get()) != new_value);
+      changed = (*Traits::template cast<T>(cell->value) != new_value);
     }
     if (!changed) return;
     {
       auto* cell = get_cell_node_mut(handle.id);
-      cell->value = std::make_shared<T>(std::move(new_value));
+      cell->value = Traits::template make<T>(std::move(new_value));
     }
     if (is_batching()) {
       batched_cells_.insert(handle.id);
@@ -233,7 +255,7 @@ class Context {
   auto batch(F&& run) {
     batch_depth_++;
     struct Guard {
-      Context* ctx;
+      ContextImpl* ctx;
       ~Guard() { ctx->finish_batch(); }
     } guard{this};
     return run(*this);
@@ -246,7 +268,7 @@ class Context {
   EffectHandle effect(F&& run) {
     auto id = alloc_id();
     EffectNode node;
-    auto run_fn = EffectFn([f = std::forward<F>(run)](Context& ctx) -> CleanupFn {
+    auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
       return f(ctx);
     });
     node.run = std::make_shared<EffectFn>(std::move(run_fn));
@@ -261,7 +283,7 @@ class Context {
   EffectHandle effect_void(F&& run) {
     auto id = alloc_id();
     EffectNode node;
-    auto run_fn = EffectFn([f = std::forward<F>(run)](Context& ctx) -> CleanupFn {
+    auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
       f(ctx);
       return CleanupFn{};
     });
@@ -303,7 +325,7 @@ class Context {
   template <typename T, typename F>
   SignalHandle<T> signal(F&& compute) {
     auto slot_handle = this->memo<T>(std::forward<F>(compute));
-    auto eff = effect_void([slot_handle](Context& ctx) {
+    auto eff = effect_void([slot_handle](ContextImpl& ctx) {
       ctx.get_rc<T>(slot_handle);
     });
     return SignalHandle<T>(slot_handle, eff);
@@ -464,8 +486,8 @@ class Context {
     SlotNode node;
     node.type_id = std::type_index(typeid(T));
     auto compute_fn =
-        ComputeFn([f = std::forward<F>(compute)](Context& ctx) -> AnyValue {
-          return std::make_shared<T>(f(ctx));
+        ComputeFn([f = std::forward<F>(compute)](ContextImpl& ctx) -> AnyValue {
+          return Traits::template make<T>(f(ctx));
         });
     node.compute = std::make_shared<ComputeFn>(std::move(compute_fn));
     node.equals = std::move(eq);
@@ -481,13 +503,13 @@ class Context {
     auto* slot = get_slot_node(id);
     assert(slot && slot->value && "get_slot on unset/non-slot");
     assert(slot->type_id == std::type_index(typeid(T)));
-    return *static_cast<const T*>(slot->value.get());
+    return *Traits::template cast<T>(slot->value);
   }
 
   bool refresh_slot(SlotId id) {
     if (!enter_refresh(id)) return false;
     struct RefreshGuard {
-      Context* ctx;
+      ContextImpl* ctx;
       SlotId id;
       ~RefreshGuard() {
         if (auto* slot = ctx->get_slot_node(id))
@@ -566,7 +588,7 @@ class Context {
       bool had_value = static_cast<bool>(slot->value);
       bool unchanged = false;
       if (slot->value && slot->equals) {
-        unchanged = (*slot->equals)(slot->value.get(), result.get());
+        unchanged = (*slot->equals)(slot->value->raw(), result->raw());
       }
       slot->dirty = false;
       slot->force_recompute = false;
@@ -787,7 +809,9 @@ class Context {
   }
 };
 
-// -- Handle method implementations --
+// ═══════════════════════════════════════════════════════════════════════════
+// Handle method implementations — use Context (= ContextImpl<RcTraits>)
+// ═══════════════════════════════════════════════════════════════════════════
 
 template <typename T>
 T SlotHandle<T>::get(Context& ctx) const {
