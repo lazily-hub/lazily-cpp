@@ -211,7 +211,7 @@ cmake --build build --target lazily_bench
 ```
 
 See [BENCHMARKS.md](BENCHMARKS.md) for full results, scale benchmarks (≥1M
-cells), and a cross-language comparison with lazily-rs.
+cells), and a cross-language comparison with lazily-rs and lazily-zig.
 
 ### CMake integration
 
