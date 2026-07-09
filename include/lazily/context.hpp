@@ -438,9 +438,24 @@ class ContextImpl {
   std::unordered_set<SlotId> scheduled_effects_;
   bool flushing_effects_ = false;
   int batch_depth_ = 0;
-  std::unordered_set<SlotId> batched_cells_;
-  std::unordered_set<SlotId> batched_cell_clears_;
-  std::unordered_set<SlotId> batched_slots_;
+  // Alloc-free batch bookkeeping (optimization E): a mark bitset over the node
+  // id space + an insertion-ordered list. Capacity persists across batches, so
+  // there is no per-batch or per-insert allocation (vs unordered_set's bucket
+  // allocs). Marks are cleared only for touched ids during flush.
+  struct BatchSet {
+    std::vector<bool> mark;
+    std::vector<SlotId> order;
+    void insert(SlotId id) {
+      if (id.value >= mark.size()) mark.resize(id.value + 1, false);
+      if (!mark[id.value]) {
+        mark[id.value] = true;
+        order.push_back(id);
+      }
+    }
+  };
+  BatchSet batched_cells_;
+  BatchSet batched_cell_clears_;
+  BatchSet batched_slots_;
   std::vector<SlotId> tracking_stack_;
 
   static std::optional<size_t> node_index(SlotId id) {
@@ -624,7 +639,7 @@ class ContextImpl {
       bool had_value = static_cast<bool>(slot->value);
       bool unchanged = false;
       if (slot->value && slot->equals) {
-        unchanged = (*slot->equals)(slot->value->raw(), result->raw());
+        unchanged = (*slot->equals)(slot->value.raw(), result.raw());
       }
       slot->dirty = false;
       slot->force_recompute = false;
@@ -827,20 +842,21 @@ class ContextImpl {
   }
 
   void flush_batched_invalidations() {
-    std::vector<SlotId> cells(batched_cells_.begin(), batched_cells_.end());
-    std::vector<SlotId> cell_clears(batched_cell_clears_.begin(),
-                                     batched_cell_clears_.end());
-    std::vector<SlotId> slots(batched_slots_.begin(), batched_slots_.end());
-    batched_cells_.clear();
-    batched_cell_clears_.clear();
-    batched_slots_.clear();
-
-    for (auto id : cells)
+    for (SlotId id : batched_cells_.order) {
+      batched_cells_.mark[id.value] = false;
       invalidate_cell_dependents_now(id);
-    for (auto id : cell_clears)
+    }
+    batched_cells_.order.clear();
+    for (SlotId id : batched_cell_clears_.order) {
+      batched_cell_clears_.mark[id.value] = false;
       clear_cell_dependents_now(id);
-    for (auto id : slots)
+    }
+    batched_cell_clears_.order.clear();
+    for (SlotId id : batched_slots_.order) {
+      batched_slots_.mark[id.value] = false;
       clear_slot_now(id);
+    }
+    batched_slots_.order.clear();
     flush_effects();
   }
 };

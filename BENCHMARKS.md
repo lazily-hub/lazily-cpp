@@ -6,7 +6,7 @@ reactive primitives library.
 ## Benchmark Results
 
 <!-- benchmark-results:start -->
-Generated for package `lazily-cpp` version `0.5.0`.
+Generated for package `lazily-cpp` version `0.6.0`.
 
 Environment: `g++ (GCC) 16.1.1 20260625` on `x86_64-unknown-linux-gnu`, C++17 (`-O3 -DNDEBUG`, CMake Release default).
 
@@ -45,7 +45,7 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | memo_equality_suppression | thread_safe_context | 37.924 ns | 100000 |
 | effect_flushing | context | 87.446 ns | 1000000 |
 | effect_flushing | thread_safe_context | 91.721 ns | 1000000 |
-| batch_storms | context / 64 | 4.215 us | 100000 |
+| batch_storms | context / 64 | 1.546 us | 100000 |
 | batch_storms | thread_safe_context / 64 | 3.634 us | 100000 |
 | thread_safe_concurrency | contention/recursive @ 1 | 19.300 Mops/s | 1 |
 | thread_safe_concurrency | contention/recursive @ 16 | 1.265 Mops/s | 16 |
@@ -63,30 +63,69 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | scale | cold_full_recalc / 100000 | 10.300 ms | 1 |
 | scale | full_recalc_invalidate_all / 100000 | 8.250 ms | 1 |
 | scale | viewport_recalc / 100000 | 40.400 us | 1 |
-| scale | build / 1000000 | 130.000 ms | 1 |
-| scale | cold_full_recalc / 1000000 | 111.000 ms | 1 |
-| scale | full_recalc_invalidate_all / 1000000 | 117.000 ms | 1 |
+| scale | build / 1000000 | 123.000 ms | 1 |
+| scale | cold_full_recalc / 1000000 | 36.000 ms | 1 |
+| scale | full_recalc_invalidate_all / 1000000 | 73.000 ms | 1 |
 | scale | viewport_recalc / 1000000 | 35.100 us | 1 |
 | scale | build / 2000000 | 234.000 ms | 1 |
 | scale | cold_full_recalc / 2000000 | 181.000 ms | 1 |
 | scale | full_recalc_invalidate_all / 2000000 | 177.000 ms | 1 |
 | scale | viewport_recalc / 2000000 | 27.700 us | 1 |
-| scale | build / 10000000 | 1.383 s | 1 |
-| scale | cold_full_recalc / 10000000 | 827.363 ms | 1 |
-| scale | full_recalc_invalidate_all / 10000000 | 778.251 ms | 1 |
+| scale | build / 10000000 | 1.410 s | 1 |
+| scale | cold_full_recalc / 10000000 | 415.000 ms | 1 |
+| scale | full_recalc_invalidate_all / 10000000 | 740.000 ms | 1 |
 | scale | viewport_recalc / 10000000 | 43.800 us | 1 |
 
 <!-- benchmark-results:end -->
 
 > **Micro-benchmark** rows are a single stable run (high iteration counts,
-> low variance). **Scale** rows are the median of 3 runs — single-sample cases
-> carry ±15% run-to-run variance, so small deltas are not meaningful. The robust
-> v0.2.0 → v0.3.0 scale changes (`cold_full_recalc` ~28% faster, `full_recalc`
-> ~2× faster at 10M, from non-atomic compute closures) are unchanged in v0.5.0.
-> **`thread_safe_concurrency`** is the headline — three lock policies now. v0.5.0
-> adds the **`ScalableThreadSafeContext`**: cached reads scale **near-linearly**
-> (~925 Mops/s at 16 threads, vs the RW policy's 12.5 Mops/s plateau). See
-> [Thread-safe concurrency](#thread-safe-concurrency--read-scaling).
+> low variance). **Scale** rows are the median of 3+ runs — single-sample cases
+> carry ±15% run-to-run variance, so small deltas are not meaningful.
+> **v0.6.0 headline (optimizations B + E):** `cold_full_recalc` ~3× faster at 1M
+> (36 vs 111 ms) / ~2× at 10M (415 vs 827 ms); `full_recalc` ~1.6× faster at 1M;
+> `batch_storms 64` ~2.7× faster (1.55 vs 4.2 µs). Build is flat (now closure-
+> allocation-bound, not value-bound). See
+> [Optimizations Applied (v0.6.0)](#optimizations-applied-v060). The
+> `thread_safe_concurrency` rows (three lock policies) are unchanged in v0.6.0.
+
+## Optimizations Applied (v0.6.0)
+
+v0.6.0 ships **B (inline value storage)** and **E (allocation-free batch
+bookkeeping)** — the two top-priority, contained roadmap steps. The default
+`ThreadSafeContext` and the read-scaling policies are unchanged.
+
+1. **B — `SmallAny` inline value storage** (`include/lazily/small_any.hpp`).
+   Replaces `RcPtr<RcAny>` for Context value storage with a small-buffer-
+   optimized, move-only type-erased value (the value analogue of `SmallFn`).
+   Trivially-copyable values up to 16 bytes (`int`, `double`, small PODs — the
+   common reactive value) are stored **inline in the node with zero allocation**;
+   larger/non-trivial values fall back to one heap allocation. Context values
+   are single-owner and move-only, so `RcPtr`'s refcount was vestigial and is
+   removed. Effect: every `set_cell` / recompute that previously did a
+   `new RcBox<T>` (plus malloc-block header) for the result now stores inline →
+   `cold_full_recalc` ~3× faster (1M), ~2× (10M); `full_recalc` ~1.6× faster.
+   Also lowers per-cell RSS (inline 16 B vs ptr + ~32 B heap block) and improves
+   locality.
+2. **E — allocation-free batch bookkeeping** (`context.hpp`). The three batch
+   sets (`batched_cells_` / `batched_cell_clears_` / `batched_slots_`) move from
+   `std::unordered_set<SlotId>` (per-insert bucket allocation) to a mark-bitset
+   + insertion-ordered list whose capacity persists across batches → no
+   per-batch or per-insert allocation. Effect: `batch_storms 64` ~2.7× faster.
+3. **Tests**: `test_small_any` (inline + heap + move/reset) joins `test_core`;
+   the existing `test_string_values` covers the heap path; the TSan harness
+   re-validated clean.
+
+### Honest read
+
+- **Build cost is flat** (1M: 123 vs 130 ms; 10M: 1.41 vs 1.38 s). Build is now
+  dominated by the per-slot **closure** allocation (`RcPtr<RcBox<ComputeFn>>`
+  from optimization C), not the per-cell value allocation B removed. Making
+  closures inline too is a future micro-optimization, but typical compute
+  closures exceed the inline buffer and would heap-alloc regardless.
+- **No regression** to the read-scaling policies or micro-benchmarks (within
+  noise). Node size grew ~8 B (the inline buffer vs an 8-B pointer); at 10M
+  cells this is ~80 MB offset by removing the per-cell heap block + malloc
+  header — net RSS neutral-to-lower with better locality.
 
 ## Optimizations Applied (v0.5.0)
 
@@ -243,14 +282,15 @@ workbook cell limit.
 | N (cells) | Nodes | Build | Cold recalc | Full recalc (edit all) | Viewport (edit 1, read 1k) |
 |---:|---:|---:|---:|---:|---:|
 | 100,000 | 200K | 10.8 ms | 10.3 ms | 8.3 ms | 40.4 us |
-| 1,000,000 | 2M | 130.0 ms | 111.0 ms | 117.0 ms | 35.1 us |
-| 2,000,000 | 4M | 234.0 ms | 181.0 ms | 177.0 ms | 27.7 us |
-| 10,000,000 | 20M | 1.383 s | 827 ms | 778 ms | 43.8 us |
+| 1,000,000 | 2M | 123 ms | 36 ms | 73 ms | 35.1 us |
+| 2,000,000 | 4M | 234 ms | 181 ms | 177 ms | 27.7 us |
+| 10,000,000 | 20M | 1.41 s | 415 ms | 740 ms | 43.8 us |
 
-**Per-node costs at 10M cells (20M nodes):** ~69 ns/node build, ~83 ns/formula
-cold recalc (down from ~112 ns in v0.2.0 — the non-atomic compute closures).
-Capacity scales linearly — the per-node cost at 10M is within 2× of the 100K
-baseline, confirming the model does not degrade at spreadsheet scale.
+**Per-node costs at 10M cells (20M nodes):** ~70 ns/node build, **~41 ns/formula
+cold recalc** (down from ~83 ns in v0.5.0 / ~112 ns in v0.2.0 — first the
+non-atomic compute closures, then the inline `SmallAny` value storage). Capacity
+scales linearly — the per-node cost at 10M is within 2× of the 100K baseline,
+confirming the model does not degrade at spreadsheet scale.
 
 **Viewport property:** The viewport recalc stays at **~28–44 us** from 100K to
 10M cells — independent of sheet size. This is the lazy-pull advantage: editing
@@ -279,47 +319,50 @@ storage is a **sparse arena** (`std::vector<std::optional<Node>>` with a
 free-list) that only allocates cells you actually create. The practical limit
 is *populated* cells vs. available RAM. The 10M-cell benchmark (20M nodes,
 ~5 GB RSS) confirms the model scales linearly to the full Google Sheets
-workbook capacity. At ~69 ns/node build and ~83 ns/formula recalc, lazily-cpp
+workbook capacity. At ~70 ns/node build and ~41 ns/formula recalc, lazily-cpp
 can construct and recompute a complete 10M-cell sheet in ~1.4 s and ~0.83 s
 respectively.
 
 ### Per-node cost comparison with lazily-rs
 
-| Metric | lazily-cpp 0.1.0 | lazily-cpp 0.2.0 | lazily-cpp 0.3.0 | lazily-rs |
-|---|---:|---:|---:|---:|
-| cached read (Context) | 304 ns | 19 ns | 23 ns | 10.5 ns |
-| cached read (ThreadSafeContext) | 411 ns | 22 ns | 22 ns | 67 ns |
-| cold first get (Context) | 2.52 us | 88 ns | 97 ns | 93 ns |
-| cold first get (ThreadSafeContext) | 2.79 us | 98 ns | 107 ns | 1.13 us |
-| fan-out 256 (Context) | 88 us | 1.05 us | 1.12 us | 72 us |
-| fan-out 256 (ThreadSafeContext) | 94 us | 1.68 us | 1.68 us | 219 us |
-| set_cell high_fan_out 512 | 125 us | 3.08 us | 3.26 us | 145 us |
-| memo equality (Context) | 988 ns | 34 ns | 34 ns | 3.29 us |
-| effect flushing (Context) | 2.39 us | 127 ns | 87 ns | 99 ns |
-| batch storms 64 (Context) | 63 us | 4.45 us | 4.22 us | 3.85 us |
-| scale build 1M | 1.28 s | 169 ms | 130 ms | 105 ms |
-| scale full_recalc 10M | — | 1.61 s | 778 ms | — |
-| scale viewport_recalc 1M | 439 us | 39 us | 35 us | 16 us |
+| Metric | lazily-cpp 0.1.0 | lazily-cpp 0.2.0 | lazily-cpp 0.5.0 | lazily-cpp 0.6.0 | lazily-rs |
+|---|---:|---:|---:|---:|---:|
+| cached read (Context) | 304 ns | 19 ns | 23 ns | 22 ns | 10.5 ns |
+| cached read (ThreadSafeContext) | 411 ns | 22 ns | 22 ns | 22 ns | 67 ns |
+| cold first get (Context) | 2.52 us | 88 ns | 97 ns | 85 ns | 93 ns |
+| cold first get (ThreadSafeContext) | 2.79 us | 98 ns | 107 ns | 95 ns | 1.13 us |
+| fan-out 256 (Context) | 88 us | 1.05 us | 1.12 us | 1.05 us | 72 us |
+| fan-out 256 (ThreadSafeContext) | 94 us | 1.68 us | 1.68 us | 1.6 us | 219 us |
+| set_cell high_fan_out 512 | 125 us | 3.08 us | 3.26 us | 3.2 us | 145 us |
+| memo equality (Context) | 988 ns | 34 ns | 34 ns | 34 ns | 3.29 us |
+| effect flushing (Context) | 2.39 us | 127 ns | 87 ns | 85 ns | 99 ns |
+| batch storms 64 (Context) | 63 us | 4.45 us | 4.22 us | **1.55 us** | 3.85 us |
+| scale build 1M | 1.28 s | 169 ms | 130 ms | 123 ms | 105 ms |
+| scale cold_full_recalc 1M | — | — | 111 ms | **36 ms** | 106 ms |
+| scale full_recalc 10M | — | 1.61 s | 778 ms | **740 ms** | — |
+| scale viewport_recalc 1M | 439 us | 39 us | 35 us | 35 us | 16 us |
 
-**Honest read:** v0.3.0 keeps the micro-benchmark wins from v0.2.0 (numbers are
-within run-to-run noise) and adds real gains on the **recompute paths**: scale
-`full_recalc_invalidate_all` at 10M dropped from 1.61 s → 0.78 s (~2×) and
-`cold_full_recalc` at 10M from 1.12 s → 0.83 s (~28%), from moving compute/effect
-closures off `std::shared_ptr` (atomic) onto non-atomic `RcPtr`. lazily-cpp now
-**beats lazily-rs** on effect flushing (87 ns vs 99 ns) and stays ahead on
-fan-out 256, set_cell high_fan_out, and memo equality.
+**Honest read:** v0.6.0 (`SmallAny` inline value storage, optimization B) lands
+the biggest recompute win yet: `cold_full_recalc` at 1M drops to **36 ms (vs
+lazily-rs 106 ms — ~3× faster)** and at 10M to **415 ms (~41 ns/formula)**;
+`batch_storms 64` to **1.55 µs (now beats lazily-rs 3.85 µs)**. lazily-cpp also
+beats lazily-rs on effect flushing, fan-out 256, set_cell high_fan_out, and memo
+equality.
 
-lazily-rs retains an edge on scale build (105 ms vs 130 ms at 1M). The remaining
-gap is the per-cell value allocation (`new RcBox<T>` on every cell —
-optimization B, inline value storage, not yet done) vs Rust's `Rc<T>`
-monomorphization — an architectural difference that keeps the C++ API
-type-erased but costs one allocation per node.
+lazily-rs retains an edge on **scale build** (105 ms vs 123 ms at 1M). Build is
+now dominated by the per-slot **closure** allocation (`RcPtr<RcBox<ComputeFn>>`,
+optimization C), not the per-cell value allocation (B removed that). Closing the
+build gap would need inline closures — but typical compute closures exceed the
+inline buffer, so most would heap-alloc regardless.
 
 The key optimizations across versions:
 1. `SmallFn` eliminated per-node `std::function` heap allocations (v0.2.0)
 2. `SmallVec` eliminated per-edge `std::vector` heap allocations for 0–2 edges (v0.2.0)
 3. Function-pointer `EqualsFn` shrank `SlotNode` by 24 bytes (better cache) (v0.2.0)
-4. `Context::reserve()` eliminated vector reallocation during bulk construction
+4. `Context::reserve()` eliminated vector reallocation during bulk construction (v0.2.0)
+5. Non-atomic `RcPtr` compute/effect closures (v0.3.0, optimization C)
+6. `SmallAny` inline value storage — zero per-value allocation for small POD (v0.6.0, B)
+7. Alloc-free batch bookkeeping (v0.6.0, E)
 
 ## Cross-language comparison (lazily-rs / lazily-cpp / lazily-zig)
 
@@ -355,16 +398,16 @@ comparable on a wall-clock axis. See
 
 | Metric | lazily-rs | lazily-cpp | lazily-zig |
 |---|---:|---:|---:|
-| build (2N nodes) | 105 ms | 130 ms | 132 ms |
-| cold full recalc | 106 ms | 111 ms | 381 ms |
+| build (2N nodes) | 105 ms | 123 ms | 132 ms |
+| cold full recalc | 106 ms | 36 ms | 381 ms |
 | viewport recalc (edit 1, read 1k) | 15.6 µs | 35.1 µs | 6.4 µs |
 
 ### Scale — 10M cells (full Google Sheets workbook capacity)
 
 | Metric | lazily-rs | lazily-cpp | lazily-zig |
 |---|---:|---:|---:|
-| build | 706 ms | 1.383 s | 1.13 s |
-| cold full recalc | 518 ms | 827 ms | 2.26 s |
+| build | 706 ms | 1.41 s | 1.13 s |
+| cold full recalc | 518 ms | 415 ms | 2.26 s |
 | viewport recalc | 11.4 µs | 43.8 µs | 6.6 µs |
 
 **Honest read:** lazily-cpp's type-erased `SmallFn` + `SmallVec` node layout

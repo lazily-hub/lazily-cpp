@@ -12,6 +12,7 @@ workspace) for the lock-free evaluation that governs the A*/CAS gates.
 | v0.3.0 | **C** — non-atomic compute/effect closures + contention-throughput harness + `RcPtr::adopt_t` fix | `cold_full_recalc` ~28% faster, `full_recalc` ~2× faster (10M); first real contention baseline exposed the single-mutex load cliff |
 | v0.4.0 | **A** — opt-in `RwThreadSafeContext` (`shared_mutex`) | Cached reads scale ~2.6× at 16 threads (plateau: shared_mutex serializes shared acquires on one atomic) |
 | v0.5.0 | **A2** — opt-in `ScalableThreadSafeContext` (`ScalableRwLock`, per-cacheline reader counters) | Cached reads scale **near-linearly**: 58 → 925 Mops/s (1→16 threads), ~73× the A plateau; TSan-clean |
+| v0.6.0 | **B** — `SmallAny` inline value storage (zero per-value alloc for small POD) + **E** — alloc-free batch bookkeeping | `cold_full_recalc` ~3× faster (1M: 36 ms; 10M: 415 ms, ~41 ns/formula); `batch_storms 64` ~2.7× faster (1.55 µs); build flat (now closure-alloc-bound) |
 
 The default `ThreadSafeContext` (recursive mutex) is byte-for-byte unchanged
 across all of the above — every read-scaling policy is opt-in, so existing users
@@ -46,22 +47,27 @@ memory ordering, ABA, reclamation safety). Validate under TSan + a model checker
 
 ## Recommended next paths (priority order)
 
-### B — inline value storage  ·  **HIGH**  ·  helps writes + build + scale
+> ✅ **B** (inline value storage) and **E** (alloc-free batch bookkeeping)
+> shipped in v0.6.0 — see the table above. Remaining:
 
-Every `set_cell` / cell-creation does `new RcBox<T>` (one heap allocation per
-value, even for `CellHandle<int>`). Store trivially-copyable / small values
-**inline** in the node (a small-buffer `AnyValue` variant: inline-by-value vs
-boxed), boxing only on escape. Expected:
-- `set_cell` write throughput up (alloc is a meaningful slice of `set_cell
-  high_fan_out 512` = 3.26 µs).
-- **Scale build** (1.38 s / 10M cells ≈ 69 ns/node, much of it the per-cell
-  `new`) — likely the biggest single build win, ~30–50% if the alloc dominates.
-- Less allocator pressure under sustained writes (real-world streaming input /
-  telemetry / CRDT apply).
+### Distributed-computing paths — **next up** (measure-first)
 
-Risk: medium — touches the type-erased `AnyValue` storage (the core abstraction).
-Keep the boxing fallback for large/non-trivial `T`. Scope: `rc_ptr.hpp`
-(`AnyValue` layout) + `context.hpp` (make/assign sites). **Highest-value remaining lever.**
+When lazily powers distributed systems, the bottleneck shifts **off** the
+in-process reactive core (where B/C/E lived) and **onto** IPC, serialization,
+CRDT merge, and cross-process coordination. The first step is **benchmarking**
+these subsystems (the same measure-first discipline that gated A/A2/A3) before
+optimizing — do not optimize blind.
+
+- **IPC zero-copy hot path** — extend `ShmBlobArena` usage so hot
+  snapshot/delta/CrdtSync messages avoid copy across the FFI/process boundary
+  (`ipc.hpp`). Distributed throughput is usually IPC/serialize-bound before the
+  reactive core is. **Highest-value for distributed.** Start: add an IPC
+  serialize/deserialize micro-benchmark, measure, then target the copies.
+- **CRDT anti-entropy throughput** — `delta_since` / `apply_delta` /
+  dotted-frontier merge on `TextCrdt` / `SeqCrdt` / `LosslessTreeCrdt` under
+  frequent sync. Benchmark + optimize merge (currently correctness-first).
+  Directly affects distributed convergence speed. Start: a merge-throughput
+  benchmark.
 
 ### D — per-kind node vectors (SoA)  ·  **MEDIUM**  ·  helps large-graph scale
 
@@ -75,40 +81,23 @@ graphs / micro-benchmarks.
 
 Risk: high — large refactor of the engine's node storage and every
 `get_slot_node`/`get_cell_node` accessor. Gate behind benchmarks; do only if
-large-graph scale (not single-doc reactive UI) is a real target. **D and B are
-the two architectural levers on the in-process core.**
+large-graph scale (not single-doc reactive UI) is a real target. Now that B
+lowered per-cell value RSS, D's density win is smaller than originally
+estimated — re-measure before committing.
 
-### E — allocation-free batch bookkeeping  ·  **LOW–MEDIUM**  ·  helps batch storms
+### E (done) / B (done)
 
-`batched_cells_` / `scheduled_effects_` / `batched_*` are
-`std::unordered_set<SlotId>` → bucket allocations under batch storms. Replace
-with a bitset over the node arena (or a flat vector + mark byte): allocation-free,
-cache-friendlier. Expected: `batch_storms 64` (4.2 µs) improvement, and helps
-sustained batched-write throughput.
+Shipped v0.6.0. See the Shipped table. (Kept here as historical anchors for the
+sequencing rationale and the closure-alloc note under B: build is now
+closure-bound, so the remaining build gap vs lazily-rs needs inline closures —
+low payoff since typical closures exceed the inline buffer.)
 
-Risk: low–medium — localized to the batch path in `context.hpp`. Good first
-"engine internals" change if scoping D feels too large.
+### AsyncContext / NUMA / backpressure (lower priority)
 
-## Distributed-computing paths (when lazily is the substrate, not just agent-doc)
-
-When lazily powers distributed systems, the bottleneck shifts **off** the
-in-process reactive core (where B/D/E live) and **onto** IPC, serialization,
-CRDT merge, and cross-process coordination. Prioritize these for distributed
-deployments:
-
-- **IPC zero-copy hot path** — extend `ShmBlobArena` usage so hot
-  snapshot/delta/CrdtSync messages avoid copy across the FFI/process boundary
-  (`ipc.hpp`). Distributed throughput is usually IPC/serialize-bound before the
-  reactive core is. **Highest-value for distributed.**
-- **CRDT anti-entropy throughput** — `delta_since` / `apply_delta` /
-  dotted-frontier merge on `TextCrdt` / `SeqCrdt` / `LosslessTreeCrdt` under
-  frequent sync. Benchmark + optimize merge (currently correctness-first).
-  Directly affects distributed convergence speed.
 - **AsyncContext work-stealing parallel recompute** — `AsyncContext` uses one
   `std::future` per compute (`std::thread` underneath). For independent subgraph
-  recomputation (embarrassingly parallel derived slots), a work-stealing thread
-  pool would parallelize recompute across cores. New primitive, not a
-  regression risk to the sync contexts.
+  recomputation, a work-stealing thread pool parallelizes recompute across
+  cores. New primitive, no regression risk to the sync contexts.
 - **NUMA-aware scalable-lock pool** — `ScalableRwLock`'s 128-slot reader pool
   isn't NUMA-aware; on multi-socket boxes a writer's drain scan crosses NUMA
   nodes. Pool-partition by NUMA node if A2 is deployed on big boxes.
@@ -118,12 +107,12 @@ deployments:
 
 ## Sequencing recommendation
 
-1. **B** (inline value storage) — biggest write/build/scale win, unblocks the
-   cleanest future A3 if ever needed.
-2. **E** (allocation-free batch) — low-risk, do alongside or after B.
-3. **IPC zero-copy** + **CRDT merge throughput** — once distributed deployments
-   are the target, these dominate over further in-process-core work.
-4. **D** (SoA nodes) — only if large-graph scale (≥10M cells) is a real product
-   target; otherwise the density win isn't worth the refactor risk.
-5. **A3** — only if B is done AND a distributed workload proves
-   read-tail-latency-under-writes is a real bottleneck.
+1. ~~**B**~~ ✅ v0.6.0 + ~~**E**~~ ✅ v0.6.0.
+2. **Distributed (IPC zero-copy + CRDT merge)** — measure-first (add benchmarks,
+   find the real bottleneck), then optimize. Dominates over further in-process
+   work once lazily is a distributed substrate.
+3. **D** (SoA nodes) — only if re-measured large-graph scale (≥10M cells) is a
+   real product target; B reduced its payoff.
+4. **A3** — only if a real distributed workload proves read-tail-latency-under-
+   writes is a bottleneck (B no longer blocks it, but the memory-safety risk of
+   hazard/epoch reclamation remains the gating concern).

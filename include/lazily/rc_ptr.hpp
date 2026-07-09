@@ -6,6 +6,8 @@
 #include <type_traits>
 #include <utility>
 
+#include <lazily/small_any.hpp>
+
 namespace lazily {
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -275,25 +277,34 @@ const T* arc_any_cast(const ArcPtr<ArcAny>& p) noexcept {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Traits — select Rc (non-atomic) or Arc (atomic) for Context value storage.
+// Traits — select value storage for Context.
+//
+// RcTraits (default, shipped) uses SmallAny — a small-buffer-optimised value
+// (optimization B): trivially-copyable values up to SmallAny's buffer size are
+// stored inline with zero allocation; larger values allocate once. Context
+// values are single-owner and move-only, so no refcount is required.
+//
+// ArcTraits (atomic-refcount values via ArcPtr<ArcAny>) is retained for a
+// potential future lock-free read path (see ROADMAP A3); it is not used by any
+// shipped context today.
 // ═══════════════════════════════════════════════════════════════════════════
 
 struct RcTraits {
-  using AnyValue = RcPtr<RcAny>;
+  using AnyValue = SmallAny<>;
 
   template <typename T, typename... Args>
   static AnyValue make(Args&&... args) {
-    return make_rc<T>(std::forward<Args>(args)...);
+    return SmallAny<>::make<T>(std::forward<Args>(args)...);
   }
 
   template <typename T>
   static const T* cast(const AnyValue& v) noexcept {
-    return rc_any_cast<T>(v);
+    return v.as<T>();
   }
 
   template <typename T>
   static T* cast_mut(AnyValue& v) noexcept {
-    return rc_any_cast<T>(v.get());
+    return v.as_mut<T>();
   }
 };
 

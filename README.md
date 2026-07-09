@@ -83,8 +83,9 @@ Micro-benchmarks on `x86_64` with GCC 16, C++17 (`-O3`). Full results in
 | batch storms 64 | 4.22 us | 3.63 us |
 
 **Scale (up to 10M cells — Google Sheets capacity, 20M nodes):** build ~1.4 s,
-cold recalc ~0.83 s, viewport recalc (edit 1, read 1k) **~44 us** — independent
-of sheet size thanks to the lazy pull-based model. Full table in
+**cold recalc ~415 ms (~41 ns/formula — ~3× faster than lazily-rs at 1M)**,
+viewport recalc (edit 1, read 1k) **~44 us** — independent of sheet size thanks
+to the lazy pull-based model. Full table in
 [BENCHMARKS.md](BENCHMARKS.md#scale-up-to-10m-cells--google-sheets-capacity--lzscalebench).
 
 **Thread-safe concurrency (v0.5.0):** three opt-in lock policies ship. The
@@ -241,8 +242,9 @@ target_link_libraries(your_target PRIVATE lazily)
 |--------|--------|
 | `context.hpp` | Reactive graph core (Context, Slot, Cell, Signal, Effect, Memo, batch) |
 | `small_fn.hpp` | SmallFn — small-buffer-optimized type-erased callable |
+| `small_any.hpp` | SmallAny — small-buffer type-erased value (inline value storage, optimization B) |
 | `small_vec.hpp` | SmallVec — inline edge storage (0–2 elements inline, heap fallback) |
-| `rc_ptr.hpp` | RcPtr/ArcPtr smart pointers, RcAny/ArcAny type-erased values, RcTraits/ArcTraits |
+| `rc_ptr.hpp` | RcPtr/ArcPtr smart pointers (closures), RcTraits/ArcTraits value-storage traits |
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |

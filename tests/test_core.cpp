@@ -278,6 +278,35 @@ TEST(test_string_values) {
   assert(ctx.get(greeting) == "Hello, bob!");
 }
 
+// SmallAny (optimization B): inline fast path for trivially-copyable values,
+// heap fallback for larger/non-trivial ones; move + reset semantics.
+TEST(test_small_any) {
+  SmallAny<> a = SmallAny<>::make<int>(7);          // inline (int <= 16B, trivial)
+  assert(static_cast<bool>(a));
+  assert(*a.as<int>() == 7);
+  SmallAny<> b = SmallAny<>::make<int>(123);
+  a = std::move(b);                                  // move-assign (inline relocate)
+  assert(*a.as<int>() == 123);
+  assert(!static_cast<bool>(b));                     // moved-from is empty
+  SmallAny<> c(std::move(a));                        // move-ctor
+  assert(*c.as<int>() == 123);
+
+  SmallAny<> s = SmallAny<>::make<std::string>("hello world");  // heap (>16B)
+  assert(*s.as<std::string>() == "hello world");
+  SmallAny<> s2 = std::move(s);                      // move heap (pointer relocate)
+  assert(*s2.as<std::string>() == "hello world");
+  s2.reset();
+  assert(!static_cast<bool>(s2));
+
+  // Larger-than-buffer trivially-copyable also goes heap (size > BufSize).
+  struct BigPod {
+    int xs[8];
+  };
+  static_assert(sizeof(BigPod) > 16, "should exceed the inline buffer");
+  SmallAny<> fit = SmallAny<>::make<BigPod>(BigPod{{1, 2, 3, 4, 5, 6, 7, 8}});
+  assert(fit.as<BigPod>()->xs[7] == 8);
+}
+
 int main() {
   std::cout << "lazily-cpp core tests: " << test_passed << "/" << test_count
             << " passed" << std::endl;
