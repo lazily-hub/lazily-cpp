@@ -96,6 +96,10 @@ plateau)**, at the cost of slower writes (writer scans a 128-slot reader pool).
 Validated race-free under ThreadSanitizer. Choose by workload — see
 [BENCHMARKS.md](BENCHMARKS.md#thread-safe-concurrency--read-scaling).
 
+**Performance roadmap:** [ROADMAP.md](ROADMAP.md) — shipped optimizations
+(v0.3.0–v0.5.0), the A3 lock-free analysis, and recommended next paths
+(B inline value storage, D/E node-layout, distributed-computing IPC/CRDT paths).
+
 ## Usage
 
 ```cpp
