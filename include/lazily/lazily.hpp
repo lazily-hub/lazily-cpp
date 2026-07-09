@@ -23,6 +23,7 @@
 #include <lazily/state_machine.hpp>
 #include <lazily/statechart.hpp>
 #include <lazily/thread_safe.hpp>
+#include <lazily/transport.hpp>
 #include <lazily/types.hpp>
 
 #endif  // LAZILY_LAZILY_HPP

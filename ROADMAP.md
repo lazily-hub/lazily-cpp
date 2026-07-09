@@ -83,10 +83,20 @@ Remaining distributed work (measured, queued):
   push_back for append). Remote ops invalidate; rebuild via `traverse`. 100k-cell
   build now completes (previously hung). Pathological mid-inserts still O(n)/op
   (vector splice) — O(log n) order-statistics tree deferred until measured.
-- **IPC zero-copy across the FFI/process boundary** — with the codec + checksum
-  cache + `read_view` landed, the remaining work is the transport: pass a
-  `ShmBlobRef` descriptor across processes (over the msgpack codec) instead of
-  copying `IpcValueInline` bytes. All primitives are now in place.
+- ✅ **Cross-process zero-copy transport** (`include/lazily/transport.hpp`) —
+  pluggable `BlobBackend` interface + `InProcessBackend` (wraps `ShmBlobArena`)
+  + `ShmBackend` (POSIX shm, Linux, validated by a `fork()` cross-process smoke
+  test) + `BlobRouter` (routes by descriptor `backend` kind) + spill/resolve
+  policy. Wire shrinks ~459× at 64 KB; resolve zero-copy (~17 ns). Apache Arrow
+  plugs in as a consumer-provided `BlobBackend` (no vendored dep). `ShmBlobRef`
+  gains the optional `backend` discriminator (spec-faithful, backward-compatible).
+  Spec: lazily-spec `zero-copy-transport.md`; formal: lazily-formal
+  `ZeroCopyTransport.lean`. v0.7.0.
+- **IPC cross-process transport adapters** — `in_process` + `shm` (Linux) ship;
+  `arrow` is consumer-provided (bring-your-own Arrow buffers behind the
+  `BlobBackend` seam). A managed shm region with reclamation/GC (vs the current
+  bump allocator) and a hardware-CRC checksum (vs the FNV pinned by the arena
+  contract) are future adapters/levers.
 - **Codec compactness / decode allocation** — string-keyed maps are ~62 B/node;
   a positional-array encoding (still msgpack, schema-versioned) would be ~2–3×
   smaller. Decode does per-key `std::string` / per-bin `std::vector` allocation

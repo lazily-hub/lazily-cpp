@@ -54,7 +54,31 @@ class NodeKey {
   std::string path_;
 };
 
-// -- ShmBlobRef: descriptor into shared-memory arena --
+// -- BlobBackendKind: which pluggable backend holds a blob (zero-copy transport) --
+//
+// Spec: lazily-spec/docs/zero-copy-transport.md. The descriptor (ShmBlobRef)
+// carries this discriminator so a receiver routes resolution to the right
+// backend. Defaults to `Shm` for backward compatibility (legacy descriptors
+// absent the field resolve as POSIX shared memory).
+
+enum class BlobBackendKind : uint8_t { Shm, Arrow, InProcess };
+
+inline const char* blob_backend_kind_str(BlobBackendKind k) {
+  switch (k) {
+    case BlobBackendKind::Shm: return "shm";
+    case BlobBackendKind::Arrow: return "arrow";
+    case BlobBackendKind::InProcess: return "in_process";
+  }
+  return "shm";
+}
+
+inline BlobBackendKind blob_backend_kind_from_str(const std::string& s) {
+  if (s == "arrow") return BlobBackendKind::Arrow;
+  if (s == "in_process") return BlobBackendKind::InProcess;
+  return BlobBackendKind::Shm;  // default (covers absent/unknown → shm)
+}
+
+// -- ShmBlobRef: descriptor into a blob backend --
 
 struct ShmBlobRef {
   int64_t offset;
@@ -62,6 +86,7 @@ struct ShmBlobRef {
   int64_t generation;
   int64_t epoch;
   int64_t checksum;
+  BlobBackendKind backend = BlobBackendKind::Shm;  // optional; defaults to Shm
 
   static bool validate(const ShmBlobRef& ref, std::optional<int64_t> max_len = std::nullopt) {
     if (ref.offset < 0 || ref.len < 0 || ref.generation < 0 || ref.epoch < 0 || ref.checksum < 0)

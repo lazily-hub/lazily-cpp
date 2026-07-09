@@ -64,6 +64,9 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | distributed | crdt_sync delta_since_empty @ 10k | 82.000 us | 20 |
 | distributed | shm_blob read @ 4KB | 56.000 ns | 10000 |
 | distributed | shm_blob read_view @ 64KB | 16.000 ns | 10000 |
+| distributed | transport wire_spilled @ 64KB | 143.000 B | 1 |
+| distributed | transport encode_decode_spilled @ 64KB | 342.000 ns | 500 |
+| distributed | transport resolve @ 64KB | 17.000 ns | 2000 |
 | distributed | codec encode @ 10k nodes/619KB | 355.000 us | 20 |
 | distributed | codec decode @ 10k nodes/619KB | 1.187 ms | 20 |
 | scale | build / 100000 | 10.800 ms | 1 |
@@ -586,6 +589,41 @@ benchmark is now feasible (previously hung on the build).
 Pathological case still O(n)/op: arbitrary-position inserts into the middle of a
 very large doc pay the vector splice (shift). A truly O(log n) order-statistics
 tree is not warranted until that pattern is a measured bottleneck.
+
+## Zero-copy transport (`transport.hpp`)
+
+Spec: `lazily-spec/docs/zero-copy-transport.md`. Formal:
+`lazily-formal/LazilyFormal/ZeroCopyTransport.lean`. A large payload is spilled
+to a pluggable `BlobBackend` (`InProcessBackend` wraps `ShmBlobArena`;
+`ShmBackend` is POSIX shm, Linux; an Apache Arrow adapter plugs in via the same
+interface). Only a small `Descriptor` crosses the wire; the receiver resolves it
+zero-copy. The benchmark splits the components so the trade-off is honest:
+
+| payload | write_spill (1-time) | encode_decode inline | encode_decode spilled | resolve (zero-copy) | wire inline | wire spilled |
+|---:|---:|---:|---:|---:|---:|---:|
+| 256 B | 236 ns | 238 ns | 351 ns | 17 ns | 329 B | 141 B |
+| 4 KB | 3.2 µs | 303 ns | 356 ns | 17 ns | 4169 B | 141 B |
+| 64 KB | 50 µs | 1.56 µs | 342 ns | 17 ns | 65611 B | **143 B** |
+
+- **Wire shrinks ~459× at 64 KB** (143 B vs 65611 B) — the headline for real
+  network/IPC channels, where transferred bytes dominate.
+- **Spilled encode/decode is ~constant** (~350 ns) regardless of payload size —
+  only the descriptor crosses the codec.
+- **Resolve is zero-copy** (~17 ns constant) — the receiver reads the backend's
+  own bytes; no copy, no checksum recompute.
+- **`write_spill` is the one-time producer cost** (copy into the arena + the
+  FNV-1a checksum), **amortized over N receivers**. For a single-receiver
+  in-process send it can be dominated by the FNV (50 µs at 64 KB ≈ 1.3 GB/s —
+  the byte-at-a-time FNV is the integrity guarantee pinned by the arena host
+  contract + the formal model). A faster checksum (word-at-a-time / hardware CRC)
+  is a future lever gated on that contract.
+
+`ShmBackend` is validated cross-process by a `fork()` smoke test (parent writes
+to a POSIX shm region; a child in a separate address space resolves the
+descriptor and reads the bytes). Apache Arrow plugs in as a consumer-provided
+`BlobBackend` over Arrow buffers — the descriptor bytes are an Arrow IPC stream
+the receiver imports zero-copy (no vendored Arrow dependency; zero-dep default
+preserved).
 
 ## Benchmark methodology
 

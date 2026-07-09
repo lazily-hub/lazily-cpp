@@ -54,6 +54,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ~ | ~ | ✅ | ✅ | ✅ |
+| Cross-process zero-copy transport (`BlobBackend` / shm / arrow) | — | — | — | — | — | — | — | ✅ |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | State projection / mirror | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -100,6 +101,13 @@ Validated race-free under ThreadSanitizer. Choose by workload — see
 **Performance roadmap:** [ROADMAP.md](ROADMAP.md) — shipped optimizations
 (v0.3.0–v0.5.0), the A3 lock-free analysis, and recommended next paths
 (B inline value storage, D/E node-layout, distributed-computing IPC/CRDT paths).
+
+**Cross-process zero-copy transport (v0.7.0):** large payloads cross the IPC
+plane as small descriptors (not copies) via a pluggable `BlobBackend` —
+`InProcessBackend` (wraps `ShmBlobArena`), `ShmBackend` (POSIX shm, Linux), and
+an Apache Arrow adapter (consumer-provided). Wire shrinks ~459× at 64 KB;
+resolve is zero-copy. Spec: lazily-spec `zero-copy-transport.md`. See
+[BENCHMARKS.md](BENCHMARKS.md#zero-copy-transport-transporthpp).
 
 ## Usage
 
@@ -259,6 +267,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake |
 | `codec.hpp` | msgpack wire codec — `encode`/`decode` the `IpcMessage` tree |
 | `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker |
+| `transport.hpp` | Cross-process zero-copy transport — pluggable `BlobBackend` (`InProcessBackend`/`ShmBackend`), spill/resolve, `BlobRouter` |
 | `receipt.hpp` | Causal receipts, StateProjectionMirror |
 | `command.hpp` | Command plane (command-plane-v1), CrdtPlaneRuntime, instrumentation |
 | `signaling.hpp` | WebRTC signaling room (peer discovery, SDP/ICE relay) |

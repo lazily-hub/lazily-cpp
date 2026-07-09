@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(lazily-cpp
-  VERSION 0.6.0
+  VERSION 0.7.0
   LANGUAGES CXX
 )
 
@@ -25,6 +25,12 @@ target_include_directories(lazily
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(lazily INTERFACE cxx_std_17)
+# transport.hpp's ShmBackend (POSIX shm_open/mmap, Linux) needs _GNU_SOURCE for
+# the shm_* declarations. Propagate it on Linux so consumers using the umbrella
+# header compile cleanly (additive macro, standard for Linux C++ libs).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(lazily INTERFACE _GNU_SOURCE)
+endif()
 
 if(LAZILY_BUILD_FFI)
   add_library(lazily_ffi SHARED

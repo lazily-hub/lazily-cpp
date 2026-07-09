@@ -504,6 +504,49 @@ void bench_shm_blob() {
   }
 }
 
+// -- Zero-copy transport (write / wire / resolve) --
+//
+// Splits the transport into its honest components so the trade-off is clear:
+//   - write_spill: the one-time producer cost (copy into arena + FNV checksum),
+//     amortized over N receivers;
+//   - encode_decode_{inline,spilled}: the wire/codec cost — scales with wire
+//     bytes, so a spilled message (tiny descriptor) stays ~constant as payload
+//     grows, while inline grows with the payload;
+//   - resolve: the receiver-side zero-copy read (~constant, no copy, no rehash).
+void bench_transport() {
+  for (long long sz : {256, 4096, 65536}) {
+    std::vector<uint8_t> payload(static_cast<size_t>(sz), 0x5A);
+    std::string label = std::to_string(sz);
+
+    bench("transport", "write_spill / " + label + "B", 200, [&]() {
+      InProcessBackend b;
+      (void)b.write(payload);
+    });
+
+    InProcessBackend backend;
+    BlobRouter router;
+    router.register_backend(backend);
+    ShmBlobRef ref = backend.write(payload);
+
+    IpcMessage mi = IpcMessageDelta{Delta{1, 2, {DeltaOpSlotValue{1, IpcValueInline{payload}}}}};
+    IpcMessage ms = IpcMessageDelta{Delta{1, 2, {DeltaOpSlotValue{1, IpcValueSharedBlob{ref}}}}};
+    size_t inline_wire = encode(mi).size();
+    size_t spill_wire = encode(ms).size();
+
+    bench("transport", "encode_decode_inline / " + label + "B", 500, [&]() {
+      (void)decode(encode(mi));
+    });
+    bench("transport", "encode_decode_spilled / " + label + "B", 500, [&]() {
+      (void)decode(encode(ms));
+    });
+    bench("transport", "resolve / " + label + "B", 2000, [&]() {
+      (void)backend.read_view(ref);
+    });
+    report("transport", "wire_inline / " + label + "B", static_cast<double>(inline_wire), 1, "B");
+    report("transport", "wire_spilled / " + label + "B", static_cast<double>(spill_wire), 1, "B");
+  }
+}
+
 // -- Scale benchmark --
 void bench_scale() {
   for (long long n : {100000, 1000000, 2000000, 10000000}) {
@@ -582,6 +625,7 @@ int main() {
   bench_crdt_sync();
   bench_shm_blob();
   bench_codec();
+  bench_transport();
   bench_scale();
 
   print_results();

@@ -30,12 +30,13 @@ namespace lazily {
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
 inline void pack_shm_blob_ref(MsgPacker& p, const ShmBlobRef& r) {
-  p.map_header(5);
+  p.map_header(6);
   p.str("offset");     p.i64(r.offset);
   p.str("len");        p.i64(r.len);
   p.str("generation"); p.i64(r.generation);
   p.str("epoch");      p.i64(r.epoch);
   p.str("checksum");   p.i64(r.checksum);
+  p.str("backend");    p.str(blob_backend_kind_str(r.backend));
 }
 inline ShmBlobRef unpack_shm_blob_ref(MsgUnpacker& u) {
   ShmBlobRef r{};
@@ -47,6 +48,7 @@ inline ShmBlobRef unpack_shm_blob_ref(MsgUnpacker& u) {
     else if (k == "generation") r.generation = u.read_i64();
     else if (k == "epoch") r.epoch = u.read_i64();
     else if (k == "checksum") r.checksum = u.read_i64();
+    else if (k == "backend") r.backend = blob_backend_kind_from_str(u.read_str());
     else u.skip();
   }
   return r;

@@ -34,6 +34,10 @@ add_executable(test_codec test_codec.cpp)
 target_link_libraries(test_codec PRIVATE lazily)
 add_test(NAME codec COMMAND test_codec)
 
+add_executable(test_transport test_transport.cpp)
+target_link_libraries(test_transport PRIVATE lazily)
+add_test(NAME transport COMMAND test_transport)
+
 # Optional, heavier TSan harness (not in the default suite). Build & run with:
 #   cmake -S . -B build -DLAZILY_BUILD_TSAN_TEST=ON \
 #     -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
