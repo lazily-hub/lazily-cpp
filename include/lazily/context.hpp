@@ -232,6 +232,35 @@ class ContextImpl {
     return std::make_shared<T>(*Traits::template cast<T>(cell->value));
   }
 
+  // ── Read-only cache peeks (no mutation) ──
+  //
+  // Safe to call under a shared lock: they neither mutate node state nor copy
+  // the ref-counted AnyValue handle (they copy the boxed T by value through a
+  // stable, immutably-published pointer). Used by ThreadSafeContext's shared
+  // read fast path.
+  template <typename T>
+  std::optional<T> try_get_cached(const SlotHandle<T>& handle) const {
+    auto idx = node_index(handle.id);
+    if (!idx || *idx >= nodes_.size()) return std::nullopt;
+    auto& n = nodes_[*idx];
+    if (!n) return std::nullopt;
+    const SlotNode* slot = std::get_if<SlotNode>(&n.value());
+    if (!slot || !slot->value || slot->dirty || slot->force_recompute)
+      return std::nullopt;
+    return *Traits::template cast<T>(slot->value);
+  }
+
+  template <typename T>
+  std::optional<T> peek_cell(const CellHandle<T>& handle) const {
+    auto idx = node_index(handle.id);
+    if (!idx || *idx >= nodes_.size()) return std::nullopt;
+    auto& n = nodes_[*idx];
+    if (!n) return std::nullopt;
+    const CellNode* cell = std::get_if<CellNode>(&n.value());
+    if (!cell || !cell->value) return std::nullopt;
+    return *Traits::template cast<T>(cell->value);
+  }
+
   template <typename T>
   void set_cell(const CellHandle<T>& handle, T new_value) {
     bool changed;

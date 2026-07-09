@@ -313,20 +313,20 @@ void bench_batch_storms() {
 
 // -- Thread-safe contention --
 //
-// Measures real multi-threaded scaling under the ThreadSafeContext. Each worker
-// thread hammers `set_cell + get` on a shared cell for a fixed wall-clock
-// window; we count COMPLETED ops and report:
-//   - total_throughput (Mops/s) across all N threads  → grows with N if it scales
-//   - per_op_latency  (ns/op)  amortized over all threads
-// Under a single-mutex design throughput stays flat (serialized onto one core)
-// and per-op latency rises ~linearly with N; under a read/write-scalable design
-// throughput climbs and latency stays flat.
-void bench_ts_contention() {
+// Measures real multi-threaded scaling under a ThreadSafeContext variant. Each
+// worker thread hammers `set_cell + get` on a shared cell for a fixed wall-clock
+// window; we count COMPLETED ops and report total throughput (Mops/s) and
+// per-op latency. This is a write-dominated single-cell hotspot: it serializes
+// under any single-writer-cell design; the comparison across lock policies
+// shows the exclusive-acquire cost trade-off (RW's heavier exclusive acquire
+// regresses write-heavy single-thread paths).
+template <typename Ctx>
+void ts_contention_for(const std::string& policy) {
   constexpr int kWindowMs = 30;
   for (int n : {1, 2, 4, 8, 16}) {
-    ThreadSafeContext ctx;
+    Ctx ctx;
     auto cell = ctx.cell(0);
-    auto slot = ctx.slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
+    auto slot = ctx.template slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
     (void)ctx.get(slot);
 
     std::atomic<int> barrier{n};
@@ -362,11 +362,73 @@ void bench_ts_contention() {
     double per_op_ns = total_ops ? window_ns / static_cast<double>(total_ops) : 0.0;
 
     std::string nthr = std::to_string(n);
-    report("thread_safe_contention", "total_throughput / " + nthr,
+    report("contention/" + policy, "total_throughput / " + nthr,
            throughput_mops, n, "Mops/s");
-    report("thread_safe_contention", "per_op_latency / " + nthr,
+    report("contention/" + policy, "per_op_latency / " + nthr,
            per_op_ns, n, {});
   }
+}
+
+void bench_ts_contention() {
+  ts_contention_for<ThreadSafeContext>("recursive");
+  ts_contention_for<RwThreadSafeContext>("rw");
+}
+
+// -- Thread-safe read scaling --
+//
+// Many concurrent CACHED reads with no writes. Recursive policy: reads take an
+// exclusive lock and serialize (no scaling). RW policy: cached reads take a
+// SHARED lock and scale across cores (~1.7× at 16 threads on this host).
+template <typename Ctx>
+void read_scaling_for(const std::string& policy) {
+  constexpr int kWindowMs = 30;
+  for (int n : {1, 2, 4, 8, 16}) {
+    Ctx ctx;
+    auto cell = ctx.cell(42);
+    auto slot = ctx.template slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
+    (void)ctx.get(slot);  // prime cache (clean)
+
+    std::atomic<int> barrier{n};
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> ops{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < n; ++t) {
+      threads.emplace_back([&]() {
+        --barrier;
+        while (barrier > 0) std::this_thread::yield();
+        uint64_t local = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+          (void)ctx.get_cell(cell);
+          (void)ctx.get(slot);
+          ++local;
+        }
+        ops.fetch_add(local, std::memory_order_relaxed);
+      });
+    }
+
+    auto start = clk::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds(kWindowMs));
+    stop.store(true, std::memory_order_relaxed);
+    for (auto& t : threads) t.join();
+    auto end = clk::now();
+
+    double window_ns =
+        std::chrono::duration<double, std::nano>(end - start).count();
+    uint64_t total_ops = ops.load();
+    double throughput_mops = (total_ops / (window_ns / 1e9)) / 1e6;
+    double per_op_ns = total_ops ? window_ns / static_cast<double>(total_ops) : 0.0;
+
+    std::string nthr = std::to_string(n);
+    report("read_scaling/" + policy, "total_throughput / " + nthr,
+           throughput_mops, n, "Mops/s");
+    report("read_scaling/" + policy, "per_op_latency / " + nthr,
+           per_op_ns, n, {});
+  }
+}
+
+void bench_read_scaling() {
+  read_scaling_for<ThreadSafeContext>("recursive");
+  read_scaling_for<RwThreadSafeContext>("rw");
 }
 
 // -- Scale benchmark --
@@ -443,6 +505,7 @@ int main() {
   bench_effect_flushing();
   bench_batch_storms();
   bench_ts_contention();
+  bench_read_scaling();
   bench_scale();
 
   print_results();

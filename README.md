@@ -87,11 +87,12 @@ cold recalc ~0.83 s, viewport recalc (edit 1, read 1k) **~44 us** — independen
 of sheet size thanks to the lazy pull-based model. Full table in
 [BENCHMARKS.md](BENCHMARKS.md#scale-up-to-10m-cells--google-sheets-capacity--lzscalebench).
 
-**Thread-safe contention (v0.3.0):** the first real multi-threaded throughput
-baseline reveals a ~17× throughput collapse from 1 → 16 threads (21 → 1.15
-Mops/s) — the single-mutex serialization cliff. This motivates the read/write
-concurrency work sequenced as the next optimization. See
-[BENCHMARKS.md](BENCHMARKS.md#thread-safe-contention--the-load-cliff).
+**Thread-safe concurrency (v0.4.0):** the default `ThreadSafeContext`
+(recursive mutex) is unchanged from v0.3.0. The new opt-in
+`RwThreadSafeContext` (`shared_mutex`) scales cached reads **~2.6× at 16
+threads** (13 vs 5.1 Mops/s) for read-heavy concurrent loads, at the cost of a
+~2× write-heavy single-thread regression — so it is opt-in, not default. See
+[BENCHMARKS.md](BENCHMARKS.md#thread-safe-concurrency--read-scaling).
 
 ## Usage
 
@@ -241,7 +242,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
-| `thread_safe.hpp` | ThreadSafeContext (recursive_mutex-wrapped Context) |
+| `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex, read-scaling opt-in) |
 | `async_context.hpp` | AsyncContext (Empty/Computing/Resolved/Error lifecycle) |
 | `hlc.hpp` | Hybrid logical clock, StampFrontier |
 | `crdt.hpp` | TextCrdt (+ delta sync), SeqCrdt, LwwRegister, MvRegister, PnCounter |

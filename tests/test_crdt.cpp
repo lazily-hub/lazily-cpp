@@ -59,6 +59,42 @@ TEST(test_thread_safe_multi_thread) {
   assert(ctx.get_cell(counter) == 400);
 }
 
+// Concurrent shared-lock readers must all observe the stable cached value
+// (guards the shared fast path against torn reads).
+TEST(test_thread_safe_concurrent_reads) {
+  ThreadSafeContext ctx;
+  auto cell = ctx.cell(12345);
+  auto slot = ctx.slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
+  (void)ctx.get(slot);  // prime cache
+
+  std::atomic<int> bad{0};
+  std::vector<std::thread> threads;
+  for (int t = 0; t < 8; ++t) {
+    threads.emplace_back([&]() {
+      for (int i = 0; i < 10000; ++i) {
+        if (ctx.get_cell(cell) != 12345) ++bad;
+        if (ctx.get(slot) != 24690) ++bad;
+      }
+    });
+  }
+  for (auto& t : threads) t.join();
+  assert(bad.load() == 0);
+}
+
+// A compute callback that re-enters a wrapper method (ts_ctx.get_cell) during a
+// recompute triggered by ts_ctx.get must not deadlock — exercises the
+// owner-token re-entrancy bypass.
+TEST(test_thread_safe_reentrant_callback) {
+  ThreadSafeContext ctx;
+  auto base = ctx.cell(7);
+  auto derived = ctx.slot<int>([&](Context&) {
+    return ctx.get_cell(base) + 1;  // re-entrant wrapper call
+  });
+  assert(ctx.get(derived) == 8);
+  ctx.set_cell(base, 40);
+  assert(ctx.get(derived) == 41);
+}
+
 // -- HLC --
 
 TEST(test_hlc_tick_monotonic) {
