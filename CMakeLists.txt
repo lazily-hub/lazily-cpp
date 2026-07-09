@@ -1,13 +1,18 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(lazily-cpp
-  VERSION 0.1.0
+  VERSION 0.2.0
   LANGUAGES CXX
 )
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Default to Release build for the whole project unless overridden.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 option(LAZILY_BUILD_TESTS "Build lazily-cpp tests" ON)
 option(LAZILY_BUILD_BENCHMARKS "Build lazily-cpp benchmarks" OFF)

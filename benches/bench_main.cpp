@@ -342,6 +342,7 @@ void bench_scale() {
     {
       auto start = clk::now();
       Context ctx;
+      ctx.reserve(static_cast<size_t>(n) * 2 + 16);
       std::vector<CellHandle<int>> inputs;
       std::vector<SlotHandle<int>> formulas;
       inputs.reserve(n);

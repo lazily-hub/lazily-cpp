@@ -70,20 +70,20 @@ and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
 
 ## Benchmark highlights
 
-Micro-benchmarks on `x86_64` with GCC 16, C++17. Full results in
+Micro-benchmarks on `x86_64` with GCC 16, C++17 (`-O3`). Full results in
 [BENCHMARKS.md](BENCHMARKS.md).
 
 | Benchmark | Context | ThreadSafeContext |
 |---|---:|---:|
-| cached read | 304 ns | 411 ns |
-| cold first get | 2.52 us | 2.79 us |
-| fan-out 256 | 88 us | 94 us |
-| set_cell high_fan_out 512 | 125 us | — |
-| memo equality suppression | 988 ns | 912 ns |
-| batch storms 64 | 63 us | 63 us |
+| cached read | 19 ns | 22 ns |
+| cold first get | 88 ns | 98 ns |
+| fan-out 256 | 1.05 us | 1.68 us |
+| set_cell high_fan_out 512 | 3.08 us | — |
+| memo equality suppression | 34 ns | 39 ns |
+| batch storms 64 | 4.45 us | 4.22 us |
 
-**Scale (1M cells, 2M nodes):** build ~1.28 s, cold recalc ~1.09 s, viewport
-recalc (edit 1, read 1k) **~439 us** — independent of sheet size thanks to the
+**Scale (1M cells, 2M nodes):** build ~169 ms, cold recalc ~94 ms, viewport
+recalc (edit 1, read 1k) **~39 us** — independent of sheet size thanks to the
 lazy pull-based model.
 
 ## Usage
@@ -178,6 +178,11 @@ assert(q.try_pop(ctx).is_closed());    // closed + empty → Closed (≠ Empty)
   Context.
 - **Type erasure** via `std::shared_ptr<void>` + `std::type_index` — the
   Context stores heterogeneous node types in a single `std::variant`.
+- **SmallFn** — small-buffer-optimized type-erased callable (replaces
+  `std::function` for compute/effect closures, zero heap allocation for typical
+  lambdas).
+- **SmallVec** — inline edge storage (same 24-byte footprint as `std::vector`
+  but zero heap allocation for 0–2 edges, the common dependency fan-out).
 - **Pull-based lazy recompute** with dependency tracking, cycle detection, and
   memo equality guard.
 - **Batch coalescing** — cell writes inside a batch defer invalidation to the
@@ -221,6 +226,8 @@ target_link_libraries(your_target PRIVATE lazily)
 | Header | Module |
 |--------|--------|
 | `context.hpp` | Reactive graph core (Context, Slot, Cell, Signal, Effect, Memo, batch) |
+| `small_fn.hpp` | SmallFn — small-buffer-optimized type-erased callable |
+| `small_vec.hpp` | SmallVec — inline edge storage (0–2 elements inline, heap fallback) |
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |

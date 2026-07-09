@@ -14,6 +14,8 @@
 #include <lazily/receipt.hpp>
 #include <lazily/sem_tree.hpp>
 #include <lazily/signaling.hpp>
+#include <lazily/small_fn.hpp>
+#include <lazily/small_vec.hpp>
 #include <lazily/stable_id.hpp>
 #include <lazily/state_machine.hpp>
 #include <lazily/statechart.hpp>

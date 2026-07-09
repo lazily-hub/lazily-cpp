@@ -2,6 +2,8 @@
 #define LAZILY_CONTEXT_HPP
 
 #include <lazily/types.hpp>
+#include <lazily/small_fn.hpp>
+#include <lazily/small_vec.hpp>
 
 #include <cassert>
 #include <deque>
@@ -19,14 +21,13 @@ namespace lazily {
 class Context;
 
 using AnyValue = std::shared_ptr<void>;
-using ComputeFn = std::function<AnyValue(Context&)>;
-using ComputeFnPtr = std::shared_ptr<ComputeFn>;
-using EqualsFn = std::function<bool(const void*, const void*)>;
-using EffectFn = std::function<std::function<void()>(Context&)>;
-using EffectFnPtr = std::shared_ptr<EffectFn>;
 using CleanupFn = std::function<void()>;
-
-using EdgeVec = std::vector<SlotId>;
+using ComputeFn = SmallFn<AnyValue(Context&)>;
+using ComputeFnPtr = std::shared_ptr<ComputeFn>;
+using EqualsFn = bool (*)(const void*, const void*);
+using EffectFn = SmallFn<CleanupFn(Context&)>;
+using EffectFnPtr = std::shared_ptr<EffectFn>;
+using EdgeVec = SmallVec<SlotId, 2>;
 
 inline bool edge_insert(EdgeVec& edges, SlotId id) {
   for (auto& e : edges)
@@ -45,13 +46,13 @@ inline bool edge_remove(EdgeVec& edges, SlotId id) {
   }
   return false;
 }
-
 inline void deque_erase(std::deque<SlotId>& dq, SlotId id) {
-  for (auto it = dq.begin(); it != dq.end();) {
-    if (*it == id)
-      it = dq.erase(it);
-    else
-      ++it;
+  for (size_t i = 0; i < dq.size(); ++i) {
+    if (dq[i] == id) {
+      dq[i] = dq.back();
+      dq.pop_back();
+      return;
+    }
   }
 }
 
@@ -262,7 +263,7 @@ class Context {
     EffectNode node;
     auto run_fn = EffectFn([f = std::forward<F>(run)](Context& ctx) -> CleanupFn {
       f(ctx);
-      return nullptr;
+      return CleanupFn{};
     });
     node.run = std::make_shared<EffectFn>(std::move(run_fn));
     node.force_run = true;
@@ -364,6 +365,12 @@ class Context {
       return id;
     }
     return SlotId(next_id_++);
+  }
+
+  /// Pre-allocate node capacity. Call before bulk-inserting cells/slots
+  /// to avoid repeated vector reallocations.
+  void reserve(size_t capacity) {
+    nodes_.reserve(capacity);
   }
 
  private:
