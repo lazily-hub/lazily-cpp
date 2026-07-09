@@ -256,8 +256,13 @@ class TextCrdt {
  private:
   PeerId peer_;
   int64_t counter_;
-  std::map<OpId, TextElem> elems_;
-  std::map<OpId, std::vector<OpId>> by_origin_;
+  // Hash-indexed (OpId has std::hash). Order is not relied upon: visible order
+  // is established by traverse() which sorts children explicitly, and merge /
+  // apply_delta / delta_since are order-independent (idempotent per op). Using
+  // unordered_map drops per-element RB-tree node allocation + O(log n) ops to
+  // O(1) avg — a direct win on every insert / merge / delta-apply.
+  std::unordered_map<OpId, TextElem> elems_;
+  std::unordered_map<OpId, std::vector<OpId>> by_origin_;
 
   OpId next_id() { return {++counter_, peer_}; }
 

@@ -433,6 +433,51 @@ void bench_read_scaling() {
   read_scaling_for<ScalableThreadSafeContext>("scalable");
 }
 
+// -- CRDT delta sync (distributed convergence hot path) --
+//
+// Measures the three core TextCrdt anti-entropy operations at realistic doc
+// sizes: version_vector() (full elems_ scan), delta_since(empty) (build all
+// TextOps for an initial sync), and apply_delta(all) (insert all into a fresh
+// peer). These dominate distributed convergence speed.
+void bench_crdt_sync() {
+  for (long long n : {1000, 10000}) {
+    TextCrdt a = TextCrdt::from_str(1, std::string(static_cast<size_t>(n), 'x'));
+    TextCrdt::VersionVector vv_empty;
+    auto delta = a.delta_since(vv_empty);
+    std::string label = std::to_string(n);
+
+    bench("crdt_sync", "version_vector / " + label, 20,
+          [&]() { (void)a.version_vector(); });
+    bench("crdt_sync", "delta_since_empty / " + label, 20,
+          [&]() { (void)a.delta_since(vv_empty); });
+    bench("crdt_sync", "apply_delta_full / " + label, 20, [&]() {
+      TextCrdt fresh(2);
+      (void)fresh.apply_delta(delta);
+    });
+  }
+}
+
+// -- ShmBlobArena (IPC shared-memory blob path) --
+//
+// Measures per-blob write (Entry alloc + payload copy) and per-blob read
+// (payload copy + full FNV-1a checksum recompute). The read path currently
+// copies AND re-hashes every byte on every read — the benchmark surfaces the
+// cost so the zero-copy trade-off can be evaluated against real numbers.
+void bench_shm_blob() {
+  for (long long sz : {64, 4096, 65536}) {
+    ShmBlobArena arena(0);
+    std::vector<uint8_t> payload(static_cast<size_t>(sz), 0xAB);
+    auto ref = arena.write(payload);
+    std::string label = std::to_string(sz);
+
+    bench("shm_blob", "write / " + label + "B", 10000,
+          [&]() { (void)arena.write(payload); });
+    bench("shm_blob", "read / " + label + "B", 10000, [&]() {
+      (void)arena.read(ref);
+    });
+  }
+}
+
 // -- Scale benchmark --
 void bench_scale() {
   for (long long n : {100000, 1000000, 2000000, 10000000}) {
@@ -508,6 +553,8 @@ int main() {
   bench_batch_storms();
   bench_ts_contention();
   bench_read_scaling();
+  bench_crdt_sync();
+  bench_shm_blob();
   bench_scale();
 
   print_results();

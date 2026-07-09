@@ -266,6 +266,10 @@ class ShmBlobArena {
     entry->epoch = epoch_;
     entry->payload = bytes;
     entry->ref_count = 1;
+    // Payload is immutable after write, so the checksum is computed once and
+    // cached — read() validates against the cached value instead of recomputing
+    // a full FNV-1a hash on every read (the bulk of large-blob read cost).
+    entry->checksum_cached = Entry::compute_checksum(entry->payload);
     entries_.push_back(entry);
     return entry->to_ref(static_cast<int64_t>(offset));
   }
@@ -277,7 +281,7 @@ class ShmBlobArena {
     if (entry->generation != ref.generation) return {};
     if (entry->epoch != ref.epoch) return {};
     if (static_cast<int64_t>(entry->payload.size()) != ref.len) return {};
-    if (entry->checksum() != ref.checksum) return {};
+    if (entry->checksum_cached != ref.checksum) return {};
     return entry->payload;
   }
 
@@ -296,8 +300,9 @@ class ShmBlobArena {
     Epoch epoch;
     std::vector<uint8_t> payload;
     int ref_count;
+    int64_t checksum_cached = 0;
 
-    int64_t checksum() const {
+    static int64_t compute_checksum(const std::vector<uint8_t>& payload) {
       uint64_t hash = 0xcbf29ce484222325ULL;
       for (auto b : payload) {
         hash ^= b;
@@ -307,7 +312,8 @@ class ShmBlobArena {
     }
 
     ShmBlobRef to_ref(int64_t offset) const {
-      return {offset, static_cast<int64_t>(payload.size()), generation, epoch, checksum()};
+      return {offset, static_cast<int64_t>(payload.size()), generation, epoch,
+              checksum_cached};
     }
   };
 

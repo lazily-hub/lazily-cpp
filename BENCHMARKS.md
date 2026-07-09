@@ -59,6 +59,10 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | thread_safe_concurrency | read_scaling/rw @ 16 | 12.500 Mops/s | 16 |
 | thread_safe_concurrency | read_scaling/scalable @ 1 | 58.000 Mops/s | 1 |
 | thread_safe_concurrency | read_scaling/scalable @ 16 | 925.000 Mops/s | 16 |
+| distributed | crdt_sync apply_delta_full @ 10k | 792.000 us | 20 |
+| distributed | crdt_sync delta_since_empty @ 10k | 92.000 us | 20 |
+| distributed | shm_blob read @ 64KB | 666.000 ns | 10000 |
+| distributed | shm_blob read @ 4KB | 53.000 ns | 10000 |
 | scale | build / 100000 | 10.800 ms | 1 |
 | scale | cold_full_recalc / 100000 | 10.300 ms | 1 |
 | scale | full_recalc_invalidate_all / 100000 | 8.250 ms | 1 |
@@ -484,6 +488,56 @@ lock-design problem.
 - **Re-entrancy** (RW + scalable): wrapper calls made from inside a
   recompute/effect cascade (the thread already holding the exclusive lock)
   bypass locking via an owner token. Covered by regression tests.
+
+## Distributed paths — CRDT delta sync + IPC blob (measure-first)
+
+When lazily is a distributed substrate, convergence speed and IPC copy cost
+dominate over the in-process reactive core. v0.6.x added benchmarks for the two
+hot paths and applied two measured-justified optimizations.
+
+### CRDT delta sync (TextCrdt anti-entropy)
+
+The three core operations at a 10k-char document (receiver-side delta apply is
+the distributed hot path):
+
+| Operation @ 10k chars | `std::map` (baseline) | `unordered_map` (now) | Speedup |
+|---|---:|---:|---:|
+| `version_vector()` | 94.6 µs | 43.5 µs | 2.2× |
+| `delta_since(empty)` | 161.8 µs | 92.1 µs | 1.8× |
+| `apply_delta(all)` | 1.99 ms | 0.79 ms | **2.5×** |
+
+`elems_` / `by_origin_` moved from `std::map<OpId,…>` (RB-tree: per-node heap
+alloc, O(log n)) to `std::unordered_map` (OpId already had a `std::hash`).
+Order was not relied upon — visible order is established by `traverse()`, which
+sorts children explicitly, and `merge` / `apply_delta` / `delta_since` are
+order-independent (idempotent per op). All CRDT correctness tests pass
+unchanged; the win lands on every insert / merge / delta-apply.
+
+### ShmBlobArena (IPC shared-memory blob path)
+
+Per-blob `read` previously **copied the payload out AND recomputed a full FNV-1a
+checksum on every read** — the hash was ~99% of read cost for large blobs. The
+payload is immutable after `write`, so the checksum is now **computed once at
+write and cached**; `read` validates against the cached value.
+
+| read size | rehash-per-read (baseline) | cached (now) | Speedup |
+|---|---:|---:|---:|
+| 64 B | 68 ns | 19 ns | 3.6× |
+| 4 KB | 3.14 µs | 53 ns | **59×** |
+| 64 KB | 49.0 µs | 0.67 µs | **74×** |
+
+`write` is unchanged (copy + one checksum compute — necessary). The remaining
+read cost is the payload **copy** (`return entry->payload`); eliminating that
+needs an API change (return a `const std::vector<uint8_t>*` / span view instead
+of a value) and is a follow-up.
+
+### Finding (not yet addressed): TextCrdt insertion is O(n²)
+
+`TextCrdt::insert()` calls `find_origin()` → `visible_ids()` → `traverse()` per
+insert, so building/editing a large doc is O(n²) (a 100k-char build did not
+finish in the benchmark window). This is an algorithmic issue separate from the
+map change and is the next CRDT lever — a maintained visible-order index would
+make insertion O(log n). Tracked in `ROADMAP.md`.
 
 ## Benchmark methodology
 

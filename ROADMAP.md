@@ -50,24 +50,39 @@ memory ordering, ABA, reclamation safety). Validate under TSan + a model checker
 > ✅ **B** (inline value storage) and **E** (alloc-free batch bookkeeping)
 > shipped in v0.6.0 — see the table above. Remaining:
 
-### Distributed-computing paths — **next up** (measure-first)
+### Distributed-computing paths — measure-first (partially done)
 
 When lazily powers distributed systems, the bottleneck shifts **off** the
-in-process reactive core (where B/C/E lived) and **onto** IPC, serialization,
-CRDT merge, and cross-process coordination. The first step is **benchmarking**
-these subsystems (the same measure-first discipline that gated A/A2/A3) before
-optimizing — do not optimize blind.
+in-process reactive core and **onto** IPC, serialization, CRDT merge, and
+cross-process coordination. v0.6.x measured both hot paths and landed two
+optimizations:
 
-- **IPC zero-copy hot path** — extend `ShmBlobArena` usage so hot
-  snapshot/delta/CrdtSync messages avoid copy across the FFI/process boundary
-  (`ipc.hpp`). Distributed throughput is usually IPC/serialize-bound before the
-  reactive core is. **Highest-value for distributed.** Start: add an IPC
-  serialize/deserialize micro-benchmark, measure, then target the copies.
-- **CRDT anti-entropy throughput** — `delta_since` / `apply_delta` /
-  dotted-frontier merge on `TextCrdt` / `SeqCrdt` / `LosslessTreeCrdt` under
-  frequent sync. Benchmark + optimize merge (currently correctness-first).
-  Directly affects distributed convergence speed. Start: a merge-throughput
-  benchmark.
+- ✅ **CRDT delta sync** — `elems_` / `by_origin_` moved from `std::map` to
+  `std::unordered_map` (OpId was already hashable; ordering unused). `apply_delta`
+  @10k **2.5× faster** (1.99 ms → 0.79 ms); `version_vector` 2.2×; `delta_since`
+  1.8×. Measured via the new `crdt_sync` benchmark.
+- ✅ **ShmBlobArena read** — checksum was recomputed (full FNV-1a) on every read;
+  now cached at write (payload is immutable). `read` @64KB **74× faster**
+  (49 µs → 0.67 µs). Measured via the new `shm_blob` benchmark.
+
+Remaining distributed work (measured, queued):
+
+- **ShmBlobArena read copy** — `read` still returns the payload **by value**
+  (a copy). Eliminating it needs an API change (return a `const
+  std::vector<uint8_t>*` / span view) and is the natural follow-up to the
+  checksum cache. Low risk once the API is updated.
+- **TextCrdt insertion is O(n²)** — `insert()` runs `find_origin()` →
+  `visible_ids()` → `traverse()` per insert, so building/editing a large doc is
+  O(n²) (100k-char build did not finish in the bench window). Algorithmic; a
+  maintained visible-order index would make insertion O(log n). **Next CRDT
+  lever.**
+- **IPC zero-copy across the FFI/process boundary** — extend ShmBlobArena so hot
+  snapshot/delta/CrdtSync messages pass a `ShmBlobRef` descriptor across
+  processes instead of copying `IpcValueInline` bytes. The checksum cache + the
+  read-copy API change above are prerequisites.
+- **SeqCrdt / LosslessTreeCrdt merge throughput** — benchmark + optimize
+  `delta_since` / `apply_delta` / dotted-frontier merge on the other CRDTs
+  (currently correctness-first; the TextCrdt map change is a template for them).
 
 ### D — per-kind node vectors (SoA)  ·  **MEDIUM**  ·  helps large-graph scale
 
@@ -108,11 +123,12 @@ low payoff since typical closures exceed the inline buffer.)
 ## Sequencing recommendation
 
 1. ~~**B**~~ ✅ v0.6.0 + ~~**E**~~ ✅ v0.6.0.
-2. **Distributed (IPC zero-copy + CRDT merge)** — measure-first (add benchmarks,
-   find the real bottleneck), then optimize. Dominates over further in-process
-   work once lazily is a distributed substrate.
+2. ~~**Distributed measure-first**~~ ✅ (CRDT `unordered_map` + ShmBlob checksum
+   cache landed post-0.6.0; benchmarks added). **Remaining distributed work:**
+   ShmBlob read-copy API change → then TextCrdt O(n²)-insertion fix → then
+   cross-process zero-copy + SeqCrdt/LosslessTree merge.
 3. **D** (SoA nodes) — only if re-measured large-graph scale (≥10M cells) is a
    real product target; B reduced its payoff.
 4. **A3** — only if a real distributed workload proves read-tail-latency-under-
-   writes is a bottleneck (B no longer blocks it, but the memory-safety risk of
-   hazard/epoch reclamation remains the gating concern).
+   writes is a bottleneck (the memory-safety risk of hazard/epoch reclamation
+   remains the gating concern).
