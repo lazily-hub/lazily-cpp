@@ -549,7 +549,7 @@ void bench_transport() {
 
 // -- Scale benchmark --
 void bench_scale() {
-  for (long long n : {100000, 1000000, 2000000, 10000000}) {
+  for (long long n : {100000, 1000000, 2000000, 5000000, 10000000}) {
     // Build
     double build_ns;
     {

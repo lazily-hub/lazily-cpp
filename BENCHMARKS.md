@@ -69,24 +69,38 @@ Refresh: re-run the bench binary and paste the table between the markers.
 | distributed | transport resolve @ 64KB | 17.000 ns | 2000 |
 | distributed | codec encode @ 10k nodes/619KB | 355.000 us | 20 |
 | distributed | codec decode @ 10k nodes/619KB | 1.187 ms | 20 |
-| scale | build / 100000 | 10.800 ms | 1 |
-| scale | cold_full_recalc / 100000 | 10.300 ms | 1 |
-| scale | full_recalc_invalidate_all / 100000 | 8.250 ms | 1 |
-| scale | viewport_recalc / 100000 | 40.400 us | 1 |
-| scale | build / 1000000 | 123.000 ms | 1 |
-| scale | cold_full_recalc / 1000000 | 36.000 ms | 1 |
-| scale | full_recalc_invalidate_all / 1000000 | 73.000 ms | 1 |
-| scale | viewport_recalc / 1000000 | 35.100 us | 1 |
-| scale | build / 2000000 | 234.000 ms | 1 |
-| scale | cold_full_recalc / 2000000 | 181.000 ms | 1 |
-| scale | full_recalc_invalidate_all / 2000000 | 177.000 ms | 1 |
-| scale | viewport_recalc / 2000000 | 27.700 us | 1 |
-| scale | build / 10000000 | 1.410 s | 1 |
-| scale | cold_full_recalc / 10000000 | 415.000 ms | 1 |
-| scale | full_recalc_invalidate_all / 10000000 | 740.000 ms | 1 |
-| scale | viewport_recalc / 10000000 | 43.800 us | 1 |
+| scale | build / 100000 | 8.888 ms | 1 |
+| scale | cold_full_recalc / 100000 | 2.694 ms | 1 |
+| scale | full_recalc_invalidate_all / 100000 | 4.550 ms | 1 |
+| scale | viewport_recalc / 100000 | 7.630 us | 1 |
+| scale | build / 1000000 | 97.429 ms | 1 |
+| scale | cold_full_recalc / 1000000 | 27.862 ms | 1 |
+| scale | full_recalc_invalidate_all / 1000000 | 49.039 ms | 1 |
+| scale | viewport_recalc / 1000000 | 23.170 us | 1 |
+| scale | build / 2000000 | 209.738 ms | 1 |
+| scale | cold_full_recalc / 2000000 | 119.341 ms | 1 |
+| scale | full_recalc_invalidate_all / 2000000 | 149.839 ms | 1 |
+| scale | viewport_recalc / 2000000 | 18.290 us | 1 |
+| scale | build / 5000000 | 520.288 ms | 1 |
+| scale | cold_full_recalc / 5000000 | 137.408 ms | 1 |
+| scale | full_recalc_invalidate_all / 5000000 | 243.253 ms | 1 |
+| scale | viewport_recalc / 5000000 | 22.520 us | 1 |
+| scale | build / 10000000 | 1.024 s | 1 |
+| scale | cold_full_recalc / 10000000 | 302.601 ms | 1 |
+| scale | full_recalc_invalidate_all / 10000000 | 628.123 ms | 1 |
+| scale | viewport_recalc / 10000000 | 24.670 us | 1 |
 
 <!-- benchmark-results:end -->
+
+> **Scale re-measured (cross-language sync).** The `scale` rows above were
+> re-run on the cross-language reference machine (AMD Ryzen 9 9950X3D), pinned to
+> one core (`taskset -c 4`) and run serially against the other implementations so
+> nothing contends for L3 / memory bandwidth. A `5000000`-row point (5M inputs +
+> 5M formulas = **10M cells**) was added so the "10M cells" comparison is
+> apples-to-apples with lazily-rs / lazily-zig: cold full recalc is **137 ms** at
+> a true 10M-cell workbook (the `10000000` row is 20M cells). lazily-cpp owns the
+> cold/full-recalc wall clock across the family. See the cross-language table in
+> lazily-zig's `BENCHMARKS.md`.
 
 > **Micro-benchmark** rows are a single stable run (high iteration counts,
 > low variance). **Scale** rows are the median of 3+ runs — single-sample cases
