@@ -261,9 +261,15 @@ class CommandProjection {
 
 // -- Distributed CRDT plane runtime --
 
+// Base node id for entries a family materializes on first remote observation
+// (`#lzfamilysync`). Family entry nodes are locally-private — keyed ops resolve
+// by key string, never by raw node id — so this only needs to avoid colliding
+// with application-assigned node ids; the runtime skips any id already in use.
+inline constexpr NodeId kFamilyNodeBase = static_cast<NodeId>(1) << 48;
+
 class CrdtPlaneRuntime {
  public:
-  explicit CrdtPlaneRuntime(PeerId peer) : peer_(peer) {}
+  explicit CrdtPlaneRuntime(PeerId peer) : peer_(peer), hlc_(peer) {}
 
   PeerId peer() const { return peer_; }
 
@@ -288,6 +294,17 @@ class CrdtPlaneRuntime {
       if (op.key) {
         key_to_node_[op.key->to_wire()] = op.node;
         node_to_key_[op.node] = op.key->to_wire();
+        // Materialize-on-ingest (`#lzfamilysync`): a keyed op whose namespace is
+        // a registered family records the key in that family's present set
+        // instead of being a plain unaddressed cell, bumping the membership
+        // epoch so a derived aggregate over the family recomputes for the newly-
+        // present key. Proved in lazily-formal `FamilySync.applyOp_absent_adopts`.
+        auto segments = op.key->segments();
+        if (!segments.empty() && families_.count(segments.front())) {
+          if (record_family_member(segments.front(), op.key->to_wire())) {
+            bump_family_epoch();
+          }
+        }
       }
 
       // Update winning op if stamp is greater
@@ -367,8 +384,118 @@ class CrdtPlaneRuntime {
 
   std::vector<CrdtOp> ops() const { return ops_log_; }
 
+  // -- Family sync (`#lzfamilysync`) ---------------------------------------
+  //
+  // Reactive family-granularity sync: a keyed op for a family entry NOT known
+  // locally MATERIALIZES the entry on `ingest` (seeded from the op's converged
+  // register) instead of being a bare cell, so membership propagates, values are
+  // adopted, a later last-writer-wins update converges, re-ingest is idempotent,
+  // and a derived aggregate over the family (e.g. a live-editor count) converges
+  // across replicas. Proved in lazily-formal `FamilySync.lean`.
+
+  // Register a last-writer-wins family under `namespace`. An inbound keyed op
+  // whose first key segment matches records a fresh entry on `ingest` (instead
+  // of being mis-addressed), so membership propagates and a derived aggregate
+  // over the family converges.
+  void register_family_lww(const std::string& namespace_) {
+    families_.insert(namespace_);
+    family_members_.try_emplace(namespace_);
+  }
+
+  // The membership signal (`#lzfamilysync`), bumped whenever a family entry
+  // materializes — a derived aggregate over the family reads it so a remote-added
+  // key forces a recompute. A monotonically-increasing counter.
+  uint64_t membership_epoch() const { return family_epoch_; }
+
+  // The materialized keys of family `namespace`, in first-materialization order
+  // (full `namespace/suffix` paths). The present set only grows.
+  std::vector<std::string> family_keys(const std::string& namespace_) const {
+    auto it = family_members_.find(namespace_);
+    if (it == family_members_.end()) return {};
+    return it->second;
+  }
+
+  // The current converged boolean value of family entry `namespace/key_suffix`,
+  // or `std::nullopt` if absent / not a boolean payload.
+  std::optional<bool> family_value_lww(const std::string& namespace_,
+                                       const std::string& key_suffix) const {
+    auto kit = key_to_node_.find(namespace_ + "/" + key_suffix);
+    if (kit == key_to_node_.end()) return std::nullopt;
+    auto wit = winning_.find(kit->second);
+    if (wit == winning_.end()) return std::nullopt;
+    const IpcValue& state = wit->second.state;
+    if (!std::holds_alternative<IpcValueInline>(state)) return std::nullopt;
+    const auto& bytes = std::get<IpcValueInline>(state).bytes;
+    return !bytes.empty() && bytes[0] != 0;
+  }
+
+  // Insert or update local LWW family entry `namespace/key_suffix` to boolean
+  // `value` at `now_micros`, returning the `CrdtOp` to broadcast (or
+  // `std::nullopt` if the key is invalid). Materializes the entry (and bumps
+  // membership) on first insert.
+  std::optional<CrdtOp> family_set_lww(const std::string& namespace_,
+                                       const std::string& key_suffix, bool value,
+                                       int64_t now_micros) {
+    auto node_key = NodeKey::create(namespace_ + "/" + key_suffix);
+    if (!node_key) return std::nullopt;
+    std::string key_str = node_key->to_wire();
+    NodeId node;
+    auto it = key_to_node_.find(key_str);
+    if (it == key_to_node_.end()) {
+      node = mint_family_node();
+      key_to_node_[key_str] = node;
+      node_to_key_[node] = key_str;
+      record_family_member(namespace_, key_str);
+      bump_family_epoch();
+    } else {
+      node = it->second;
+    }
+    HlcStamp stamp = hlc_.tick(now_micros);
+    WireStamp wire = to_wire(stamp);
+    IpcValue state = IpcValueInline{
+        std::vector<uint8_t>{static_cast<uint8_t>(value ? 1 : 0)}};
+    CrdtOp op{node, *node_key, wire, state};
+    // Record locally (winner + op log + frontier), like a local edit; syncFrame
+    // ships `ops()` so a peer can adopt the entry.
+    auto dedup_key = std::to_string(node) + ":" + std::to_string(wire.wall_time) +
+                     ":" + std::to_string(wire.logical) + ":" +
+                     std::to_string(wire.peer);
+    if (!log_.count(dedup_key)) {
+      log_.insert(dedup_key);
+      ops_log_.push_back(op);
+    }
+    frontier_.observe(stamp.peer, stamp);
+    membership_.insert(stamp.peer);
+    auto wit = winning_.find(node);
+    if (wit == winning_.end() || stamp > from_wire(wit->second.stamp)) {
+      winning_[node] = op;
+    }
+    return op;
+  }
+
  private:
+  bool record_family_member(const std::string& namespace_,
+                            const std::string& key) {
+    auto& members = family_members_[namespace_];
+    if (std::find(members.begin(), members.end(), key) != members.end())
+      return false;
+    members.push_back(key);
+    return true;
+  }
+
+  void bump_family_epoch() { family_epoch_++; }
+
+  // Allocate a locally-private node id for a family entry, skipping any id
+  // already in use so a family node can never collide with an app-registered one.
+  NodeId mint_family_node() {
+    for (;;) {
+      NodeId candidate = next_family_node_++;
+      if (!winning_.count(candidate)) return candidate;
+    }
+  }
+
   PeerId peer_;
+  Hlc hlc_;
   StampFrontier frontier_;
   std::unordered_set<PeerId> membership_;
   std::unordered_map<NodeId, CrdtOp> winning_;
@@ -376,6 +503,12 @@ class CrdtPlaneRuntime {
   std::vector<CrdtOp> ops_log_;
   std::unordered_map<std::string, NodeId> key_to_node_;
   std::unordered_map<NodeId, std::string> node_to_key_;
+
+  // Family sync (`#lzfamilysync`) state.
+  std::unordered_set<std::string> families_;
+  std::unordered_map<std::string, std::vector<std::string>> family_members_;
+  uint64_t family_epoch_ = 0;
+  NodeId next_family_node_ = kFamilyNodeBase;
 };
 
 // -- Instrumentation --

@@ -288,6 +288,8 @@ target_link_libraries(your_target PRIVATE lazily)
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |
 | `reactive_family.hpp` | ReactiveFamily — unified keyed cell/slot family + materialization mode (eager default / lazy opt-in, `#lzmatmode`) |
+| `thread_safe_reactive_family.hpp` | ThreadSafeReactiveFamily — `Send + Sync` keyed family over ThreadSafeContext (mutex-guarded present set, materialization confluence, `#lzmatmode`) |
+| `async_reactive_family.hpp` | AsyncReactiveFamily — keyed family over AsyncContext (`observe` → `std::optional<V>`, eventual transparency, `#lzmatmode`) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
 | `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex) + `ScalableThreadSafeContext` (reader-scalable lock) |

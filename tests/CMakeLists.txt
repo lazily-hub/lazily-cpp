@@ -42,6 +42,18 @@ add_executable(test_reactive_family test_reactive_family.cpp)
 target_link_libraries(test_reactive_family PRIVATE lazily)
 add_test(NAME reactive_family COMMAND test_reactive_family)
 
+add_executable(test_thread_safe_reactive_family test_thread_safe_reactive_family.cpp)
+target_link_libraries(test_thread_safe_reactive_family PRIVATE lazily)
+add_test(NAME thread_safe_reactive_family COMMAND test_thread_safe_reactive_family)
+
+add_executable(test_async_reactive_family test_async_reactive_family.cpp)
+target_link_libraries(test_async_reactive_family PRIVATE lazily)
+add_test(NAME async_reactive_family COMMAND test_async_reactive_family)
+
+add_executable(test_family_sync test_family_sync.cpp)
+target_link_libraries(test_family_sync PRIVATE lazily)
+add_test(NAME family_sync COMMAND test_family_sync)
+
 # Optional, heavier TSan harness (not in the default suite). Build & run with:
 #   cmake -S . -B build -DLAZILY_BUILD_TSAN_TEST=ON \
 #     -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
