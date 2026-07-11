@@ -13,6 +13,7 @@ workspace) for the lock-free evaluation that governs the A*/CAS gates.
 | v0.4.0 | **A** — opt-in `RwThreadSafeContext` (`shared_mutex`) | Cached reads scale ~2.6× at 16 threads (plateau: shared_mutex serializes shared acquires on one atomic) |
 | v0.5.0 | **A2** — opt-in `ScalableThreadSafeContext` (`ScalableRwLock`, per-cacheline reader counters) | Cached reads scale **near-linearly**: 58 → 925 Mops/s (1→16 threads), ~73× the A plateau; TSan-clean |
 | v0.6.0 | **B** — `SmallAny` inline value storage (zero per-value alloc for small POD) + **E** — alloc-free batch bookkeeping | `cold_full_recalc` ~3× faster (1M: 36 ms; 10M: 415 ms, ~41 ns/formula); `batch_storms 64` ~2.7× faster (1.55 µs); build flat (now closure-alloc-bound) |
+| v0.8.0 | **ReactiveFamily + materialization mode** (`#lzmatmode`) — unified keyed cell/slot family with eager-default / lazy-opt-in allocation | Feature parity with lazily-rs `ReactiveFamily`; observationally-transparent lazy pull (a never-read derived slot is never allocated → `O(inputs)` memory); conforms to lazily-spec `conformance/materialization/*`, proved in lazily-formal `Materialization.lean` |
 
 The default `ThreadSafeContext` (recursive mutex) is byte-for-byte unchanged
 across all of the above — every read-scaling policy is opt-in, so existing users

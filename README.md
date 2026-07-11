@@ -37,7 +37,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
 | Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Reactive family (`ReactiveFamily`) — keyed cell/slot family + materialization mode (`#lzmatmode`) | ✅ | — | — | — | — | — | — | — |
+| Reactive family (`ReactiveFamily`) — keyed cell/slot family + materialization mode (`#lzmatmode`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
 | Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -139,6 +139,36 @@ assert(ctx.get(sum) == 13);
 Values are **lazy by default**. When you need eager push-style semantics, reach
 for `Signal`. Use `Effect` for side effects and `Memo` for an equality-guarded
 derived value.
+
+### Keyed reactive family & materialization mode
+
+`ReactiveFamily<K, V, H>` maps keys to per-entry reactive nodes of a single
+handle kind — `CellHandle<V>` (input cells) or `SlotHandle<V>` (derived slots).
+Its **materialization mode** (`#lzmatmode`) is orthogonal to entry kind: it fixes
+*when* a derived node is allocated, never *what* it observes.
+
+```cpp
+lazily::Context ctx;
+using SlotFamily =
+    lazily::ReactiveFamily<uint32_t, uint32_t, lazily::SlotHandle<uint32_t>>;
+
+// Eager (default): every key's node is allocated up front.
+auto eager = SlotFamily::eager(ctx, {0, 1, 2}, [](const uint32_t& k) { return k * 3; });
+assert(eager.present_count() == 3);
+
+// Lazy (opt-in): derived nodes are allocated on first read ("materialize on pull").
+auto lazy = SlotFamily::lazy(ctx, {0, 1, 2, 5, 9}, [](const uint32_t& k) { return k * 3; });
+assert(lazy.present_count() == 0);
+assert(lazy.observe(ctx, 5) == 15);  // materializes just key 5
+assert(lazy.present_count() == 1);
+```
+
+Materialization mode is **observationally transparent** — `eager.observe(ctx, k)
+== lazy.observe(ctx, k)` for every key; lazy only changes allocation timing and
+memory. Input-cell entries (`CellHandle`) are always materialized at build under
+either mode; only derived slots are deferred under lazy. The contract is proved
+in lazily-formal (`Materialization.lean`) and exercised against the shared
+lazily-spec `conformance/materialization/*` fixtures.
 
 ### State charts
 
@@ -257,6 +287,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
 | `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |
+| `reactive_family.hpp` | ReactiveFamily — unified keyed cell/slot family + materialization mode (eager default / lazy opt-in, `#lzmatmode`) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
 | `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex) + `ScalableThreadSafeContext` (reader-scalable lock) |
