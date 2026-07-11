@@ -54,6 +54,17 @@ add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
 add_test(NAME family_sync COMMAND test_family_sync)
 
+# Gates the suite on the sibling lazily-formal Lean model compiling (`lake
+# build`). Skips gracefully (CTest exit code 77) when the sibling checkout or
+# the Lean toolchain is absent. The submodule sits next to this repo
+# (src/lazily-cpp <-> src/lazily-formal); bake that path in for the runtime
+# resolver, overridable at run time via LAZILY_FORMAL_PATH.
+add_executable(test_formal test_formal.cpp)
+target_compile_definitions(test_formal PRIVATE
+  LAZILY_FORMAL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../lazily-formal")
+add_test(NAME formal COMMAND test_formal)
+set_tests_properties(formal PROPERTIES SKIP_RETURN_CODE 77)
+
 # Optional, heavier TSan harness (not in the default suite). Build & run with:
 #   cmake -S . -B build -DLAZILY_BUILD_TSAN_TEST=ON \
 #     -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
