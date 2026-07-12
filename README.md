@@ -157,35 +157,43 @@ Values are **lazy by default**. When you need eager push-style semantics, reach
 for `Signal`. Use `Effect` for side effects and `Memo` for an equality-guarded
 derived value.
 
-### Keyed reactive family & materialization mode
+### Keyed reactive collections (`ReactiveMap`)
 
-`ReactiveFamily<K, V, H>` maps keys to per-entry reactive nodes of a single
-handle kind — `CellHandle<V>` (input cells) or `SlotHandle<V>` (derived slots).
-Its **materialization mode** (`#lzmatmode`) is orthogonal to entry kind: it fixes
-*when* a derived node is allocated, never *what* it observes.
+`ReactiveMap<K, V, H>` is the one keyed primitive: it maps keys to per-entry
+reactive nodes of a single handle kind — `CellHandle<V>` (input cells) or
+`SlotHandle<V>` (derived slots) — with **reactive membership and order**. It has
+two specializations (`#reactivemap`):
+
+- **`CellMap<K, V>`** — input-cell entries. Adds cell-only `set` and eager
+  value-minting (`entry` / `entry_with`).
+- **`SlotMap<K, V>`** — derived-slot entries. `get_or_insert_with` mints a slot on
+  first access (**lazy materialization**); `materialize_all` pre-mints the keyset
+  (**eager**). A slot's value is derived, so `SlotMap` has no `set`. There is no
+  eager/lazy mode flag — lazy is mint-on-access, eager is the pre-mint loop.
 
 ```cpp
 lazily::Context ctx;
-using SlotFamily =
-    lazily::ReactiveFamily<uint32_t, uint32_t, lazily::SlotHandle<uint32_t>>;
+lazily::SlotMap<uint32_t, uint32_t> slots(ctx);
 
-// Eager (default): every key's node is allocated up front.
-auto eager = SlotFamily::eager(ctx, {0, 1, 2}, [](const uint32_t& k) { return k * 3; });
+// Lazy: a slot is minted on first access ("materialize on pull").
+assert(slots.present_count() == 0);
+assert(slots.get_or_insert_with(ctx, 5, [](const uint32_t& k) { return k * 3; }) == 15);
+assert(slots.present_count() == 1);
+
+// Eager: pre-mint the whole keyset up front — observationally identical.
+lazily::SlotMap<uint32_t, uint32_t> eager(ctx);
+eager.materialize_all(ctx, {0, 1, 2}, [](const uint32_t& k) { return k * 3; });
 assert(eager.present_count() == 3);
-
-// Lazy (opt-in): derived nodes are allocated on first read ("materialize on pull").
-auto lazy = SlotFamily::lazy(ctx, {0, 1, 2, 5, 9}, [](const uint32_t& k) { return k * 3; });
-assert(lazy.present_count() == 0);
-assert(lazy.observe(ctx, 5) == 15);  // materializes just key 5
-assert(lazy.present_count() == 1);
 ```
 
-Materialization mode is **observationally transparent** — `eager.observe(ctx, k)
-== lazy.observe(ctx, k)` for every key; lazy only changes allocation timing and
-memory. Input-cell entries (`CellHandle`) are always materialized at build under
-either mode; only derived slots are deferred under lazy. The contract is proved
-in lazily-formal (`Materialization.lean`) and exercised against the shared
-lazily-spec `conformance/materialization/*` fixtures.
+Minting is **observationally transparent** — a value read is identical whether the
+entry was pre-minted or minted on access; eager only changes allocation timing and
+memory. Membership is tracked by a dedicated version cell, so `len` / `keys`
+readers recompute only on add/remove (or reorder for `keys`), never on a per-entry
+value change. The contract is proved in lazily-formal (`Materialization.lean`) and
+exercised against the shared lazily-spec `conformance/materialization/*` fixtures.
+The `Send + Sync` (`ThreadSafeReactiveMap`) and async (`AsyncReactiveMap`) flavors
+carry the same `CellMap` / `SlotMap` specializations.
 
 ### State charts
 
@@ -303,10 +311,10 @@ target_link_libraries(your_target PRIVATE lazily)
 | `rc_ptr.hpp` | RcPtr/ArcPtr smart pointers (closures), RcTraits/ArcTraits value-storage traits |
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
-| `collections.hpp` | CellMap, CellFamily, CellTree, keyed reconciliation (LIS) |
-| `reactive_family.hpp` | ReactiveFamily — unified keyed cell/slot family + materialization mode (eager default / lazy opt-in, `#lzmatmode`) |
-| `thread_safe_reactive_family.hpp` | ThreadSafeReactiveFamily — `Send + Sync` keyed family over ThreadSafeContext (mutex-guarded present set, materialization confluence, `#lzmatmode`) |
-| `async_reactive_family.hpp` | AsyncReactiveFamily — keyed family over AsyncContext (`observe` → `std::optional<V>`, eventual transparency, `#lzmatmode`) |
+| `collections.hpp` | CellTree, keyed reconciliation (LIS) (re-exports `CellMap` / `SlotMap` / `ReactiveMap`) |
+| `reactive_family.hpp` | `ReactiveMap<K, V, H>` — unified keyed cell/slot collection with reactive membership + order; `CellMap` (`set` + eager `entry`) and `SlotMap` (`get_or_insert_with` lazy mint / `materialize_all` eager pre-mint) specializations (`#reactivemap`) |
+| `thread_safe_reactive_family.hpp` | `ThreadSafeReactiveMap` — `Send + Sync` keyed collection over ThreadSafeContext (mutex-guarded present set); `ThreadSafeCellMap` / `ThreadSafeSlotMap` (`#reactivemap`) |
+| `async_reactive_family.hpp` | `AsyncReactiveMap` — keyed collection over AsyncContext (`observe` → `std::optional<V>`, eventual transparency); `AsyncCellMap` / `AsyncSlotMap` (`#reactivemap`) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
 | `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex) + `ScalableThreadSafeContext` (reader-scalable lock) |

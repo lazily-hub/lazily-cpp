@@ -1,44 +1,49 @@
 #ifndef LAZILY_REACTIVE_FAMILY_HPP
 #define LAZILY_REACTIVE_FAMILY_HPP
 
-// The unified keyed reactive family (`ReactiveFamily`) and its materialization
-// mode (`#lzmatmode`).
+// The unified keyed reactive collection `ReactiveMap<K, V, H>` and its
+// `CellMap` / `SlotMap` specializations (`#reactivemap`).
 //
-// A family maps keys `K` to per-entry reactive nodes of a single handle kind:
+// `Context` addresses nodes by opaque `SlotId`. `ReactiveMap` adds a *keyed*
+// layer on top: a hash collection whose **membership is itself reactive**, with
+// one independently-tracked reactive node per entry.
 //
-//   - `CellHandle<V>` — an **input** cell. An input has no derivation to defer,
-//     so it is **always materialized** (present at build under either mode).
-//   - `SlotHandle<V>` — a **derived** slot. Derived nodes are what
-//     materialization mode governs.
+// # One primitive, two specializations
 //
-// # Materialization mode
+// There is a single keyed primitive, generic over the entry's **handle kind**
+// `H` (the `MapHandleTraits` trait, implemented for `CellHandle<V>` input cells
+// and `SlotHandle<V>` derived slots):
 //
-// Materialization mode is **orthogonal** to entry kind: it fixes *when a derived
-// node's backing storage is allocated*, not what it computes.
+//   - `CellMap<K, V>` = `ReactiveMap<K, V, CellHandle<V>>` — **input-cell**
+//     entries. Adds cell-only `set` and eager value-minting (`entry` /
+//     `entry_with`).
+//   - `SlotMap<K, V>` = `ReactiveMap<K, V, SlotHandle<V>>` — **derived-slot**
+//     entries. `get_or_insert_with` mints a slot on first access (**lazy
+//     materialization**); a slot's value is derived, so `SlotMap` has **no
+//     `set`**. Eager materialization is a pre-mint loop over the keyset
+//     (`materialize_all`); lazy is mint-on-access. There is **no eager/lazy mode
+//     flag**.
 //
-//   - `MaterializationMode::Eager` (**default**) — every derived node is
-//     allocated at build time (the shared high-performance core; a read is a
-//     direct node access).
-//   - `MaterializationMode::Lazy` (opt-in) — a derived node is allocated on its
-//     **first read** ("materialize on pull"), addressed by key. A never-read
-//     derived cell is never allocated. Lazy is a keyed overlay on the eager
-//     core, not a second engine: the first read builds exactly the node an
-//     eager build would have, then caches it.
+// The shared surface — `get_or_insert_with` / `remove` / `move_*` / membership /
+// order / `keys` / `len` / `contains_key` — lives on the generic `ReactiveMap`.
+// `set` and eager value-minting are the `CellMap`-only specialization; the
+// pre-mint eager helper is the `SlotMap`-only specialization.
 //
-// Entry kind is orthogonal to mode (proved in `lazily-formal`'s `Materialization`
-// module as `cell_entries_materialized_in_every_mode` /
-// `slot_entries_deferred_under_lazy`): choosing lazy defers only slot entries,
-// never cell ones. Across every mode the transparency law
-// (`observe(build eager s, id) == observe(build lazy s, id) == s.val(id)`) holds.
+// Each entry is its own reactive node, so a reader that depends on entry `a` is
+// not invalidated when entry `b` changes. Membership (the set of keys) is
+// tracked by a dedicated version cell, so `keys` / `len` readers recompute only
+// when keys are added, removed, or (for `keys`) reordered.
 //
-// Spec: lazily-spec `cell-model.md` § "Materialization mode" +
-// `conformance/materialization/*`. Formal: lazily-formal
-// `LazilyFormal/Materialization.lean`. Rust reference: `src/reactive_family.rs`.
+// Spec: lazily-spec `cell-model.md` § "Keyed cell collections". Rust reference:
+// `lazily-rs/src/cell_family.rs`.
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -46,39 +51,25 @@
 
 namespace lazily {
 
-// The two entry kinds a `ReactiveFamily` holds — the handle-kind axis, kept
-// orthogonal to `MaterializationMode`. Mirrors `EntryKind` in lazily-formal.
+// Which kind of reactive node a `ReactiveMap` entry is — the handle-kind axis the
+// map abstracts over. Mirrors `EntryKind` in lazily-formal.
 enum class EntryKind {
-  // An **input** cell (`CellHandle`) — always materialized, any mode.
+  // An **input** cell (`CellHandle`) — always materialized on `get`.
   Cell,
-  // A **derived** slot (`SlotHandle`) — materialized eagerly, or lazily on
-  // first read.
+  // A **derived** slot (`SlotHandle`) — materialized eagerly (pre-mint) or lazily
+  // on first read.
   Slot,
 };
 
-// Materialization strategy for derived (slot) nodes. Mirrors `Mode` in
-// lazily-formal; the default is `Eager` (`Mode.default = Mode.eager`).
-enum class MaterializationMode {
-  // Every declared derived node is allocated at build time. The default.
-  Eager,
-  // Derived nodes are allocated on first read (materialize on pull), keyed
-  // rather than handle-addressed. An opt-in overlay on the eager core.
-  Lazy,
-};
-
-// The default materialization mode. Implementations MUST default to eager.
-inline constexpr MaterializationMode kDefaultMaterializationMode =
-    MaterializationMode::Eager;
-
-// Traits abstracting over the two family handle kinds — `CellHandle<V>` (input
-// cells) and `SlotHandle<V>` (derived slots). Mirrors the sealed `FamilyHandle`
+// Traits abstracting over the two map handle kinds — `CellHandle<V>` (input
+// cells) and `SlotHandle<V>` (derived slots). Mirrors the sealed `MapHandle`
 // trait in the Rust reference. Only these two specializations exist; bindings do
 // not add new kinds.
 template <typename H>
-struct FamilyHandleTraits;  // primary template intentionally undefined
+struct MapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
-struct FamilyHandleTraits<CellHandle<V>> {
+struct MapHandleTraits<CellHandle<V>> {
   static constexpr EntryKind kind = EntryKind::Cell;
 
   // An input has no derivation: materialize by setting its value directly.
@@ -90,13 +81,18 @@ struct FamilyHandleTraits<CellHandle<V>> {
   static V observe(const CellHandle<V>& h, Context& ctx) {
     return ctx.get_cell(h);
   }
+
+  // Detach the entry's node on removal — clear its cached value and dependents.
+  static void clear_dependents(const CellHandle<V>& h, Context& ctx) {
+    h.clear_dependents(ctx);
+  }
 };
 
 template <typename V>
-struct FamilyHandleTraits<SlotHandle<V>> {
+struct MapHandleTraits<SlotHandle<V>> {
   static constexpr EntryKind kind = EntryKind::Slot;
 
-  // A derived node: the same node an eager build would allocate. `compute` is
+  // A derived node: the same node an eager pre-mint would allocate. `compute` is
   // stored as the slot's recomputation.
   template <typename Compute>
   static SlotHandle<V> materialize(Context& ctx, Compute&& compute) {
@@ -104,136 +100,278 @@ struct FamilyHandleTraits<SlotHandle<V>> {
   }
 
   static V observe(const SlotHandle<V>& h, Context& ctx) { return ctx.get(h); }
+
+  static void clear_dependents(const SlotHandle<V>& h, Context& ctx) {
+    h.clear(ctx);
+  }
 };
 
-template <typename K, typename V, typename H>
-struct ReactiveFamilyInner {
-  MaterializationMode mode;
-  // Canonical per-key value producer (a derived slot's recompute; an input
-  // cell's initial value).
-  std::function<V(const K&)> factory;
-  // Currently-allocated entries (the "present" set). Grows on materialize, never
-  // shrinks silently — deferral, not de-allocation.
-  std::unordered_map<K, H> materialized;
-  // First-materialization order of the present set (stable snapshot).
+template <typename K, typename H>
+struct ReactiveMapInner {
+  // Per-key reactive nodes. Each entry is its own reactive node.
+  std::unordered_map<K, H> entries;
+  // Insertion-ordered authoritative key list (snapshot returned by `keys`).
   std::vector<K> order;
+  // Reactive *set-membership* signal, bumped only when the set of keys changes.
+  CellHandle<uint64_t> membership;
+  // Untracked mirror of the membership version.
+  uint64_t version;
+  // Reactive *order* signal, bumped on add/remove and on move/reorder.
+  CellHandle<uint64_t> order_signal;
+  // Untracked mirror of the order version.
+  uint64_t order_version;
 };
 
-// The unified keyed reactive family (`#lzmatmode`): keys `K` map to per-entry
-// reactive nodes of handle kind `H` (`CellHandle<V>` for input cells,
-// `SlotHandle<V>` for derived slots), allocated per its `MaterializationMode`.
+// A keyed reactive collection generic over the entry handle kind `H`: a hash map
+// of `K -> H` with reactive membership and independently-tracked per-entry nodes.
 //
 // Cheap to copy (a `shared_ptr` to shared inner state) so it can be captured by
-// compute/effect closures. Operations run against the owning `Context`, like the
-// rest of lazily.
+// compute/effect closures. Operations run against the owning `Context`.
+//
+// The two specializations a binding exposes are `CellMap` (input cells) and
+// `SlotMap` (derived slots).
 template <typename K, typename V, typename H>
-class ReactiveFamily {
+class ReactiveMap {
  public:
   using Handle = H;
-  using Traits = FamilyHandleTraits<H>;
+  using Traits = MapHandleTraits<H>;
 
-  // -- Builders --
-
-  // Build an **eager** family: every declared key's node is allocated now. This
-  // is the default mode (`MaterializationMode::Eager`).
-  static ReactiveFamily eager(Context& ctx, std::vector<K> keys,
-                              std::function<V(const K&)> factory) {
-    return build(ctx, MaterializationMode::Eager, std::move(keys),
-                 std::move(factory));
-  }
-  static ReactiveFamily eager(Context& ctx, std::initializer_list<K> keys,
-                              std::function<V(const K&)> factory) {
-    return eager(ctx, std::vector<K>(keys), std::move(factory));
+  // Create an empty collection bound to `ctx`.
+  explicit ReactiveMap(Context& ctx)
+      : inner_(std::make_shared<ReactiveMapInner<K, H>>()) {
+    inner_->membership = ctx.cell(uint64_t(0));
+    inner_->version = 0;
+    inner_->order_signal = ctx.cell(uint64_t(0));
+    inner_->order_version = 0;
   }
 
-  // Build a **lazy** family: derived (slot) entries are deferred to first read;
-  // input (cell) entries in `keys` are still materialized at build (cells are
-  // always materialized). Pass empty `keys` for a purely on-demand slot family.
-  static ReactiveFamily lazy(Context& ctx, std::vector<K> keys,
-                             std::function<V(const K&)> factory) {
-    return build(ctx, MaterializationMode::Lazy, std::move(keys),
-                 std::move(factory));
-  }
-  static ReactiveFamily lazy(Context& ctx, std::initializer_list<K> keys,
-                             std::function<V(const K&)> factory) {
-    return lazy(ctx, std::vector<K>(keys), std::move(factory));
+  // -- Shared surface --
+
+  // Get the value at `key`, minting the entry via `factory(key)` first if the key
+  // is absent — the mint-on-access recipe. For a `SlotMap` this is the lazy
+  // materialization pull; for a `CellMap` it seeds an input cell. Bumps reactive
+  // membership only on insert.
+  V get_or_insert_with(Context& ctx, const K& key,
+                       std::function<V(const K&)> factory) {
+    auto it = inner_->entries.find(key);
+    if (it != inner_->entries.end()) return Traits::observe(it->second, ctx);
+    K k = key;
+    H handle =
+        mint_with(ctx, key, [factory, k](Context&) -> V { return factory(k); });
+    return Traits::observe(handle, ctx);
   }
 
-  // Build a family in the **default** mode (eager). Alias for `eager`.
-  static ReactiveFamily create(Context& ctx, std::vector<K> keys,
-                               std::function<V(const K&)> factory) {
-    return eager(ctx, std::move(keys), std::move(factory));
-  }
-  static ReactiveFamily create(Context& ctx, std::initializer_list<K> keys,
-                               std::function<V(const K&)> factory) {
-    return eager(ctx, std::vector<K>(keys), std::move(factory));
+  // Return the existing entry handle for `key`, or `std::nullopt`. Non-reactive.
+  std::optional<H> handle(const K& key) const {
+    auto it = inner_->entries.find(key);
+    if (it == inner_->entries.end()) return std::nullopt;
+    return it->second;
   }
 
-  // -- Access --
-
-  // Get the entry handle for `key`, materializing it on first access (the lazy
-  // pull) and caching it. Under eager mode an entry is already present, so this
-  // returns the cached handle.
-  H get(Context& ctx, const K& key) { return materialize_key(ctx, key); }
-
-  // Observe `key`'s value — the headline transparency law: the returned value is
-  // identical under either mode. Materializes the entry if absent.
-  V observe(Context& ctx, const K& key) {
-    return Traits::observe(get(ctx, key), ctx);
+  // Read the value at `key` if present. Reactive on that entry only.
+  std::optional<V> get(Context& ctx, const K& key) {
+    auto it = inner_->entries.find(key);
+    if (it == inner_->entries.end()) return std::nullopt;
+    return Traits::observe(it->second, ctx);
   }
+
+  // Remove `key`'s entry. Bumps reactive membership and clears the removed
+  // entry's dependents. Returns whether the key was present.
+  bool remove(Context& ctx, const K& key) {
+    auto it = inner_->entries.find(key);
+    if (it == inner_->entries.end()) return false;
+    H handle = it->second;
+    inner_->entries.erase(it);
+    inner_->order.erase(
+        std::remove(inner_->order.begin(), inner_->order.end(), key),
+        inner_->order.end());
+    Traits::clear_dependents(handle, ctx);
+    bump_membership(ctx);
+    return true;
+  }
+
+  // Reactive snapshot of the keys in their current order. Subscribes the caller
+  // to order changes (add/remove and move/reorder), not to per-entry value
+  // changes.
+  std::vector<K> keys(Context& ctx) {
+    (void)ctx.get_cell(inner_->order_signal);
+    return inner_->order;
+  }
+
+  // The currently-materialized (present) keys, in first-materialization order.
+  // Non-reactive; the present set only grows.
+  std::vector<K> present_keys() const { return inner_->order; }
+
+  // Number of currently-materialized (present) entries. Non-reactive.
+  size_t present_count() const { return inner_->order.size(); }
 
   // Whether `key` is currently materialized (present in the allocated set).
   // Non-reactive.
   bool is_present(const K& key) const {
-    return inner_->materialized.count(key) > 0;
+    return inner_->entries.count(key) > 0;
   }
 
-  // The currently-materialized keys, in first-materialization order. The present
-  // set only grows (deferral, not de-allocation).
-  std::vector<K> present_keys() const { return inner_->order; }
+  // Current 0-based position of `key` in the order, or `std::nullopt` if absent.
+  // Non-reactive.
+  std::optional<size_t> position(const K& key) const {
+    for (size_t i = 0; i < inner_->order.size(); ++i) {
+      if (inner_->order[i] == key) return i;
+    }
+    return std::nullopt;
+  }
 
-  // Number of currently-materialized entries.
-  size_t present_count() const { return inner_->order.size(); }
+  // Atomically move `key` to `index` in the order (`#lzcellmove`). The entry
+  // keeps the same node, its dependents, and its CRDT lineage. Only the order
+  // signal is bumped. `index` is clamped to `[0, len)`.
+  bool move_to(Context& ctx, const K& key, size_t index) {
+    auto from_opt = position(key);
+    if (!from_opt) return false;
+    size_t from = *from_opt;
+    size_t to = std::min(index, inner_->order.size() - 1);
+    if (from == to) return true;
+    K k = std::move(inner_->order[from]);
+    inner_->order.erase(inner_->order.begin() + from);
+    inner_->order.insert(inner_->order.begin() + to, std::move(k));
+    bump_order(ctx);
+    return true;
+  }
 
-  // This family's materialization mode.
-  MaterializationMode mode() const { return inner_->mode; }
+  // Atomically move `key` to just before `anchor` in the order (`#lzcellmove`).
+  bool move_before(Context& ctx, const K& key, const K& anchor) {
+    auto anchor_idx = position(anchor);
+    auto from = position(key);
+    if (!anchor_idx || !from) return false;
+    size_t target = (*from < *anchor_idx) ? *anchor_idx - 1 : *anchor_idx;
+    return move_to(ctx, key, target);
+  }
 
-  // This family's entry kind (`EntryKind::Cell` for a cell family,
-  // `EntryKind::Slot` for a slot family).
+  // Atomically move `key` to just after `anchor` in the order (`#lzcellmove`).
+  bool move_after(Context& ctx, const K& key, const K& anchor) {
+    auto anchor_idx = position(anchor);
+    auto from = position(key);
+    if (!anchor_idx || !from) return false;
+    size_t target = (*from <= *anchor_idx) ? *anchor_idx : *anchor_idx + 1;
+    return move_to(ctx, key, target);
+  }
+
+  // Reactive entry count. Subscribes the caller to membership changes only.
+  size_t len(Context& ctx) {
+    (void)ctx.get_cell(inner_->membership);
+    return inner_->order.size();
+  }
+
+  // Reactive emptiness check. Subscribes the caller to membership changes.
+  bool is_empty(Context& ctx) { return len(ctx) == 0; }
+
+  // Reactive membership test for `key`. Subscribes the caller to membership
+  // changes (add/remove of any key), not to value changes.
+  bool contains_key(Context& ctx, const K& key) {
+    (void)ctx.get_cell(inner_->membership);
+    return inner_->entries.count(key) > 0;
+  }
+
+  // Non-reactive count. Does not subscribe the caller to anything.
+  size_t len_untracked() const { return inner_->order.size(); }
+
+  // This map's entry kind (`EntryKind::Cell` for a `CellMap`, `EntryKind::Slot`
+  // for a `SlotMap`).
   EntryKind entry_kind() const { return Traits::kind; }
 
- private:
-  std::shared_ptr<ReactiveFamilyInner<K, V, H>> inner_;
+ protected:
+  std::shared_ptr<ReactiveMapInner<K, H>> inner_;
 
-  static ReactiveFamily build(Context& ctx, MaterializationMode mode,
-                              std::vector<K> keys,
-                              std::function<V(const K&)> factory) {
-    ReactiveFamily fam;
-    fam.inner_ = std::make_shared<ReactiveFamilyInner<K, V, H>>();
-    fam.inner_->mode = mode;
-    fam.inner_->factory = std::move(factory);
-    for (auto& key : keys) {
-      // buildEager materializes every node; buildLazy materializes only input
-      // cells (`present := isInput`). A cell entry is always materialized
-      // regardless of mode; a slot entry only under eager.
-      if (Traits::kind == EntryKind::Cell ||
-          mode == MaterializationMode::Eager) {
-        fam.materialize_key(ctx, key);
-      }
-    }
-    return fam;
+  // Mint the entry node for `key` (via `Traits::materialize`) on first access,
+  // caching the handle and bumping reactive membership. Re-minting an existing
+  // key returns the cached handle.
+  H mint_with(Context& ctx, const K& key,
+              std::function<V(Context&)> compute) {
+    auto it = inner_->entries.find(key);
+    if (it != inner_->entries.end()) return it->second;  // warm.
+    H handle = Traits::materialize(ctx, compute);
+    inner_->entries.emplace(key, handle);
+    inner_->order.push_back(key);
+    bump_membership(ctx);
+    return handle;
   }
 
-  H materialize_key(Context& ctx, const K& key) {
-    auto it = inner_->materialized.find(key);
-    if (it != inner_->materialized.end()) return it->second;  // warm.
-    auto factory = inner_->factory;  // copy the shared producer into the closure.
-    K k = key;
-    H handle = Traits::materialize(
-        ctx, [factory, k](Context&) -> V { return factory(k); });
-    inner_->materialized.emplace(key, handle);
-    inner_->order.push_back(key);
-    return handle;
+  // Bump the *order* signal (invalidates `keys` readers).
+  void bump_order(Context& ctx) {
+    inner_->order_version++;
+    ctx.set_cell(inner_->order_signal, inner_->order_version);
+  }
+
+  // Bump set-membership (invalidates `len`/`contains_key` readers). Always paired
+  // with an order bump because add/remove change order too.
+  void bump_membership(Context& ctx) {
+    inner_->version++;
+    ctx.set_cell(inner_->membership, inner_->version);
+    bump_order(ctx);
+  }
+};
+
+// A keyed **input-cell** collection: every entry is a settable `CellHandle<V>`.
+//
+// The `CellMap` specialization of `ReactiveMap` adds cell-only `set` and eager
+// value-minting (`entry` / `entry_with`) on top of the shared reactive keyed
+// surface.
+template <typename K, typename V>
+class CellMap : public ReactiveMap<K, V, CellHandle<V>> {
+ public:
+  using Base = ReactiveMap<K, V, CellHandle<V>>;
+  using Base::Base;
+
+  // Return the value cell for `key`, minting it with `default_fn` on first
+  // access. Adding a new key bumps reactive membership; re-fetching does not.
+  CellHandle<V> entry_with(Context& ctx, const K& key,
+                           std::function<V()> default_fn) {
+    auto h = this->handle(key);
+    if (h) return *h;
+    V value = default_fn();
+    return this->mint_with(ctx, key, [value](Context&) -> V { return value; });
+  }
+
+  // Return the value cell for `key`, minting it with `default_val` on first
+  // access. Convenience wrapper over `entry_with`.
+  CellHandle<V> entry(Context& ctx, const K& key, V default_val) {
+    return entry_with(ctx, key, [default_val]() { return default_val; });
+  }
+
+  // Set the value at `key`, inserting a new entry (and bumping membership) if it
+  // does not exist yet. Cell-only: an input is settable; a `SlotMap` slot is not.
+  void set(Context& ctx, const K& key, V value) {
+    auto h = this->handle(key);
+    if (h) {
+      ctx.set_cell(*h, std::move(value));
+      return;
+    }
+    entry_with(ctx, key, [value]() { return value; });
+  }
+
+  // Reconcile the map to `new_seq` (keyed, move-minimized). Declared here;
+  // defined out-of-line in collections.hpp where the reconcile machinery lives.
+  void reconcile(Context& ctx, const std::vector<std::pair<K, V>>& new_seq);
+};
+
+// A keyed **derived-slot** collection: every entry is a `SlotHandle<V>` whose
+// value is derived. `get_or_insert_with` mints a slot on first access (lazy
+// materialization); `materialize_all` pre-mints the keyset (eager). A slot's
+// value is derived, so `SlotMap` has **no `set`**.
+template <typename K, typename V>
+class SlotMap : public ReactiveMap<K, V, SlotHandle<V>> {
+ public:
+  using Base = ReactiveMap<K, V, SlotHandle<V>>;
+  using Base::Base;
+
+  // **Eager materialization**: pre-mint a derived slot for every key in `keys`
+  // via `factory`, up front. Observationally identical to minting each key lazily
+  // on first read — it only changes *when* the nodes are allocated.
+  void materialize_all(Context& ctx, const std::vector<K>& keys,
+                       std::function<V(const K&)> factory) {
+    for (const auto& key : keys) this->get_or_insert_with(ctx, key, factory);
+  }
+  void materialize_all(Context& ctx, std::initializer_list<K> keys,
+                       std::function<V(const K&)> factory) {
+    materialize_all(ctx, std::vector<K>(keys), std::move(factory));
   }
 };
 

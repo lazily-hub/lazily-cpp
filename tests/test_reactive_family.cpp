@@ -1,10 +1,16 @@
-// ReactiveFamily materialization-mode tests (`#lzmatmode`).
+// ReactiveMap keyed-collection tests (`#reactivemap`).
 //
-// Mirrors the Rust reference tests in `lazily-rs/src/reactive_family.rs` and the
-// lazily-spec conformance fixtures in `conformance/materialization/*`:
+// Mirrors the Rust reference tests in `lazily-rs/src/cell_family.rs` and the
+// shared lazily-spec conformance fixtures in `conformance/materialization/*`
+// (now `"model": "SlotMap"`):
 //   - observational_transparency.json
 //   - deferral_not_deallocation.json
 //   - entry_kind_orthogonal_to_mode.json
+//
+// The unified primitive is `ReactiveMap<K, V, H>` with two specializations:
+// `CellMap<K, V>` (input cells, `set` + eager `entry`) and `SlotMap<K, V>`
+// (derived slots, `get_or_insert_with` lazy mint + `materialize_all` eager
+// pre-mint). There is no eager/lazy mode flag.
 
 #include <lazily/lazily.hpp>
 
@@ -28,96 +34,150 @@ static int test_passed = 0;
   } name##_instance;                                      \
   static void name()
 
-using SlotFamily = ReactiveFamily<uint32_t, uint32_t, SlotHandle<uint32_t>>;
-using CellFam = ReactiveFamily<std::string, uint32_t, CellHandle<uint32_t>>;
+// -- CellMap: eager value-minting + set --
 
-// -- Rust-parity unit tests --
-
-// `default_mode_eager`: the default materialization mode is eager.
-TEST(test_default_mode_is_eager) {
-  assert(kDefaultMaterializationMode == MaterializationMode::Eager);
+// `entry_caches_one_cell_per_key`: same key -> same cell; second default ignored.
+TEST(test_entry_caches_one_cell_per_key) {
+  Context ctx;
+  CellMap<std::string, int> map(ctx);
+  auto a1 = map.entry(ctx, "a", 1);
+  auto a2 = map.entry(ctx, "a", 999);
+  assert(a1.id == a2.id);
+  assert(ctx.get_cell(a1) == 1);
+  assert(map.len_untracked() == 1);
 }
 
-// `eager_materializes_all`: eager allocates every declared node up front.
-TEST(test_eager_materializes_all_up_front) {
+// `get_or_insert_with_mints_once_then_returns_existing`.
+TEST(test_get_or_insert_with_mints_once) {
   Context ctx;
-  auto fam = SlotFamily::eager(ctx, {0, 1, 2, 5, 9},
-                               [](const uint32_t& k) { return k * 3; });
-  assert(fam.mode() == MaterializationMode::Eager);
-  assert(fam.entry_kind() == EntryKind::Slot);
+  CellMap<std::string, int> map(ctx);
+  int calls = 0;
+  assert(map.get_or_insert_with(ctx, "a", [&](const std::string&) {
+    ++calls;
+    return 7;
+  }) == 7);
+  assert(map.len_untracked() == 1);
+  // Second access returns the existing value; factory NOT re-run.
+  assert(map.get_or_insert_with(ctx, "a", [&](const std::string&) {
+    ++calls;
+    return 999;
+  }) == 7);
+  assert(calls == 1);
+  // An explicit set is observed by a subsequent get_or_insert_with.
+  map.set(ctx, "a", 42);
+  assert(map.get_or_insert_with(ctx, "a", [](const std::string&) { return 0; }) ==
+         42);
+}
+
+// `membership_is_reactive_but_value_changes_are_not`.
+TEST(test_membership_reactive_value_not) {
+  Context ctx;
+  CellMap<std::string, int> map(ctx);
+  auto a = map.entry(ctx, "a", 1);
+  map.entry(ctx, "b", 2);
+
+  auto count = ctx.computed<int>([&](Context& c) { return (int)map.len(c); });
+  assert(ctx.get(count) == 2);
+
+  ctx.set_cell(a, 100);
+  assert(ctx.is_set(count) && "membership reader stayed cached");
+  assert(ctx.get(count) == 2);
+
+  map.entry(ctx, "c", 3);
+  assert(ctx.get(count) == 3);
+
+  assert(map.remove(ctx, "b"));
+  assert(ctx.get(count) == 2);
+  auto keys = map.keys(ctx);
+  assert((keys == std::vector<std::string>{"a", "c"}));
+}
+
+// -- SlotMap: lazy mint-on-access + eager materialize_all --
+
+// `slot_map_mints_lazily_and_caches`.
+TEST(test_slot_map_mints_lazily_and_caches) {
+  Context ctx;
+  SlotMap<uint32_t, uint32_t> fam(ctx);
+  assert(fam.present_count() == 0);
+  assert(fam.get_or_insert_with(ctx, 7, [](const uint32_t& k) { return k * 2; }) ==
+         14);
+  assert(fam.present_count() == 1);
+  assert(fam.is_present(7));
+  // Same key -> same derived slot (value preserved, factory not re-run).
+  auto h = fam.handle(7);
+  assert(h && ctx.get(*h) == 14);
+  assert(fam.get_or_insert_with(ctx, 7, [](const uint32_t& k) { return k * 999; }) ==
+         14);
+}
+
+// `slot_map_materialize_all_is_eager`.
+TEST(test_slot_map_materialize_all_is_eager) {
+  Context ctx;
+  SlotMap<uint32_t, uint32_t> fam(ctx);
+  fam.materialize_all(ctx, {0, 1, 2, 5, 9}, [](const uint32_t& k) { return k * 3; });
   assert(fam.present_count() == 5);
   for (uint32_t k : {0u, 1u, 2u, 5u, 9u}) assert(fam.is_present(k));
+  assert(fam.get(ctx, 5) == std::optional<uint32_t>(15));
+  assert(fam.entry_kind() == EntryKind::Slot);
 }
 
-// `lazy_defers_slots`: lazy leaves an unread derived slot unallocated.
-TEST(test_lazy_defers_slots_until_read) {
+// -- move_* (order/membership separation) --
+
+TEST(test_move_to_reorders_and_keeps_identity) {
   Context ctx;
-  auto fam = SlotFamily::lazy(ctx, {0, 1, 2, 5, 9},
-                              [](const uint32_t& k) { return k * 3; });
-  assert(fam.mode() == MaterializationMode::Lazy);
-  assert(fam.present_count() == 0);
-  assert(!fam.is_present(5));
+  CellMap<std::string, int> map(ctx);
+  auto a = map.entry(ctx, "a", 1);
+  map.entry(ctx, "b", 2);
+  map.entry(ctx, "c", 3);
+  assert((map.keys(ctx) == std::vector<std::string>{"a", "b", "c"}));
 
-  // First read materializes just that key ("materialize on pull").
-  assert(fam.observe(ctx, 5) == 15);
-  assert(fam.is_present(5));
-  assert(fam.present_keys() == std::vector<uint32_t>{5});
+  assert(map.move_to(ctx, "c", 0));
+  assert((map.keys(ctx) == std::vector<std::string>{"c", "a", "b"}));
+  assert(map.handle("a")->id == a.id);
+  assert(map.get(ctx, "a") == std::optional<int>(1));
+
+  assert(!map.move_to(ctx, "z", 0));
 }
 
-// `eager_lazy_observationally_equivalent`: identical values under either mode.
-TEST(test_eager_and_lazy_observe_identically) {
+TEST(test_pure_move_spares_membership) {
   Context ctx;
-  auto eager = SlotFamily::eager(ctx, {0, 1, 2, 5, 9},
-                                 [](const uint32_t& k) { return k * 3; });
-  auto lazy = SlotFamily::lazy(ctx, {0, 1, 2, 5, 9},
-                               [](const uint32_t& k) { return k * 3; });
-  for (uint32_t k : {0u, 1u, 2u, 5u, 9u})
-    assert(eager.observe(ctx, k) == lazy.observe(ctx, k));
+  CellMap<std::string, int> map(ctx);
+  map.entry(ctx, "a", 1);
+  map.entry(ctx, "b", 2);
+  map.entry(ctx, "c", 3);
+
+  auto order_reader = ctx.computed<size_t>([&](Context& c) {
+    return map.keys(c).size();
+  });
+  auto count = ctx.computed<int>([&](Context& c) { return (int)map.len(c); });
+  auto has_b =
+      ctx.computed<bool>([&](Context& c) { return map.contains_key(c, "b"); });
+  ctx.get(order_reader);
+  ctx.get(count);
+  ctx.get(has_b);
+
+  assert(map.move_to(ctx, "a", 2));
+  assert(ctx.is_set(count) && "len reader stays cached on pure move");
+  assert(ctx.is_set(has_b) && "contains_key stays cached on pure move");
 }
 
-// `materialize_present_monotone`: re-reading a key does not change the present
-// set; the set only grows.
-TEST(test_present_set_is_monotone_across_reads) {
+TEST(test_move_before_and_after) {
   Context ctx;
-  auto fam = SlotFamily::lazy(ctx, {1, 2, 3, 4, 5},
-                              [](const uint32_t& k) { return k * 2; });
-  std::vector<size_t> sizes;
-  for (uint32_t k : {2u, 4u, 2u, 5u}) {
-    fam.observe(ctx, k);
-    sizes.push_back(fam.present_count());
-  }
-  // Re-reading 2 does not re-materialize; sizes are non-decreasing.
-  assert((sizes == std::vector<size_t>{1, 2, 2, 3}));
-  assert((fam.present_keys() == std::vector<uint32_t>{2, 4, 5}));
+  CellMap<int, int> map(ctx);
+  for (int k = 0; k < 4; ++k) map.entry(ctx, k, k * 10);
+  assert((map.keys(ctx) == std::vector<int>{0, 1, 2, 3}));
+
+  assert(map.move_before(ctx, 3, 1));
+  assert((map.keys(ctx) == std::vector<int>{0, 3, 1, 2}));
+
+  assert(map.move_after(ctx, 0, 2));
+  assert((map.keys(ctx) == std::vector<int>{3, 1, 2, 0}));
+
+  assert(!map.move_before(ctx, 3, 99));
+  assert(!map.move_after(ctx, 99, 2));
 }
 
-// `cell_entries_materialized_in_every_mode`: an input-cell family is fully
-// materialized at build under **either** mode.
-TEST(test_cell_family_materialized_in_every_mode) {
-  Context ctx;
-  for (bool mode_lazy : {false, true}) {
-    std::vector<std::string> keys{"a", "b", "c"};
-    auto fam = mode_lazy
-                   ? CellFam::lazy(ctx, keys, [](const std::string&) { return 0u; })
-                   : CellFam::eager(ctx, keys, [](const std::string&) { return 0u; });
-    assert(fam.entry_kind() == EntryKind::Cell);
-    // Cells are always present at build, even under lazy.
-    assert(fam.present_count() == 3);
-  }
-}
-
-// Cell entries are writable inputs (materialized-by-set), distinct from slots.
-TEST(test_cell_family_entries_are_writable_inputs) {
-  Context ctx;
-  auto fam = ReactiveFamily<uint32_t, uint32_t, CellHandle<uint32_t>>::eager(
-      ctx, {7}, [](const uint32_t& k) { return k; });
-  auto h = fam.get(ctx, 7);
-  assert(ctx.get_cell(h) == 7);
-  ctx.set_cell(h, 100u);
-  assert(fam.observe(ctx, 7) == 100);
-}
-
-// -- Spec conformance fixtures --
+// -- Spec conformance fixtures (model: SlotMap) --
 
 // conformance/materialization/observational_transparency.json
 TEST(test_conformance_observational_transparency) {
@@ -125,24 +185,22 @@ TEST(test_conformance_observational_transparency) {
   auto factory = [](const uint32_t& k) { return k * 3; };  // spec.val = k*3
   std::vector<uint32_t> keys{0, 1, 2, 5, 9};
 
-  auto eager = SlotFamily::eager(ctx, keys, factory);
-  auto lazy = SlotFamily::lazy(ctx, keys, factory);
-
-  // default_mode eager; eager materializes all; lazy defers.
-  assert(eager.mode() == MaterializationMode::Eager);
+  // Eager pre-mints all; lazy (untouched map) has none present.
+  SlotMap<uint32_t, uint32_t> eager(ctx);
+  eager.materialize_all(ctx, keys, factory);
+  SlotMap<uint32_t, uint32_t> lazy(ctx);
   assert(eager.present_count() == 5);
   assert(lazy.present_count() == 0);
 
-  // observe: identical canonical values under either mode.
-  for (uint32_t k : keys) {
-    assert(eager.observe(ctx, k) == lazy.observe(ctx, k));
-  }
-  // eager_present == all keys.
+  // observe: identical canonical values whether pre-minted or minted on access.
+  for (uint32_t k : keys)
+    assert(eager.get(ctx, k) ==
+           std::optional<uint32_t>(lazy.get_or_insert_with(ctx, k, factory)));
   assert(eager.present_keys() == keys);
 
-  // Re-run lazy for the fixture `reads` sequence to check its present set.
-  auto lazy2 = SlotFamily::lazy(ctx, keys, factory);
-  for (uint32_t k : {1u, 5u}) lazy2.observe(ctx, k);
+  // Lazy reads [1,5] -> present set exactly {1,5}.
+  SlotMap<uint32_t, uint32_t> lazy2(ctx);
+  for (uint32_t k : {1u, 5u}) lazy2.get_or_insert_with(ctx, k, factory);
   assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
 }
 
@@ -152,35 +210,28 @@ TEST(test_conformance_deferral_not_deallocation) {
   auto factory = [](const uint32_t& k) { return k * 2; };  // spec.val = k*2
   std::vector<uint32_t> keys{1, 2, 3, 4, 5};
 
-  // default_mode eager; eager_present is every key.
-  auto eager = SlotFamily::eager(ctx, keys, factory);
-  assert(eager.mode() == MaterializationMode::Eager);
+  SlotMap<uint32_t, uint32_t> eager(ctx);
+  eager.materialize_all(ctx, keys, factory);
   assert(eager.present_keys() == keys);
+  for (uint32_t k : keys) assert(eager.get(ctx, k) == std::optional<uint32_t>(k * 2));
 
-  // observe map holds for every key.
-  for (uint32_t k : keys) assert(eager.observe(ctx, k) == k * 2);
-
-  // reads = [2,4,2,5]; present_after_each_read is monotone [1,2,2,3];
-  // final lazy present set = [2,4,5], a subset of eager_present.
-  auto lazy = SlotFamily::lazy(ctx, keys, factory);
+  // reads = [2,4,2,5]; present_after_each_read is monotone [1,2,2,3].
+  SlotMap<uint32_t, uint32_t> lazy(ctx);
   std::vector<size_t> present_after_each_read;
   for (uint32_t k : {2u, 4u, 2u, 5u}) {
-    // materialize_preserves_observe: reading one never changes another's value.
-    assert(lazy.observe(ctx, k) == k * 2);
+    assert(lazy.get_or_insert_with(ctx, k, factory) == k * 2);
     present_after_each_read.push_back(lazy.present_count());
   }
   assert((present_after_each_read == std::vector<size_t>{1, 2, 2, 3}));
   assert((lazy.present_keys() == std::vector<uint32_t>{2, 4, 5}));
-  // lazy_present_subset_eager: every lazily-present key is eagerly present.
+  // Every lazily-present key is eagerly present.
   for (uint32_t k : lazy.present_keys()) assert(eager.is_present(k));
 }
 
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
-TEST(test_conformance_entry_kind_orthogonal_to_mode) {
+TEST(test_conformance_entry_kind) {
   // Entries: in_a/in_b are cells (val 5/7); der_x/der_y are slots (val 12/35).
-  // C++ families are single-kind (H is fixed), so we model the two kinds as two
-  // families sharing the key space, exactly as the fixture's `spec.entries`
-  // splits by kind.
+  // A CellMap models the input side; a SlotMap models the derived side.
   Context ctx;
   auto cell_val = [](const std::string& k) -> uint32_t {
     return k == "in_a" ? 5 : 7;
@@ -188,34 +239,21 @@ TEST(test_conformance_entry_kind_orthogonal_to_mode) {
   auto slot_val = [](const std::string& k) -> uint32_t {
     return k == "der_x" ? 12 : 35;
   };
-  std::vector<std::string> cell_keys{"in_a", "in_b"};
-  std::vector<std::string> slot_keys{"der_x", "der_y"};
 
-  using CellF = ReactiveFamily<std::string, uint32_t, CellHandle<uint32_t>>;
-  using SlotF = ReactiveFamily<std::string, uint32_t, SlotHandle<uint32_t>>;
+  CellMap<std::string, uint32_t> cells(ctx);
+  cells.set(ctx, "in_a", cell_val("in_a"));
+  cells.set(ctx, "in_b", cell_val("in_b"));
+  assert(cells.entry_kind() == EntryKind::Cell);
+  assert(cells.present_count() == 2);
+  assert(cells.get(ctx, "in_a") == std::optional<uint32_t>(5));
+  assert(cells.get(ctx, "in_b") == std::optional<uint32_t>(7));
 
-  // Eager: all entries present; reads mode-independent.
-  auto cells_e = CellF::eager(ctx, cell_keys, cell_val);
-  auto slots_e = SlotF::eager(ctx, slot_keys, slot_val);
-  assert(cells_e.present_count() == 2 && slots_e.present_count() == 2);
-  assert(cells_e.observe(ctx, "in_a") == 5 && cells_e.observe(ctx, "in_b") == 7);
-  assert(slots_e.observe(ctx, "der_x") == 12 && slots_e.observe(ctx, "der_y") == 35);
-
-  // Lazy: cell entries present at build; slot entries deferred until read.
-  auto cells_l = CellF::lazy(ctx, cell_keys, cell_val);
-  auto slots_l = SlotF::lazy(ctx, slot_keys, slot_val);
-  // lazy_present_at_build (cell side) = [in_a, in_b].
-  assert((cells_l.present_keys() == std::vector<std::string>{"in_a", "in_b"}));
-  assert(slots_l.present_count() == 0);  // slots absent at build.
-  assert(cells_l.entry_kind() == EntryKind::Cell);
-  assert(slots_l.entry_kind() == EntryKind::Slot);
-
-  // reads = [der_x]: lazy_present_after_reads adds der_x to the cell set.
-  assert(slots_l.observe(ctx, "der_x") == 12);
-  assert(slots_l.is_present("der_x") && !slots_l.is_present("der_y"));
-  // Observed values are mode-independent.
-  assert(cells_e.observe(ctx, "in_a") == cells_l.observe(ctx, "in_a"));
-  assert(slots_e.observe(ctx, "der_x") == slots_l.observe(ctx, "der_x"));
+  // Slots deferred until read.
+  SlotMap<std::string, uint32_t> slots(ctx);
+  assert(slots.entry_kind() == EntryKind::Slot);
+  assert(slots.present_count() == 0);
+  assert(slots.get_or_insert_with(ctx, "der_x", slot_val) == 12);
+  assert(slots.is_present("der_x") && !slots.is_present("der_y"));
 }
 
 int main() {

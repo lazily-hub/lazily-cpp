@@ -2,6 +2,7 @@
 #define LAZILY_COLLECTIONS_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/reactive_family.hpp>
 
 #include <algorithm>
 #include <functional>
@@ -13,170 +14,7 @@
 
 namespace lazily {
 
-// -- CellMap: keyed reactive collection --
-
-template <typename K, typename V>
-struct CellMapInner {
-  std::unordered_map<K, CellHandle<V>> entries;
-  std::vector<K> order;
-  CellHandle<uint64_t> membership;
-  uint64_t version;
-  CellHandle<uint64_t> order_signal;
-  uint64_t order_version;
-};
-
-template <typename K, typename V>
-class CellMap {
- public:
-  CellMap(Context& ctx)
-      : inner_(std::make_shared<CellMapInner<K, V>>()) {
-    inner_->membership = ctx.cell(uint64_t(0));
-    inner_->version = 0;
-    inner_->order_signal = ctx.cell(uint64_t(0));
-    inner_->order_version = 0;
-  }
-
-  CellHandle<V> entry_with(Context& ctx, const K& key,
-                            std::function<V()> default_fn) {
-    auto it = inner_->entries.find(key);
-    if (it != inner_->entries.end()) return it->second;
-    auto handle = ctx.cell(default_fn());
-    inner_->entries[key] = handle;
-    inner_->order.push_back(key);
-    bump_membership(ctx);
-    return handle;
-  }
-
-  CellHandle<V> entry(Context& ctx, const K& key, V default_val) {
-    return entry_with(ctx, key, [&]() { return default_val; });
-  }
-
-  std::optional<CellHandle<V>> handle(const K& key) const {
-    auto it = inner_->entries.find(key);
-    if (it == inner_->entries.end()) return std::nullopt;
-    return it->second;
-  }
-
-  std::optional<V> get(Context& ctx, const K& key) {
-    auto it = inner_->entries.find(key);
-    if (it == inner_->entries.end()) return std::nullopt;
-    return ctx.get_cell(it->second);
-  }
-
-  void set(Context& ctx, const K& key, V value) {
-    auto it = inner_->entries.find(key);
-    if (it != inner_->entries.end()) {
-      ctx.set_cell(it->second, std::move(value));
-      return;
-    }
-    entry_with(ctx, key, [&]() { return value; });
-  }
-
-  bool remove(Context& ctx, const K& key) {
-    auto it = inner_->entries.find(key);
-    if (it == inner_->entries.end()) return false;
-    auto handle = it->second;
-    inner_->entries.erase(it);
-    inner_->order.erase(
-        std::remove(inner_->order.begin(), inner_->order.end(), key),
-        inner_->order.end());
-    handle.clear_dependents(ctx);
-    bump_membership(ctx);
-    return true;
-  }
-
-  std::vector<K> keys(Context& ctx) {
-    (void)ctx.get_cell(inner_->order_signal);
-    return inner_->order;
-  }
-
-  std::optional<size_t> position(const K& key) const {
-    for (size_t i = 0; i < inner_->order.size(); ++i) {
-      if (inner_->order[i] == key) return i;
-    }
-    return std::nullopt;
-  }
-
-  bool move_to(Context& ctx, const K& key, size_t index) {
-    auto from_opt = position(key);
-    if (!from_opt) return false;
-    size_t from = *from_opt;
-    size_t to = std::min(index, inner_->order.size() - 1);
-    if (from == to) return true;
-    K k = std::move(inner_->order[from]);
-    inner_->order.erase(inner_->order.begin() + from);
-    inner_->order.insert(inner_->order.begin() + to, std::move(k));
-    bump_order(ctx);
-    return true;
-  }
-
-  bool move_before(Context& ctx, const K& key, const K& anchor) {
-    auto anchor_idx = position(anchor);
-    auto from = position(key);
-    if (!anchor_idx || !from) return false;
-    size_t target = (*from < *anchor_idx) ? *anchor_idx - 1 : *anchor_idx;
-    return move_to(ctx, key, target);
-  }
-
-  bool move_after(Context& ctx, const K& key, const K& anchor) {
-    auto anchor_idx = position(anchor);
-    auto from = position(key);
-    if (!anchor_idx || !from) return false;
-    size_t target = (*from <= *anchor_idx) ? *anchor_idx : *anchor_idx + 1;
-    return move_to(ctx, key, target);
-  }
-
-  size_t len(Context& ctx) {
-    (void)ctx.get_cell(inner_->membership);
-    return inner_->order.size();
-  }
-
-  bool is_empty(Context& ctx) { return len(ctx) == 0; }
-
-  bool contains_key(Context& ctx, const K& key) {
-    (void)ctx.get_cell(inner_->membership);
-    return inner_->entries.count(key) > 0;
-  }
-
-  size_t len_untracked() const { return inner_->order.size(); }
-
-  void reconcile(Context& ctx, const std::vector<std::pair<K, V>>& new_seq);
-
- private:
-  std::shared_ptr<CellMapInner<K, V>> inner_;
-
-  void bump_order(Context& ctx) {
-    inner_->order_version++;
-    ctx.set_cell(inner_->order_signal, inner_->order_version);
-  }
-
-  void bump_membership(Context& ctx) {
-    inner_->version++;
-    ctx.set_cell(inner_->membership, inner_->version);
-    bump_order(ctx);
-  }
-};
-
-// -- CellFamily: factory over CellMap --
-
-template <typename K, typename V>
-class CellFamily {
- public:
-  CellFamily(Context& ctx, std::function<V(const K&)> factory)
-      : map_(ctx), factory_(std::make_shared<std::function<V(const K&)>>(std::move(factory))) {}
-
-  CellHandle<V> get(Context& ctx, const K& key) {
-    auto f = factory_;
-    return map_.entry_with(ctx, key, [f, &key]() { return (*f)(key); });
-  }
-
-  CellMap<K, V>& map() { return map_; }
-  bool remove(Context& ctx, const K& key) { return map_.remove(ctx, key); }
-
- private:
-  CellMap<K, V> map_;
-  std::shared_ptr<std::function<V(const K&)>> factory_;
-};
+// `CellMap` / `SlotMap` / `ReactiveMap` are defined in reactive_family.hpp.
 
 // -- CellTree: ordered keyed reactive tree --
 
@@ -448,8 +286,8 @@ template <typename K, typename V>
 void CellMap<K, V>::reconcile(Context& ctx,
                                const std::vector<std::pair<K, V>>& new_seq) {
   std::vector<std::pair<K, V>> old_seq;
-  for (auto& k : keys(ctx)) {
-    auto v = get(ctx, k);
+  for (auto& k : this->keys(ctx)) {
+    auto v = this->get(ctx, k);
     if (v) old_seq.emplace_back(k, *v);
   }
   auto ops = lazily::reconcile(old_seq, new_seq);

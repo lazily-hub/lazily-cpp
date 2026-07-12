@@ -1,25 +1,22 @@
 #ifndef LAZILY_ASYNC_REACTIVE_FAMILY_HPP
 #define LAZILY_ASYNC_REACTIVE_FAMILY_HPP
 
-// Async keyed reactive family (`AsyncReactiveFamily`, `#lzmatmode`, async flavor).
+// Async keyed reactive collection (`AsyncReactiveMap`, `#reactivemap` async
+// flavor).
 //
-// The `AsyncContext` analog of `ReactiveFamily`: keys `K` map to per-entry async
+// The `AsyncContext` analog of `ReactiveMap`: keys `K` map to per-entry async
 // reactive nodes (`AsyncCellHandle<V>` input cells / `AsyncSlotHandle<V>` derived
-// slots) allocated per the family's `MaterializationMode`. Like
-// `ThreadSafeReactiveFamily` it guards its present-set state behind a
+// slots). Like `ThreadSafeReactiveMap` it guards its present-set state behind a
 // `std::mutex`, so it can live in a cross-task owner.
 //
-// The eager/lazy contract and present-set monotonicity are identical to the
-// single-threaded family. The transparency law is **eventual**: an async derived
-// slot read is empty (`std::nullopt`) while pending and resolves to the canonical
-// value — so `observe` returns `std::optional<V>`. Input cells are always resolved
-// (`observe` returns a value). Drive a slot to resolution with `get_async()` on
-// the handle returned by `get`.
+// Eager pre-mints every declared node (`materialize_all`); lazy mints on access
+// (`get_or_insert_handle`). There is no eager/lazy mode flag. Present-set
+// monotonicity holds as in the other flavors. The transparency law is
+// **eventual**: an async derived slot read is empty (`std::nullopt`) while pending
+// and resolves to the canonical value — so `observe` returns `std::optional<V>`.
+// Input cells are always resolved. Drive a slot to resolution with `get_async()`
+// on the handle from `get_or_insert_handle`.
 //
-// To keep the three families API-parallel the per-key factory is the same sync
-// `V(const K&)` as the sync/thread-safe families; a derived slot wraps it as its
-// async recomputation. Mirrors the async materialization case in lazily-spec and
-// the `AsyncMaterialization` proofs (eventual transparency) in lazily-formal.
 // Rust reference: `lazily-rs/src/async_reactive_family.rs`.
 
 #include <cstddef>
@@ -36,14 +33,14 @@
 
 namespace lazily {
 
-// Traits abstracting over the two async family handle kinds — `AsyncCellHandle<V>`
+// Traits abstracting over the two async map handle kinds — `AsyncCellHandle<V>`
 // (input cells, always resolved) and `AsyncSlotHandle<V>` (derived slots, resolve
-// asynchronously). The `AsyncContext` analog of `FamilyHandleTraits`.
+// asynchronously). The `AsyncContext` analog of `MapHandleTraits`.
 template <typename H>
-struct AsyncFamilyHandleTraits;  // primary template intentionally undefined
+struct AsyncMapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
-struct AsyncFamilyHandleTraits<AsyncCellHandle<V>> {
+struct AsyncMapHandleTraits<AsyncCellHandle<V>> {
   static constexpr EntryKind kind = EntryKind::Cell;
 
   template <typename K>
@@ -60,7 +57,7 @@ struct AsyncFamilyHandleTraits<AsyncCellHandle<V>> {
 };
 
 template <typename V>
-struct AsyncFamilyHandleTraits<AsyncSlotHandle<V>> {
+struct AsyncMapHandleTraits<AsyncSlotHandle<V>> {
   static constexpr EntryKind kind = EntryKind::Slot;
 
   // A derived node whose async recompute yields the sync factory value. Resolve
@@ -80,74 +77,58 @@ struct AsyncFamilyHandleTraits<AsyncSlotHandle<V>> {
   }
 };
 
-template <typename K, typename V, typename H>
-struct AsyncReactiveFamilyInner {
-  MaterializationMode mode;
-  std::function<V(const K&)> factory;
+template <typename K, typename H>
+struct AsyncReactiveMapInner {
   std::mutex state_mutex;
   std::unordered_map<K, H> materialized;
   std::vector<K> order;
 };
 
-// The async unified keyed reactive family (`#lzmatmode`): keys `K` map to
-// per-entry async reactive nodes of handle kind `H` (`AsyncCellHandle<V>` input
-// cells, `AsyncSlotHandle<V>` derived slots), allocated per its
-// `MaterializationMode`.
+// The async keyed reactive collection (`#reactivemap`) generic over the entry
+// handle kind `H` (`AsyncCellHandle<V>` input cells, `AsyncSlotHandle<V>` derived
+// slots).
 //
-// Cheap to copy (a `shared_ptr` to shared inner state). See the eager/lazy
-// contract and the eventual-transparency law above.
+// Cheap to copy (a `shared_ptr` to shared inner state). See the eventual-
+// transparency law above.
 template <typename K, typename V, typename H>
-class AsyncReactiveFamily {
+class AsyncReactiveMap {
  public:
   using Handle = H;
-  using Traits = AsyncFamilyHandleTraits<H>;
+  using Traits = AsyncMapHandleTraits<H>;
 
-  // -- Builders --
+  // Create an empty map bound to `ctx`.
+  explicit AsyncReactiveMap(AsyncContext&)
+      : inner_(std::make_shared<AsyncReactiveMapInner<K, H>>()) {}
 
-  static AsyncReactiveFamily eager(AsyncContext& ctx, std::vector<K> keys,
-                                   std::function<V(const K&)> factory) {
-    return build(ctx, MaterializationMode::Eager, std::move(keys),
-                 std::move(factory));
-  }
-  static AsyncReactiveFamily eager(AsyncContext& ctx,
-                                   std::initializer_list<K> keys,
-                                   std::function<V(const K&)> factory) {
-    return eager(ctx, std::vector<K>(keys), std::move(factory));
-  }
+  // -- Shared surface --
 
-  static AsyncReactiveFamily lazy(AsyncContext& ctx, std::vector<K> keys,
-                                  std::function<V(const K&)> factory) {
-    return build(ctx, MaterializationMode::Lazy, std::move(keys),
-                 std::move(factory));
-  }
-  static AsyncReactiveFamily lazy(AsyncContext& ctx,
-                                  std::initializer_list<K> keys,
-                                  std::function<V(const K&)> factory) {
-    return lazy(ctx, std::vector<K>(keys), std::move(factory));
+  // Get the entry handle for `key`, minting it via `factory(key)` on first access
+  // and caching it. For a slot map this is the `AsyncSlotHandle` to drive with
+  // `get_async()`.
+  H get_or_insert_handle(AsyncContext& ctx, const K& key,
+                         std::function<V(const K&)> factory) {
+    return mint_with(ctx, key, factory);
   }
 
-  // Build a family in the **default** mode (eager). Alias for `eager`.
-  static AsyncReactiveFamily create(AsyncContext& ctx, std::vector<K> keys,
-                                    std::function<V(const K&)> factory) {
-    return eager(ctx, std::move(keys), std::move(factory));
-  }
-  static AsyncReactiveFamily create(AsyncContext& ctx,
-                                    std::initializer_list<K> keys,
-                                    std::function<V(const K&)> factory) {
-    return eager(ctx, std::vector<K>(keys), std::move(factory));
-  }
-
-  // -- Access --
-
-  // Get the entry handle for `key`, materializing it on first access. For a slot
-  // family this is the `AsyncSlotHandle` to drive with `get_async()`.
-  H get(AsyncContext& ctx, const K& key) { return materialize_key(ctx, key); }
-
-  // Non-blocking observe: a value for a cell or resolved slot, `std::nullopt`
-  // for a pending slot. Eventual-transparency law: once resolved, this equals
-  // the canonical value under either mode.
+  // Non-blocking observe: a value for a cell or resolved slot, `std::nullopt` for
+  // a pending or absent slot. Non-minting.
   std::optional<V> observe(AsyncContext& ctx, const K& key) {
-    return Traits::observe(get(ctx, key), ctx);
+    std::optional<H> h;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      auto it = inner_->materialized.find(key);
+      if (it != inner_->materialized.end()) h = it->second;
+    }
+    if (!h) return std::nullopt;
+    return Traits::observe(*h, ctx);
+  }
+
+  // Return the existing entry handle for `key`, or `std::nullopt`. Non-minting.
+  std::optional<H> handle(const K& key) const {
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    auto it = inner_->materialized.find(key);
+    if (it == inner_->materialized.end()) return std::nullopt;
+    return it->second;
   }
 
   bool is_present(const K& key) const {
@@ -165,35 +146,19 @@ class AsyncReactiveFamily {
     return inner_->order.size();
   }
 
-  MaterializationMode mode() const { return inner_->mode; }
   EntryKind entry_kind() const { return Traits::kind; }
 
- private:
-  std::shared_ptr<AsyncReactiveFamilyInner<K, V, H>> inner_;
+ protected:
+  std::shared_ptr<AsyncReactiveMapInner<K, H>> inner_;
 
-  static AsyncReactiveFamily build(AsyncContext& ctx, MaterializationMode mode,
-                                   std::vector<K> keys,
-                                   std::function<V(const K&)> factory) {
-    AsyncReactiveFamily fam;
-    fam.inner_ = std::make_shared<AsyncReactiveFamilyInner<K, V, H>>();
-    fam.inner_->mode = mode;
-    fam.inner_->factory = std::move(factory);
-    for (auto& key : keys) {
-      if (Traits::kind == EntryKind::Cell ||
-          mode == MaterializationMode::Eager) {
-        fam.materialize_key(ctx, key);
-      }
-    }
-    return fam;
-  }
-
-  H materialize_key(AsyncContext& ctx, const K& key) {
+  H mint_with(AsyncContext& ctx, const K& key,
+              const std::function<V(const K&)>& factory) {
     {
       std::lock_guard<std::mutex> g(inner_->state_mutex);
       auto it = inner_->materialized.find(key);
       if (it != inner_->materialized.end()) return it->second;  // warm.
     }
-    H handle = Traits::materialize(ctx, key, inner_->factory);
+    H handle = Traits::materialize(ctx, key, factory);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     // First writer wins on a race so the key keeps a stable handle.
     auto it = inner_->materialized.find(key);
@@ -204,15 +169,45 @@ class AsyncReactiveFamily {
   }
 };
 
-// An async **input-cell** family: every entry is an always-resolved
-// `AsyncCellHandle<V>`.
+// An async **input-cell** map: every entry is an always-resolved
+// `AsyncCellHandle<V>`. Adds cell-only `set`.
 template <typename K, typename V>
-using AsyncCellFamily = AsyncReactiveFamily<K, V, AsyncCellHandle<V>>;
+class AsyncCellMap : public AsyncReactiveMap<K, V, AsyncCellHandle<V>> {
+ public:
+  using Base = AsyncReactiveMap<K, V, AsyncCellHandle<V>>;
+  using Base::Base;
 
-// An async **derived-slot** family: entries are `AsyncSlotHandle<V>` governed by
-// the family's `MaterializationMode`, resolved via `get_async()`.
+  // Set the value at `key`, inserting a new input cell if absent. Cell-only.
+  void set(AsyncContext& ctx, const K& key, V value) {
+    auto h = this->handle(key);
+    if (h) {
+      h->set(std::move(value));
+      return;
+    }
+    this->get_or_insert_handle(ctx, key,
+                               [value](const K&) -> V { return value; });
+  }
+};
+
+// An async **derived-slot** map: entries are `AsyncSlotHandle<V>` minted lazily
+// on access or eagerly via `materialize_all`, resolved via `get_async()`.
 template <typename K, typename V>
-using AsyncSlotFamily = AsyncReactiveFamily<K, V, AsyncSlotHandle<V>>;
+class AsyncSlotMap : public AsyncReactiveMap<K, V, AsyncSlotHandle<V>> {
+ public:
+  using Base = AsyncReactiveMap<K, V, AsyncSlotHandle<V>>;
+  using Base::Base;
+
+  // **Eager materialization**: pre-mint a derived slot for every key in `keys`.
+  void materialize_all(AsyncContext& ctx, const std::vector<K>& keys,
+                       std::function<V(const K&)> factory) {
+    for (const auto& key : keys)
+      this->get_or_insert_handle(ctx, key, factory);
+  }
+  void materialize_all(AsyncContext& ctx, std::initializer_list<K> keys,
+                       std::function<V(const K&)> factory) {
+    materialize_all(ctx, std::vector<K>(keys), std::move(factory));
+  }
+};
 
 }  // namespace lazily
 

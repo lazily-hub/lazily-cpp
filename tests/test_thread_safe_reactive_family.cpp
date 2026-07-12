@@ -1,12 +1,13 @@
-// ThreadSafeReactiveFamily materialization-mode tests (`#lzmatmode`,
-// thread-safe flavor).
+// ThreadSafeReactiveMap keyed-collection tests (`#reactivemap`, thread-safe
+// flavor).
 //
 // Mirrors the Rust reference tests in
 // `lazily-rs/src/thread_safe_reactive_family.rs` and replays the shared
-// lazily-spec materialization conformance fixtures
-// (`conformance/materialization/*`) through the `Send + Sync` family, proving it
-// obeys the shared laws plus materialization confluence (order-independent
-// present set + observed values) across threads.
+// lazily-spec materialization conformance fixtures (`conformance/materialization/*`,
+// `"model": "SlotMap"`) through the `Send + Sync` map: eager pre-mint
+// (`materialize_all`) vs. lazy mint-on-access (`get_or_insert_*`), observational
+// transparency, and present-set monotonicity across threads. There is no
+// eager/lazy mode flag.
 
 #include <lazily/lazily.hpp>
 
@@ -31,62 +32,56 @@ static int test_passed = 0;
   } name##_instance;                                      \
   static void name()
 
-using SlotFamily = ThreadSafeSlotFamily<uint32_t, uint32_t>;
-using CellFam = ThreadSafeCellFamily<std::string, uint32_t>;
-
 // -- Rust-parity unit tests --
 
-TEST(test_default_mode_is_eager) {
-  assert(kDefaultMaterializationMode == MaterializationMode::Eager);
-}
-
-TEST(test_eager_cell_family_materializes_all_at_build) {
+TEST(test_eager_cell_map_materializes_all_via_set) {
   ThreadSafeContext ctx;
-  auto fam = ThreadSafeCellFamily<uint32_t, bool>::eager(
-      ctx, {1, 2, 3}, [](const uint32_t&) { return true; });
+  ThreadSafeCellMap<uint32_t, bool> fam(ctx);
+  for (uint32_t k : {1u, 2u, 3u}) fam.set(ctx, k, true);
   assert(fam.entry_kind() == EntryKind::Cell);
-  assert(fam.mode() == MaterializationMode::Eager);
   assert(fam.present_count() == 3);
   assert(fam.is_present(1) && fam.is_present(2) && fam.is_present(3));
   assert((fam.present_keys() == std::vector<uint32_t>{1, 2, 3}));
 }
 
-TEST(test_lazy_slot_family_defers_until_read) {
+TEST(test_lazy_slot_map_defers_until_read) {
   ThreadSafeContext ctx;
-  auto fam = SlotFamily::lazy(ctx, {},
-                              [](const uint32_t& k) { return k * 10; });
-  assert(fam.mode() == MaterializationMode::Lazy);
+  ThreadSafeSlotMap<uint32_t, uint32_t> fam(ctx);
   assert(fam.present_count() == 0);
   assert(!fam.is_present(2));
-  assert(fam.observe(ctx, 2) == 20);
+  assert(fam.get_or_insert_with(ctx, 2, [](const uint32_t& k) { return k * 10; }) ==
+         20);
   assert(fam.is_present(2));
   assert(fam.present_count() == 1);
 }
 
-TEST(test_lazy_cell_entries_still_materialize_at_build) {
+TEST(test_eager_slot_map_materializes_all_up_front) {
   ThreadSafeContext ctx;
-  auto fam = ThreadSafeCellFamily<uint32_t, bool>::lazy(
-      ctx, {7, 8}, [](const uint32_t&) { return false; });
+  ThreadSafeSlotMap<uint32_t, uint32_t> fam(ctx);
+  fam.materialize_all(ctx, {7, 8}, [](const uint32_t& k) { return k; });
   assert(fam.present_count() == 2);
 }
 
 TEST(test_observational_transparency_eager_equals_lazy) {
   ThreadSafeContext ctx_e;
-  auto eager = SlotFamily::eager(ctx_e, {1, 2, 3},
-                                 [](const uint32_t& k) { return k * 2; });
+  ThreadSafeSlotMap<uint32_t, uint32_t> eager(ctx_e);
+  eager.materialize_all(ctx_e, {1, 2, 3}, [](const uint32_t& k) { return k * 2; });
   ThreadSafeContext ctx_l;
-  auto lazy = SlotFamily::lazy(ctx_l, {1, 2, 3},
-                               [](const uint32_t& k) { return k * 2; });
-  for (uint32_t k : {1u, 2u, 3u})
-    assert(eager.observe(ctx_e, k) == lazy.observe(ctx_l, k));
+  ThreadSafeSlotMap<uint32_t, uint32_t> lazy(ctx_l);
+  for (uint32_t k : {1u, 2u, 3u}) {
+    auto ve = eager.observe(ctx_e, k);
+    auto vl = lazy.get_or_insert_with(ctx_l, k, [](const uint32_t& kk) { return kk * 2; });
+    assert(ve == std::optional<uint32_t>(vl));
+  }
 }
 
 TEST(test_present_set_grows_monotonically) {
   ThreadSafeContext ctx;
-  auto fam = SlotFamily::lazy(ctx, {}, [](const uint32_t& k) { return k; });
-  (void)fam.observe(ctx, 5);
-  (void)fam.observe(ctx, 5);  // repeat: no growth
-  (void)fam.observe(ctx, 9);
+  ThreadSafeSlotMap<uint32_t, uint32_t> fam(ctx);
+  auto id = [](const uint32_t& k) { return k; };
+  (void)fam.get_or_insert_with(ctx, 5, id);
+  (void)fam.get_or_insert_with(ctx, 5, id);  // repeat: no growth
+  (void)fam.get_or_insert_with(ctx, 9, id);
   assert(fam.present_count() == 2);
   assert((fam.present_keys() == std::vector<uint32_t>{5, 9}));
 }
@@ -95,12 +90,10 @@ TEST(test_present_set_grows_monotonically) {
 // reactively when a cell flips.
 TEST(test_derived_count_reacts_to_cell_writes) {
   ThreadSafeContext ctx;
-  auto liveness = ThreadSafeCellFamily<uint32_t, bool>::eager(
-      ctx, {10, 20, 30}, [](const uint32_t&) { return true; });
-  // All cells are eagerly materialized; capture their handles and let a derived
-  // count recompute reactively when one flips (no pull-time scan).
+  ThreadSafeCellMap<uint32_t, bool> liveness(ctx);
+  for (uint32_t k : {10u, 20u, 30u}) liveness.set(ctx, k, true);
   std::vector<CellHandle<bool>> handles;
-  for (uint32_t k : {10u, 20u, 30u}) handles.push_back(liveness.get(ctx, k));
+  for (uint32_t k : {10u, 20u, 30u}) handles.push_back(*liveness.handle(k));
   auto live_count = ctx.computed<int>([handles](Context& c) {
     int n = 0;
     for (const auto& h : handles)
@@ -114,38 +107,41 @@ TEST(test_derived_count_reacts_to_cell_writes) {
   assert(ctx.get(live_count) == 3);
 }
 
-// The whole point of the thread-safe flavor: a family shared across threads.
+// The whole point of the thread-safe flavor: a map shared across threads.
 TEST(test_shared_across_threads) {
   ThreadSafeContext ctx;
-  auto fam = ThreadSafeCellFamily<uint32_t, bool>::eager(
-      ctx, {1, 2, 3, 4}, [](const uint32_t&) { return true; });
+  ThreadSafeCellMap<uint32_t, bool> fam(ctx);
+  for (uint32_t k : {1u, 2u, 3u, 4u}) fam.set(ctx, k, true);
   std::vector<std::thread> threads;
   std::vector<char> results(4, 0);
   for (uint32_t k = 1; k <= 4; ++k) {
-    threads.emplace_back([&, k]() { results[k - 1] = fam.observe(ctx, k); });
+    threads.emplace_back(
+        [&, k]() { results[k - 1] = fam.observe(ctx, k).value_or(false); });
   }
   for (auto& t : threads) t.join();
   for (char r : results) assert(r);
   assert(fam.present_count() == 4);
 }
 
-// -- Spec conformance fixtures (replayed through the thread-safe family) --
+// -- Spec conformance fixtures (replayed through the thread-safe map) --
 
 // conformance/materialization/observational_transparency.json
 TEST(test_conformance_observational_transparency) {
   ThreadSafeContext ctx;
   auto factory = [](const uint32_t& k) { return k * 3; };
   std::vector<uint32_t> keys{0, 1, 2, 5, 9};
-  auto eager = SlotFamily::eager(ctx, keys, factory);
-  auto lazy = SlotFamily::lazy(ctx, keys, factory);
-  assert(eager.mode() == MaterializationMode::Eager);
+  ThreadSafeSlotMap<uint32_t, uint32_t> eager(ctx);
+  eager.materialize_all(ctx, keys, factory);
+  ThreadSafeSlotMap<uint32_t, uint32_t> lazy(ctx);
   assert(eager.present_count() == 5);
   assert(lazy.present_count() == 0);
-  for (uint32_t k : keys) assert(eager.observe(ctx, k) == lazy.observe(ctx, k));
+  for (uint32_t k : keys)
+    assert(eager.observe(ctx, k) ==
+           std::optional<uint32_t>(lazy.get_or_insert_with(ctx, k, factory)));
   assert(eager.present_keys() == keys);
 
-  auto lazy2 = SlotFamily::lazy(ctx, keys, factory);
-  for (uint32_t k : {1u, 5u}) lazy2.observe(ctx, k);
+  ThreadSafeSlotMap<uint32_t, uint32_t> lazy2(ctx);
+  for (uint32_t k : {1u, 5u}) lazy2.get_or_insert_with(ctx, k, factory);
   assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
 }
 
@@ -154,14 +150,15 @@ TEST(test_conformance_deferral_not_deallocation) {
   ThreadSafeContext ctx;
   auto factory = [](const uint32_t& k) { return k * 2; };
   std::vector<uint32_t> keys{1, 2, 3, 4, 5};
-  auto eager = SlotFamily::eager(ctx, keys, factory);
+  ThreadSafeSlotMap<uint32_t, uint32_t> eager(ctx);
+  eager.materialize_all(ctx, keys, factory);
   assert(eager.present_keys() == keys);
-  for (uint32_t k : keys) assert(eager.observe(ctx, k) == k * 2);
+  for (uint32_t k : keys) assert(eager.observe(ctx, k) == std::optional<uint32_t>(k * 2));
 
-  auto lazy = SlotFamily::lazy(ctx, keys, factory);
+  ThreadSafeSlotMap<uint32_t, uint32_t> lazy(ctx);
   std::vector<size_t> present_after_each_read;
   for (uint32_t k : {2u, 4u, 2u, 5u}) {
-    assert(lazy.observe(ctx, k) == k * 2);
+    assert(lazy.get_or_insert_with(ctx, k, factory) == k * 2);
     present_after_each_read.push_back(lazy.present_count());
   }
   assert((present_after_each_read == std::vector<size_t>{1, 2, 2, 3}));
@@ -170,7 +167,7 @@ TEST(test_conformance_deferral_not_deallocation) {
 }
 
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
-TEST(test_conformance_entry_kind_orthogonal_to_mode) {
+TEST(test_conformance_entry_kind) {
   ThreadSafeContext ctx;
   auto cell_val = [](const std::string& k) -> uint32_t {
     return k == "in_a" ? 5 : 7;
@@ -178,24 +175,19 @@ TEST(test_conformance_entry_kind_orthogonal_to_mode) {
   auto slot_val = [](const std::string& k) -> uint32_t {
     return k == "der_x" ? 12 : 35;
   };
-  std::vector<std::string> cell_keys{"in_a", "in_b"};
-  std::vector<std::string> slot_keys{"der_x", "der_y"};
-  using SlotF = ThreadSafeSlotFamily<std::string, uint32_t>;
 
-  auto cells_e = CellFam::eager(ctx, cell_keys, cell_val);
-  auto slots_e = SlotF::eager(ctx, slot_keys, slot_val);
-  assert(cells_e.present_count() == 2 && slots_e.present_count() == 2);
+  ThreadSafeCellMap<std::string, uint32_t> cells(ctx);
+  cells.set(ctx, "in_a", cell_val("in_a"));
+  cells.set(ctx, "in_b", cell_val("in_b"));
+  assert(cells.present_count() == 2);
+  assert(cells.entry_kind() == EntryKind::Cell);
 
-  auto cells_l = CellFam::lazy(ctx, cell_keys, cell_val);
-  auto slots_l = SlotF::lazy(ctx, slot_keys, slot_val);
-  assert((cells_l.present_keys() == std::vector<std::string>{"in_a", "in_b"}));
-  assert(slots_l.present_count() == 0);
-  assert(cells_l.entry_kind() == EntryKind::Cell);
-  assert(slots_l.entry_kind() == EntryKind::Slot);
-  assert(slots_l.observe(ctx, "der_x") == 12);
-  assert(slots_l.is_present("der_x") && !slots_l.is_present("der_y"));
-  assert(cells_e.observe(ctx, "in_a") == cells_l.observe(ctx, "in_a"));
-  assert(slots_e.observe(ctx, "der_x") == slots_l.observe(ctx, "der_x"));
+  ThreadSafeSlotMap<std::string, uint32_t> slots(ctx);
+  assert(slots.present_count() == 0);
+  assert(slots.entry_kind() == EntryKind::Slot);
+  assert(slots.get_or_insert_with(ctx, "der_x", slot_val) == 12);
+  assert(slots.is_present("der_x") && !slots.is_present("der_y"));
+  assert(cells.observe(ctx, "in_a") == std::optional<uint32_t>(5));
 }
 
 int main() { return test_count == test_passed ? 0 : 1; }

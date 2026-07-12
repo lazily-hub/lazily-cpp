@@ -121,17 +121,6 @@ TEST(test_cellmap_move_before_after) {
   assert(keys == std::vector<int>({3, 1, 2, 0}));
 }
 
-// -- CellFamily --
-
-TEST(test_cellfamily_factory) {
-  Context ctx;
-  CellFamily<int, int> fam(ctx, [](const int& k) { return k * 2; });
-  auto c7 = fam.get(ctx, 7);
-  assert(ctx.get_cell(c7) == 14);
-  ctx.set_cell(c7, 100);
-  assert(ctx.get_cell(fam.get(ctx, 7)) == 100);
-}
-
 // -- CellTree --
 
 TEST(test_celltree_basic) {
