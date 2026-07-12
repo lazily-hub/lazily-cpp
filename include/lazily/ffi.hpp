@@ -31,6 +31,8 @@ enum class LazilyFfiMessageKind : int {
   Snapshot = 1,
   Delta = 2,
   CrdtSync = 3,
+  ResyncRequest = 4,
+  OutboxAck = 5,
 };
 
 // -- Owned byte buffer --
@@ -101,6 +103,10 @@ inline std::pair<LazilyFfiMessageKind, LazilyFfiStatus> kind_json(const LazilyFf
     return {LazilyFfiMessageKind::Delta, LazilyFfiStatus::Ok};
   if (s.find("\"CrdtSync\"") != std::string::npos)
     return {LazilyFfiMessageKind::CrdtSync, LazilyFfiStatus::Ok};
+  if (s.find("\"ResyncRequest\"") != std::string::npos)
+    return {LazilyFfiMessageKind::ResyncRequest, LazilyFfiStatus::Ok};
+  if (s.find("\"OutboxAck\"") != std::string::npos)
+    return {LazilyFfiMessageKind::OutboxAck, LazilyFfiStatus::Ok};
   return {LazilyFfiMessageKind::Unknown, LazilyFfiStatus::InvalidMessage};
 }
 

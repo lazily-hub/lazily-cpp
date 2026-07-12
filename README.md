@@ -60,8 +60,8 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Cross-process zero-copy transport (`BlobBackend` / shm / arrow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Reliable sync — resync coordinator + at-least-once durable outbox + OR-set/LWW liveness (`#lzsync`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Reliable-sync transport seam + full-duplex `SyncDriver` loop (`IpcSink`/`IpcSource`, `#sync-driver`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Reliable sync — resync coordinator + at-least-once durable outbox + OR-set/LWW liveness (`#lzsync`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Reliable-sync transport seam + full-duplex `SyncDriver` loop (`IpcSink`/`IpcSource`, `#sync-driver`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
 | Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | State projection / mirror | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Causal receipts (`CausalReceipts` outcome projection) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -114,6 +114,18 @@ plane as small descriptors (not copies) via a pluggable `BlobBackend` —
 an Apache Arrow adapter (consumer-provided). Wire shrinks ~459× at 64 KB;
 resolve is zero-copy. Spec: lazily-spec `zero-copy-transport.md`. See
 [BENCHMARKS.md](BENCHMARKS.md#zero-copy-transport-transporthpp).
+
+**Reliable sync (v0.10.0, `#lzsync`):** delivery-reliability over the
+`Snapshot`/`Delta`/`CrdtSync` planes — `<lazily/reliable_sync.hpp>`. Three pure
+pieces (no I/O, clock, or storage engine): a `ResyncCoordinator` (gap detection →
+`ResyncRequest`, multi-epoch-span deltas, idempotent re-delivery for exactly-once
+effect), a `DurableOutbox`/`InMemoryOutbox` (append-before-send, replay-from-cursor
+on reconnect for at-least-once delivery), and `OrSet`/`WireLwwRegister` liveness
+cells on the CRDT plane. The full-duplex `SyncDriver` composes them over a
+caller-supplied `IpcSink`/`IpcSource`/`Clock`/`SnapshotProvider` seam — the host
+owns threads, cadence, and backoff. `ResyncRequest`/`OutboxAck` are two new
+`IpcMessage` variants (FFI kinds 4/5). Pinned by
+`lazily-spec/conformance/reliable-sync/` and `lazily-formal` `ReliableSync.lean`.
 
 ## Usage
 

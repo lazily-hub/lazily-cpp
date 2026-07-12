@@ -54,6 +54,10 @@ add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
 add_test(NAME family_sync COMMAND test_family_sync)
 
+add_executable(test_reliable_sync test_reliable_sync.cpp)
+target_link_libraries(test_reliable_sync PRIVATE lazily)
+add_test(NAME reliable_sync COMMAND test_reliable_sync)
+
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
 # build`). Skips gracefully (CTest exit code 77) when the sibling checkout or
 # the Lean toolchain is absent. The submodule sits next to this repo

@@ -205,13 +205,39 @@ struct CrdtSync {
   std::vector<CrdtOp> ops;
 };
 
+// -- Reliable-sync control frames (`#lzsync`) --
+//
+// ResyncRequest and OutboxAck are the reverse (receiver -> sender) direction of
+// the same bidirectional IpcMessage plane as Snapshot/Delta/CrdtSync — two new
+// externally-tagged variants (FFI message kinds 4/5), NOT a side channel.
+// Spec: lazily-spec/protocol.md § Reliable Sync, schemas/reliable-sync.json.
+
+// Emitted by a ResyncCoordinator that detected a gap. Requests a fresh Snapshot
+// covering `from_epoch` (the receiver's current last_epoch).
+struct ResyncRequest { Epoch from_epoch; };
+
+// Emitted by a receiver to prove receipt through `through_epoch`. Advances the
+// sender's DurableOutbox retention cursor; on reconnect it doubles as the resume
+// cursor. A retention/cursor signal, NOT a domain delivery authority.
+struct OutboxAck { Epoch through_epoch; };
+
 // -- IPC message envelope --
 
 struct IpcMessageSnapshot { Snapshot value; };
 struct IpcMessageDelta { Delta value; };
 struct IpcMessageCrdtSync { CrdtSync value; };
+struct IpcMessageResyncRequest { ResyncRequest value; };
+struct IpcMessageOutboxAck { OutboxAck value; };
 
-using IpcMessage = std::variant<IpcMessageSnapshot, IpcMessageDelta, IpcMessageCrdtSync>;
+using IpcMessage = std::variant<IpcMessageSnapshot, IpcMessageDelta, IpcMessageCrdtSync,
+                                IpcMessageResyncRequest, IpcMessageOutboxAck>;
+
+inline IpcMessage ipc_resync_request(Epoch from_epoch) {
+  return IpcMessageResyncRequest{ResyncRequest{from_epoch}};
+}
+inline IpcMessage ipc_outbox_ack(Epoch through_epoch) {
+  return IpcMessageOutboxAck{OutboxAck{through_epoch}};
+}
 
 // -- Permission boundary --
 

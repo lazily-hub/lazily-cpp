@@ -383,6 +383,36 @@ inline CrdtSync unpack_crdt_sync(MsgUnpacker& u) {
   return c;
 }
 
+// ── Reliable-sync control frames (`#lzsync`) ─────────────────────────────────
+
+inline void pack_resync_request(MsgPacker& p, const ResyncRequest& r) {
+  p.map_header(1); p.str("from_epoch"); p.i64(r.from_epoch);
+}
+inline ResyncRequest unpack_resync_request(MsgUnpacker& u) {
+  uint32_t n = u.read_map_header();
+  ResyncRequest r{0};
+  for (uint32_t i = 0; i < n; ++i) {
+    std::string k = u.read_str();
+    if (k == "from_epoch") r.from_epoch = u.read_i64();
+    else u.skip();
+  }
+  return r;
+}
+
+inline void pack_outbox_ack(MsgPacker& p, const OutboxAck& a) {
+  p.map_header(1); p.str("through_epoch"); p.i64(a.through_epoch);
+}
+inline OutboxAck unpack_outbox_ack(MsgUnpacker& u) {
+  uint32_t n = u.read_map_header();
+  OutboxAck a{0};
+  for (uint32_t i = 0; i < n; ++i) {
+    std::string k = u.read_str();
+    if (k == "through_epoch") a.through_epoch = u.read_i64();
+    else u.skip();
+  }
+  return a;
+}
+
 // ── Top-level IpcMessage ─────────────────────────────────────────────────────
 
 inline void pack_ipc_message(MsgPacker& p, const IpcMessage& m) {
@@ -393,9 +423,15 @@ inline void pack_ipc_message(MsgPacker& p, const IpcMessage& m) {
   } else if (std::holds_alternative<IpcMessageDelta>(m)) {
     p.map_header(2); p.str("type"); p.i64(1);
     p.str("value"); pack_delta(p, std::get<IpcMessageDelta>(m).value);
-  } else {
+  } else if (std::holds_alternative<IpcMessageCrdtSync>(m)) {
     p.map_header(2); p.str("type"); p.i64(2);
     p.str("value"); pack_crdt_sync(p, std::get<IpcMessageCrdtSync>(m).value);
+  } else if (std::holds_alternative<IpcMessageResyncRequest>(m)) {
+    p.map_header(2); p.str("type"); p.i64(3);
+    p.str("value"); pack_resync_request(p, std::get<IpcMessageResyncRequest>(m).value);
+  } else {
+    p.map_header(2); p.str("type"); p.i64(4);
+    p.str("value"); pack_outbox_ack(p, std::get<IpcMessageOutboxAck>(m).value);
   }
 }
 inline IpcMessage unpack_ipc_message(MsgUnpacker& u) {
@@ -415,6 +451,8 @@ inline IpcMessage unpack_ipc_message(MsgUnpacker& u) {
         case 0: return IpcMessageSnapshot{unpack_snapshot(u)};
         case 1: return IpcMessageDelta{unpack_delta(u)};
         case 2: return IpcMessageCrdtSync{unpack_crdt_sync(u)};
+        case 3: return IpcMessageResyncRequest{unpack_resync_request(u)};
+        case 4: return IpcMessageOutboxAck{unpack_outbox_ack(u)};
         default:
           throw std::runtime_error("codec: value before type (non-canonical) or unknown type");
       }

@@ -16,6 +16,7 @@
 #include <lazily/rc_ptr.hpp>
 #include <lazily/reactive_family.hpp>
 #include <lazily/receipt.hpp>
+#include <lazily/reliable_sync.hpp>
 #include <lazily/sem_tree.hpp>
 #include <lazily/signaling.hpp>
 #include <lazily/small_any.hpp>
