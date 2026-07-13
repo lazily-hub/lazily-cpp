@@ -7,9 +7,33 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 namespace lazily {
+
+// -- Optional-capability detection (C++17 void_t idiom, Phase 0 #relaycell) --
+// `head` / `capacity` / `is_full` are OPTIONAL QueueStorage capabilities; these
+// traits let the shell compile against a raw-channel backend that provides
+// none.
+namespace queue_detail {
+template <typename S, typename = void> struct has_head : std::false_type {};
+template <typename S>
+struct has_head<S, std::void_t<decltype(std::declval<const S &>().head())>>
+    : std::true_type {};
+
+template <typename S, typename = void> struct has_capacity : std::false_type {};
+template <typename S>
+struct has_capacity<S,
+                    std::void_t<decltype(std::declval<const S &>().capacity())>>
+    : std::true_type {};
+
+template <typename S, typename = void> struct has_is_full : std::false_type {};
+template <typename S>
+struct has_is_full<S,
+                   std::void_t<decltype(std::declval<const S &>().is_full())>>
+    : std::true_type {};
+} // namespace queue_detail
 
 // -- Result types (shared across every QueueStorage backend) --
 
@@ -19,13 +43,14 @@ enum class PushResult {
   Closed,
 };
 
-template <typename T>
-struct PopResult {
+template <typename T> struct PopResult {
   enum class Kind { Value, Empty, Closed };
   Kind kind;
   std::optional<T> value;
 
-  static PopResult with_value(T v) { return {Kind::Value, std::optional<T>(std::move(v))}; }
+  static PopResult with_value(T v) {
+    return {Kind::Value, std::optional<T>(std::move(v))};
+  }
   static PopResult empty() { return {Kind::Empty, std::nullopt}; }
   static PopResult closed() { return {Kind::Closed, std::nullopt}; }
 
@@ -37,29 +62,35 @@ struct PopResult {
 // -- VecDequeStorage: the default unbounded / bounded reference backend --
 //
 // A QueueStorage backend conforms (per lazily-spec/cell-model.md § "Storage
-// backend contract") when it provides:
+// backend contract"). Minimal REQUIRED contract (Phase 0 #relaycell):
 //   try_push(T) -> PushResult      (Ok / Full / Closed)
 //   try_pop()   -> PopResult<T>    (Value / Empty / Closed)
-//   head()      -> std::optional<T>
 //   len()       -> size_t
-//   capacity()  -> std::optional<size_t>
-//   is_full()   -> bool
 //   is_closed() -> bool
 //   close()     -> void
+// OPTIONAL capabilities (detected at compile time via the queue_detail traits):
+//   head()      -> std::optional<T>       (gains a head reader; else nullopt)
+//   capacity()  -> std::optional<size_t>  (gains a bound; else unbounded)
+//   is_full()   -> bool                   (gains the is_full backpressure
+//   reader)
+// A raw-channel-style backend providing only the five required members is fully
+// conforming (no head reader, never full).
 // FIFO order is total under SPSC; closure is monotonic (close is idempotent and
-// terminal; push after close returns Closed; pop on closed+empty returns Closed,
-// distinct from Empty; pop on closed+non-empty drains and returns the element).
-// The default overflow policy is reject (try_push at capacity returns Full).
+// terminal; push after close returns Closed; pop on closed+empty returns
+// Closed, distinct from Empty; pop on closed+non-empty drains and returns the
+// element). The default overflow policy is reject (try_push at capacity returns
+// Full).
 
-template <typename T>
-class VecDequeStorage {
- public:
+template <typename T> class VecDequeStorage {
+public:
   VecDequeStorage() = default;
   explicit VecDequeStorage(size_t capacity) : capacity_(capacity) {}
 
   PushResult try_push(T v) {
-    if (closed_) return PushResult::Closed;
-    if (capacity_ && elements_.size() >= *capacity_) return PushResult::Full;
+    if (closed_)
+      return PushResult::Closed;
+    if (capacity_ && elements_.size() >= *capacity_)
+      return PushResult::Full;
     elements_.push_back(std::move(v));
     return PushResult::Ok;
   }
@@ -73,7 +104,8 @@ class VecDequeStorage {
   }
 
   std::optional<T> head() const {
-    if (elements_.empty()) return std::nullopt;
+    if (elements_.empty())
+      return std::nullopt;
     return elements_.front();
   }
 
@@ -88,7 +120,7 @@ class VecDequeStorage {
 
   void close() { closed_ = true; }
 
- private:
+private:
   std::deque<T> elements_;
   std::optional<size_t> capacity_;
   bool closed_ = false;
@@ -145,17 +177,17 @@ struct QueueCellInner {
   explicit QueueCellInner(Storage s) : storage(std::move(s)) {}
 };
 
-template <typename T, typename Storage = VecDequeStorage<T>>
-class QueueCell {
- public:
+template <typename T, typename Storage = VecDequeStorage<T>> class QueueCell {
+public:
   using value_type = T;
 
   // Unbounded default (capacity() == nullopt, is_full() always false).
-  explicit QueueCell(Context& ctx) : QueueCell(ctx, Storage{}) {}
+  explicit QueueCell(Context &ctx) : QueueCell(ctx, Storage{}) {}
 
   // Custom storage backend (compile-time pluggable seam).
-  QueueCell(Context& ctx, Storage storage)
-      : inner_(std::make_shared<QueueCellInner<T, Storage>>(std::move(storage))) {
+  QueueCell(Context &ctx, Storage storage)
+      : inner_(
+            std::make_shared<QueueCellInner<T, Storage>>(std::move(storage))) {
     inner_->head_cell = ctx.cell(uint64_t(0));
     inner_->head_version = 0;
     inner_->len_cell = ctx.cell(uint64_t(0));
@@ -169,35 +201,46 @@ class QueueCell {
   }
 
   // Bounded convenience factory (reject overflow policy).
-  static QueueCell bounded(Context& ctx, size_t capacity) {
+  static QueueCell bounded(Context &ctx, size_t capacity) {
     return QueueCell(ctx, Storage(capacity));
   }
 
   // -- Mutating ops --
 
   // try_push: returns Ok / Full / Closed. No invalidation on Full or Closed.
-  PushResult try_push(Context& ctx, T v) {
+  PushResult try_push(Context &ctx, T v) {
     const bool was_empty = inner_->storage.len() == 0;
-    const bool was_full = inner_->storage.is_full();
+    bool was_full = false;
+    if constexpr (queue_detail::has_is_full<Storage>::value) {
+      was_full = inner_->storage.is_full();
+    }
     PushResult r = inner_->storage.try_push(std::move(v));
-    if (r != PushResult::Ok) return r;
+    if (r != PushResult::Ok)
+      return r;
 
     bump_len(ctx);
     if (was_empty) {
       bump_head(ctx);
       bump_empty(ctx);
     }
-    if (!was_full && inner_->storage.is_full()) bump_full(ctx);
+    if constexpr (queue_detail::has_is_full<Storage>::value) {
+      if (!was_full && inner_->storage.is_full())
+        bump_full(ctx);
+    }
     return r;
   }
 
-  // try_pop: returns Value / Empty / Closed. No invalidation on Empty or Closed.
-  PopResult<T> try_pop(Context& ctx) {
+  // try_pop: returns Value / Empty / Closed. No invalidation on Empty or
+  // Closed.
+  PopResult<T> try_pop(Context &ctx) {
     if (inner_->storage.len() == 0)
       return inner_->storage.is_closed() ? PopResult<T>::closed()
                                          : PopResult<T>::empty();
 
-    const bool was_full = inner_->storage.is_full();
+    bool was_full = false;
+    if constexpr (queue_detail::has_is_full<Storage>::value) {
+      was_full = inner_->storage.is_full();
+    }
     PopResult<T> r = inner_->storage.try_pop();
 
     // A successful pop always changes the head value (front -> next, or
@@ -205,88 +248,115 @@ class QueueCell {
     // observation laws.
     bump_head(ctx);
     bump_len(ctx);
-    if (inner_->storage.len() == 0) bump_empty(ctx);
-    if (was_full) bump_full(ctx);
+    if (inner_->storage.len() == 0)
+      bump_empty(ctx);
+    if constexpr (queue_detail::has_is_full<Storage>::value) {
+      if (was_full)
+        bump_full(ctx);
+    }
     return r;
   }
 
   // push / pop convenience wrappers (happy path; assert success).
-  void push(Context& ctx, T v) {
+  void push(Context &ctx, T v) {
     PushResult r = try_push(ctx, std::move(v));
-    assert(r == PushResult::Ok && "lazily::QueueCell::push failed (Full/Closed)");
+    assert(r == PushResult::Ok &&
+           "lazily::QueueCell::push failed (Full/Closed)");
   }
 
-  std::optional<T> pop(Context& ctx) {
+  std::optional<T> pop(Context &ctx) {
     PopResult<T> r = try_pop(ctx);
-    if (r.is_value()) return std::move(r.value);
+    if (r.is_value())
+      return std::move(r.value);
     return std::nullopt;
   }
 
   // Close is idempotent and terminal: the first close flips `closed` to true
   // and invalidates closed readers; subsequent closes are no-ops.
-  void close(Context& ctx) {
+  void close(Context &ctx) {
     const bool was = inner_->storage.is_closed();
     inner_->storage.close();
-    if (!was && inner_->storage.is_closed()) bump_closed(ctx);
+    if (!was && inner_->storage.is_closed())
+      bump_closed(ctx);
   }
 
-  // -- Reactive reads (each establishes a dependency on its reader-kind cell) --
+  // -- Reactive reads (each establishes a dependency on its reader-kind cell)
+  // --
 
-  std::optional<T> head(Context& ctx) {
+  std::optional<T> head(Context &ctx) {
     (void)ctx.get_cell(inner_->head_cell);
-    return inner_->storage.head();
+    // `head()` is an OPTIONAL storage capability (Phase 0 #relaycell): a
+    // raw-channel backend that cannot peek has no head reader (nullopt).
+    if constexpr (queue_detail::has_head<Storage>::value) {
+      return inner_->storage.head();
+    } else {
+      return std::nullopt;
+    }
   }
 
-  size_t len(Context& ctx) {
+  size_t len(Context &ctx) {
     (void)ctx.get_cell(inner_->len_cell);
     return inner_->storage.len();
   }
 
-  bool is_empty(Context& ctx) {
+  bool is_empty(Context &ctx) {
     (void)ctx.get_cell(inner_->empty_cell);
     return inner_->storage.len() == 0;
   }
 
-  bool is_full(Context& ctx) {
+  bool is_full(Context &ctx) {
     (void)ctx.get_cell(inner_->full_cell);
-    return inner_->storage.is_full();
+    // `is_full()`/`capacity()` are OPTIONAL: a backend without a bound is
+    // unbounded and never full.
+    if constexpr (queue_detail::has_is_full<Storage>::value) {
+      return inner_->storage.is_full();
+    } else {
+      return false;
+    }
   }
 
-  bool closed(Context& ctx) {
+  bool closed(Context &ctx) {
     (void)ctx.get_cell(inner_->closed_cell);
     return inner_->storage.is_closed();
   }
 
   // -- Non-reactive introspection (no dependency registered) --
 
-  std::optional<size_t> capacity() const { return inner_->storage.capacity(); }
+  std::optional<size_t> capacity() const {
+    if constexpr (queue_detail::has_capacity<Storage>::value) {
+      return inner_->storage.capacity();
+    } else {
+      return std::nullopt;
+    }
+  }
   size_t len_untracked() const { return inner_->storage.len(); }
   bool is_closed_untracked() const { return inner_->storage.is_closed(); }
 
-  // Access the underlying storage (for backends that expose snapshot/serialize).
-  Storage& storage() { return inner_->storage; }
-  const Storage& storage() const { return inner_->storage; }
+  // Access the underlying storage (for backends that expose
+  // snapshot/serialize).
+  Storage &storage() { return inner_->storage; }
+  const Storage &storage() const { return inner_->storage; }
 
- private:
+private:
   std::shared_ptr<QueueCellInner<T, Storage>> inner_;
 
-  void bump_head(Context& ctx) {
+  void bump_head(Context &ctx) {
     ctx.set_cell(inner_->head_cell, ++inner_->head_version);
   }
-  void bump_len(Context& ctx) {
+  void bump_len(Context &ctx) {
     ctx.set_cell(inner_->len_cell, ++inner_->len_version);
   }
-  void bump_empty(Context& ctx) {
+  void bump_empty(Context &ctx) {
     ctx.set_cell(inner_->empty_cell, ++inner_->empty_version);
   }
-  void bump_full(Context& ctx) {
+  void bump_full(Context &ctx) {
     ctx.set_cell(inner_->full_cell, ++inner_->full_version);
   }
-  void bump_closed(Context& ctx) {
+  void bump_closed(Context &ctx) {
     ctx.set_cell(inner_->closed_cell, ++inner_->closed_version);
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_QUEUE_HPP
+#endif // LAZILY_QUEUE_HPP

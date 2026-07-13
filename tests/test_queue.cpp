@@ -10,40 +10,39 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                             \
+  static void name();                                                          \
+  struct name##_runner {                                                       \
+    name##_runner() {                                                          \
+      ++test_count;                                                            \
+      name();                                                                  \
+      ++test_passed;                                                           \
+    }                                                                          \
+  } name##_instance;                                                           \
   static void name()
 
 // Helper: a reactive reader that caches the observed value of a QueueCell
 // observable. After creation, `is_set()` reports whether the cached value is
 // still valid (not invalidated); `value()` returns the cached value.
-template <typename T>
-struct Reader {
-  Context& ctx;
+template <typename T> struct Reader {
+  Context &ctx;
   SlotHandle<T> slot;
   T cached;
-  Reader(Context& c, std::function<T(Context&)> fn)
-      : ctx(c), slot(c.memo<T>([fn](Context& cc) { return fn(cc); })) {
+  Reader(Context &c, std::function<T(Context &)> fn)
+      : ctx(c), slot(c.memo<T>([fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
-  const T& value() { return cached; }
+  const T &value() { return cached; }
   bool is_valid() { return ctx.is_set(slot); }
   void refresh() { cached = ctx.get(slot); }
 };
 
 struct BoolReader {
-  Context& ctx;
+  Context &ctx;
   SlotHandle<bool> slot;
   bool cached;
-  BoolReader(Context& c, std::function<bool(Context&)> fn)
-      : ctx(c), slot(c.memo<bool>([fn](Context& cc) { return fn(cc); })) {
+  BoolReader(Context &c, std::function<bool(Context &)> fn)
+      : ctx(c), slot(c.memo<bool>([fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   bool value() { return cached; }
@@ -52,25 +51,25 @@ struct BoolReader {
 };
 
 struct OptReader {
-  Context& ctx;
+  Context &ctx;
   SlotHandle<std::optional<std::string>> slot;
   std::optional<std::string> cached;
-  OptReader(Context& c, std::function<std::optional<std::string>(Context&)> fn)
-      : ctx(c),
-        slot(c.memo<std::optional<std::string>>([fn](Context& cc) { return fn(cc); })) {
+  OptReader(Context &c, std::function<std::optional<std::string>(Context &)> fn)
+      : ctx(c), slot(c.memo<std::optional<std::string>>(
+                    [fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
-  const std::optional<std::string>& value() { return cached; }
+  const std::optional<std::string> &value() { return cached; }
   bool is_valid() { return ctx.is_set(slot); }
   void refresh() { cached = ctx.get(slot); }
 };
 
 struct SizeReader {
-  Context& ctx;
+  Context &ctx;
   SlotHandle<size_t> slot;
   size_t cached;
-  SizeReader(Context& c, std::function<size_t(Context&)> fn)
-      : ctx(c), slot(c.memo<size_t>([fn](Context& cc) { return fn(cc); })) {
+  SizeReader(Context &c, std::function<size_t(Context &)> fn)
+      : ctx(c), slot(c.memo<size_t>([fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   size_t value() { return cached; }
@@ -90,15 +89,15 @@ struct Readers {
   BoolReader empty;
   BoolReader full;
   BoolReader closed;
-  Readers(Context& ctx, QueueCell<std::string>& q)
-      : head(ctx, [&](Context& c) { return q.head(c); }),
-        len(ctx, [&](Context& c) { return q.len(c); }),
-        empty(ctx, [&](Context& c) { return q.is_empty(c); }),
-        full(ctx, [&](Context& c) { return q.is_full(c); }),
-        closed(ctx, [&](Context& c) { return q.closed(c); }) {}
+  Readers(Context &ctx, QueueCell<std::string> &q)
+      : head(ctx, [&](Context &c) { return q.head(c); }),
+        len(ctx, [&](Context &c) { return q.len(c); }),
+        empty(ctx, [&](Context &c) { return q.is_empty(c); }),
+        full(ctx, [&](Context &c) { return q.is_full(c); }),
+        closed(ctx, [&](Context &c) { return q.closed(c); }) {}
   InvSnapshot snap() {
-    return {head.is_valid(), len.is_valid(), empty.is_valid(),
-            full.is_valid(), closed.is_valid()};
+    return {head.is_valid(), len.is_valid(), empty.is_valid(), full.is_valid(),
+            closed.is_valid()};
   }
   void refresh() {
     head.refresh();
@@ -109,8 +108,8 @@ struct Readers {
   }
 };
 
-static void check_inv(const char* label, const InvSnapshot& s, bool head, bool len,
-                      bool emp, bool full, bool clsd) {
+static void check_inv(const char *label, const InvSnapshot &s, bool head,
+                      bool len, bool emp, bool full, bool clsd) {
   // `s.*_valid` is true while the reader is STILL VALID (not invalidated).
   // The expected booleans follow the conformance `invalidates` polarity:
   // true = the reader WAS invalidated (no longer valid).
@@ -204,7 +203,8 @@ TEST(test_queue_closure_lifecycle) {
     auto res = q.try_pop(ctx);
     assert(res.is_closed());
   }
-  check_inv("try_pop closed+empty", r.snap(), false, false, false, false, false);
+  check_inv("try_pop closed+empty", r.snap(), false, false, false, false,
+            false);
 
   // try_push on closed: returns Closed, no invalidation.
   {
@@ -272,7 +272,7 @@ TEST(test_queue_mpsc_multi_writer) {
   Readers r(ctx, q);
 
   // Producer 1 pushes a1, a2 inside a batch (atomic, per-producer FIFO).
-  ctx.batch([&](Context& c) {
+  ctx.batch([&](Context &c) {
     q.push(c, "a1");
     q.push(c, "a2");
   });
@@ -282,7 +282,7 @@ TEST(test_queue_mpsc_multi_writer) {
   assert(r.len.value() == 2);
 
   // Producer 2 pushes b1, b2 inside a batch. Head unchanged (nonempty).
-  ctx.batch([&](Context& c) {
+  ctx.batch([&](Context &c) {
     q.push(c, "b1");
     q.push(c, "b2");
   });
@@ -353,7 +353,7 @@ TEST(test_queue_backpressure_effect) {
 
   int resume_count = 0;
   bool last_full = false;
-  auto eff = ctx.effect_void([&](Context& c) {
+  auto eff = ctx.effect_void([&](Context &c) {
     bool f = q.is_full(c);
     if (f != last_full || resume_count == 0) {
       last_full = f;
@@ -362,25 +362,26 @@ TEST(test_queue_backpressure_effect) {
   });
   (void)eff;
 
-  assert(resume_count == 1);  // initial run, not full
+  assert(resume_count == 1); // initial run, not full
   q.push(ctx, "a");
-  assert(resume_count == 2);  // became full -> effect reran
+  assert(resume_count == 2); // became full -> effect reran
   assert(q.try_push(ctx, "b") == PushResult::Full);
-  assert(resume_count == 2);  // no change, no rerun
+  assert(resume_count == 2); // no change, no rerun
   assert(q.pop(ctx).value() == "a");
-  assert(resume_count == 3);  // capacity recovered -> effect reran
+  assert(resume_count == 3); // capacity recovered -> effect reran
 }
 
 // -- Custom storage backend (compile-time pluggable seam) --
 
-template <typename T>
-class RingStorage {
- public:
+template <typename T> class RingStorage {
+public:
   explicit RingStorage(size_t cap) : buf_(cap), cap_(cap) {}
 
   PushResult try_push(T v) {
-    if (closed_) return PushResult::Closed;
-    if (count_ == cap_) return PushResult::Full;
+    if (closed_)
+      return PushResult::Closed;
+    if (count_ == cap_)
+      return PushResult::Full;
     buf_[tail_] = std::move(v);
     tail_ = (tail_ + 1) % cap_;
     ++count_;
@@ -397,7 +398,8 @@ class RingStorage {
   }
 
   std::optional<T> head() const {
-    if (count_ == 0) return std::nullopt;
+    if (count_ == 0)
+      return std::nullopt;
     return buf_[head_];
   }
   size_t len() const { return count_; }
@@ -406,7 +408,7 @@ class RingStorage {
   bool is_closed() const { return closed_; }
   void close() { closed_ = true; }
 
- private:
+private:
   std::vector<T> buf_;
   size_t cap_, head_ = 0, tail_ = 0, count_ = 0;
   bool closed_ = false;
@@ -439,6 +441,75 @@ TEST(test_queue_closed_distinct_from_empty) {
   q.close(ctx);
   // Closed + empty -> Closed
   assert(q.try_pop(ctx).is_closed());
+}
+
+// -- Minimal contract (Phase 0 #relaycell): a raw-channel-style backend with
+// ONLY try_push / try_pop / len / is_closed / close — no head, capacity, or
+// is_full — is fully conforming (no head reader, never full). --
+template <typename T> class MinimalFifo {
+public:
+  PushResult try_push(T v) {
+    if (closed_)
+      return PushResult::Closed;
+    buf_.push_back(std::move(v));
+    return PushResult::Ok;
+  }
+  PopResult<T> try_pop() {
+    if (buf_.empty())
+      return closed_ ? PopResult<T>::closed() : PopResult<T>::empty();
+    T v = std::move(buf_.front());
+    buf_.pop_front();
+    return PopResult<T>::with_value(std::move(v));
+  }
+  size_t len() const { return buf_.size(); }
+  bool is_closed() const { return closed_; }
+  void close() { closed_ = true; }
+  // NB: no head(), no capacity(), no is_full().
+
+private:
+  std::deque<T> buf_;
+  bool closed_ = false;
+};
+
+TEST(test_queue_raw_channel_minimal_contract) {
+  Context ctx;
+  QueueCell<int, MinimalFifo<int>> q(ctx, MinimalFifo<int>());
+
+  assert(q.is_empty(ctx));
+  assert(q.try_push(ctx, 1) == PushResult::Ok);
+  assert(q.try_push(ctx, 2) == PushResult::Ok);
+  assert(q.len(ctx) == 2);
+
+  // No head() capability -> no head reader (nullopt); no capacity -> never
+  // full.
+  assert(!q.head(ctx).has_value());
+  assert(!q.is_full(ctx));
+  assert(!q.capacity().has_value());
+
+  assert(q.pop(ctx).value() == 1);
+  assert(q.pop(ctx).value() == 2);
+  assert(q.is_empty(ctx));
+
+  q.close(ctx);
+  assert(q.closed(ctx));
+  assert(q.try_push(ctx, 3) == PushResult::Closed);
+  assert(q.try_pop(ctx).is_closed());
+}
+
+// A subscribed reader over the minimal backend stays reactive (the len version
+// cell is bumped each op) even without head/capacity/is_full.
+TEST(test_queue_raw_channel_reader_reactive) {
+  Context ctx;
+  QueueCell<int, MinimalFifo<int>> q(ctx, MinimalFifo<int>());
+  std::vector<size_t> log;
+  auto eff = ctx.effect_void([&](Context &c) { log.push_back(q.len(c)); });
+  (void)eff;
+
+  assert(log.size() == 1 && log[0] == 0);
+  q.push(ctx, 10);
+  assert(log.size() == 2 && log[1] == 1);
+  q.pop(ctx);
+  assert(log.size() == 3 && log[2] == 0);
 }
 
 int main() {
