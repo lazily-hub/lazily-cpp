@@ -561,6 +561,42 @@ topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
 assert(topic.subscription("viewer")->cursor == topic.tail_offset());
 }
 
+TEST(test_topic_tail_and_offline_advance_are_noops) {
+Context ctx;
+TopicCell<std::string> topic(ctx);
+topic.subscribe(ctx, "worker");
+topic.publish(ctx, "a");
+assert(topic.advance(ctx, "worker") == 1);
+assert(topic.advance(ctx, "worker") == 1);
+
+topic.disconnect(ctx, "worker");
+topic.publish(ctx, "b");
+assert(topic.read_stream(ctx, "worker").empty());
+assert(topic.advance(ctx, "worker") == 1);
+assert(topic.subscription("worker")->cursor == 1);
+
+topic.reconnect(ctx, "worker");
+assert(topic.read_stream(ctx, "worker") == std::vector<std::string>{"b"});
+assert(topic.gc() == 1);
+assert(topic.base_offset() == 1);
+assert(topic.subscription("worker")->cursor == 1);
+}
+
+TEST(test_topic_snapshot_rejects_disconnected_ephemeral) {
+Context ctx;
+TopicSnapshot<std::string> snapshot;
+snapshot.subscriptions.push_back(
+{"viewer", 0, TopicDurability::Ephemeral, false});
+bool rejected = false;
+try {
+TopicCell<std::string> topic(ctx, snapshot);
+(void)topic;
+} catch (const std::invalid_argument &) {
+rejected = true;
+}
+assert(rejected);
+}
+
 int main() {
   std::cout << "lazily-cpp queue tests: " << test_passed << "/" << test_count
             << " passed" << std::endl;

@@ -418,6 +418,9 @@ const size_t tail = tail_offset();
 for (const auto &saved : snapshot.subscriptions) {
 if (saved.cursor < inner_->base_offset || saved.cursor > tail)
 throw std::invalid_argument("TopicCell cursor outside retained log");
+if (saved.durability == TopicDurability::Ephemeral && !saved.connected)
+throw std::invalid_argument(
+"disconnected ephemeral TopicCell subscription must be removed");
 inner_->subscriptions.emplace(
 saved.subscriber_id,
 queue_detail::TopicSubscription{saved.cursor, saved.durability,
@@ -485,7 +488,7 @@ std::vector<T> read_stream(Context &ctx,
 const std::string &subscriber_id) {
 (void)ctx.get_cell(ensure_reader(ctx, subscriber_id));
 auto found = inner_->subscriptions.find(subscriber_id);
-if (found == inner_->subscriptions.end())
+if (found == inner_->subscriptions.end() || !found->second.connected)
 return {};
 const size_t start = found->second.cursor - inner_->base_offset;
 auto begin = inner_->elements.begin();
@@ -503,8 +506,11 @@ return stream.front();
 size_t advance(Context &ctx, const std::string &subscriber_id,
 size_t count = 1) {
 auto found = inner_->subscriptions.find(subscriber_id);
-if (found == inner_->subscriptions.end() ||
-count > tail_offset() - found->second.cursor)
+if (found == inner_->subscriptions.end())
+throw std::out_of_range("invalid TopicCell cursor advance");
+if (!found->second.connected || found->second.cursor == tail_offset())
+return found->second.cursor;
+if (count > tail_offset() - found->second.cursor)
 throw std::out_of_range("invalid TopicCell cursor advance");
 if (count != 0) {
 found->second.cursor += count;
