@@ -15,6 +15,7 @@
 #include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/queue.hpp>
 #include <lazily/rc_ptr.hpp>
+#include <lazily/relay.hpp>
 #include <lazily/reactive_family.hpp>
 #include <lazily/receipt.hpp>
 #include <lazily/reliable_sync.hpp>

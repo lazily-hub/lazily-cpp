@@ -10,6 +10,10 @@ add_executable(test_merge test_merge.cpp)
 target_link_libraries(test_merge PRIVATE lazily)
 add_test(NAME merge COMMAND test_merge)
 
+add_executable(test_relay test_relay.cpp)
+target_link_libraries(test_relay PRIVATE lazily)
+add_test(NAME relay COMMAND test_relay)
+
 add_executable(test_statechart test_statechart.cpp)
 target_link_libraries(test_statechart PRIVATE lazily)
 add_test(NAME statechart COMMAND test_statechart)

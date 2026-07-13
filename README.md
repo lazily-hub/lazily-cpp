@@ -50,7 +50,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Merge algebra + `MergeCell` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ MergeCell<KeepLatest>`, `Reactive`/`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | — | — | — | — | — | — | — |
+| RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | — | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -318,6 +318,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `thread_safe_reactive_family.hpp` | `ThreadSafeReactiveMap` — `Send + Sync` keyed collection over ThreadSafeContext (mutex-guarded present set); `ThreadSafeCellMap` / `ThreadSafeSlotMap` (`#reactivemap`) |
 | `async_reactive_family.hpp` | `AsyncReactiveMap` — keyed collection over AsyncContext (`observe` → `std::optional<V>`, eventual transparency); `AsyncCellMap` / `AsyncSlotMap` (`#reactivemap`) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
+| `relay.hpp` | RelayCell conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` (InProc/Framed) + Outbox/Inbox roles + Rate/Window/Expiry/Priority/`KeyedRelay` policies (`#relaycell`) |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
 | `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex) + `ScalableThreadSafeContext` (reader-scalable lock) |
 | `async_context.hpp` | AsyncContext (Empty/Computing/Resolved/Error lifecycle) |
