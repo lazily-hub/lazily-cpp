@@ -132,7 +132,7 @@ owns threads, cadence, and backoff. `ResyncRequest`/`OutboxAck` are two new
 `IpcMessage` variants (FFI kinds 4/5). Pinned by
 `lazily-spec/conformance/reliable-sync/` and `lazily-formal` `ReliableSync.lean`.
 
-**Document/outbox parity (v0.16.0):** `CrdtTree<T>` is the C++17 structural
+**Document/outbox parity (v0.16.1):** `CrdtTree<T>` is the C++17 structural
 lossless-document contract implemented by `TextCrdt`. `StoredOutbox<Store>` is
 the single byte-store-independent acknowledgement/prune/replay protocol;
 `InMemoryOutbox` now uses it, and `FileOutbox` supplies a locked append-only
