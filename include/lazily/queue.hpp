@@ -7,8 +7,12 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace lazily {
 
@@ -355,6 +359,232 @@ private:
   void bump_closed(Context &ctx) {
     ctx.set_cell(inner_->closed_cell, ++inner_->closed_version);
   }
+};
+
+// -- TopicCell: broadcast log with independent subscriber cursors --
+
+enum class TopicDurability { Durable, Ephemeral };
+
+enum class TopicSubscribeOutcome { Subscribed, Reconnected, AlreadySubscribed };
+
+struct TopicSubscriptionSnapshot {
+std::string subscriber_id;
+size_t cursor = 0;
+TopicDurability durability = TopicDurability::Durable;
+bool connected = false;
+};
+
+template <typename T> struct TopicSnapshot {
+size_t base_offset = 0;
+std::vector<T> elements;
+std::vector<TopicSubscriptionSnapshot> subscriptions;
+};
+
+namespace queue_detail {
+struct TopicSubscription {
+size_t cursor = 0;
+TopicDurability durability = TopicDurability::Durable;
+bool connected = false;
+};
+
+struct TopicReader {
+CellHandle<uint64_t> cell;
+uint64_t version = 0;
+};
+
+template <typename T> struct TopicCellInner {
+size_t base_offset = 0;
+std::deque<T> elements;
+std::unordered_map<std::string, TopicSubscription> subscriptions;
+std::unordered_map<std::string, TopicReader> readers;
+};
+} // namespace queue_detail
+
+/// Broadcast topic whose stable subscribers own independent absolute cursors.
+/// Durable offline subscribers retain data; ephemeral subscribers disappear on
+/// disconnect. `gc` is safe by construction and invalidates no reader.
+template <typename T> class TopicCell {
+public:
+explicit TopicCell(Context &ctx)
+: inner_(std::make_shared<queue_detail::TopicCellInner<T>>()) {
+(void)ctx;
+}
+
+TopicCell(Context &ctx, const TopicSnapshot<T> &snapshot)
+: inner_(std::make_shared<queue_detail::TopicCellInner<T>>()) {
+inner_->base_offset = snapshot.base_offset;
+inner_->elements.assign(snapshot.elements.begin(), snapshot.elements.end());
+const size_t tail = tail_offset();
+for (const auto &saved : snapshot.subscriptions) {
+if (saved.cursor < inner_->base_offset || saved.cursor > tail)
+throw std::invalid_argument("TopicCell cursor outside retained log");
+inner_->subscriptions.emplace(
+saved.subscriber_id,
+queue_detail::TopicSubscription{saved.cursor, saved.durability,
+saved.connected});
+ensure_reader(ctx, saved.subscriber_id);
+}
+}
+
+TopicSubscribeOutcome subscribe(
+Context &ctx, const std::string &subscriber_id,
+TopicDurability durability = TopicDurability::Durable) {
+auto found = inner_->subscriptions.find(subscriber_id);
+if (found != inner_->subscriptions.end()) {
+auto &subscription = found->second;
+if (subscription.connected)
+return TopicSubscribeOutcome::AlreadySubscribed;
+if (subscription.durability != TopicDurability::Durable)
+throw std::logic_error("only durable subscriptions can reconnect");
+subscription.connected = true;
+bump_reader(ctx, subscriber_id);
+return TopicSubscribeOutcome::Reconnected;
+}
+inner_->subscriptions.emplace(
+subscriber_id,
+queue_detail::TopicSubscription{tail_offset(), durability, true});
+ensure_reader(ctx, subscriber_id);
+bump_reader(ctx, subscriber_id);
+return TopicSubscribeOutcome::Subscribed;
+}
+
+void reconnect(Context &ctx, const std::string &subscriber_id) {
+auto found = inner_->subscriptions.find(subscriber_id);
+if (found == inner_->subscriptions.end() ||
+found->second.durability != TopicDurability::Durable)
+throw std::logic_error("durable subscription not found");
+if (!found->second.connected) {
+found->second.connected = true;
+bump_reader(ctx, subscriber_id);
+}
+}
+
+void disconnect(Context &ctx, const std::string &subscriber_id) {
+auto found = inner_->subscriptions.find(subscriber_id);
+if (found == inner_->subscriptions.end() || !found->second.connected)
+return;
+found->second.connected = false;
+const bool ephemeral =
+found->second.durability == TopicDurability::Ephemeral;
+if (ephemeral)
+inner_->subscriptions.erase(found);
+bump_reader(ctx, subscriber_id);
+}
+
+size_t publish(Context &ctx, T value) {
+const size_t offset = tail_offset();
+inner_->elements.push_back(std::move(value));
+for (const auto &entry : inner_->subscriptions) {
+if (entry.second.connected)
+bump_reader(ctx, entry.first);
+}
+return offset;
+}
+
+std::vector<T> read_stream(Context &ctx,
+const std::string &subscriber_id) {
+(void)ctx.get_cell(ensure_reader(ctx, subscriber_id));
+auto found = inner_->subscriptions.find(subscriber_id);
+if (found == inner_->subscriptions.end())
+return {};
+const size_t start = found->second.cursor - inner_->base_offset;
+auto begin = inner_->elements.begin();
+std::advance(begin, static_cast<typename std::deque<T>::difference_type>(start));
+return std::vector<T>(begin, inner_->elements.end());
+}
+
+std::optional<T> read(Context &ctx, const std::string &subscriber_id) {
+auto stream = read_stream(ctx, subscriber_id);
+if (stream.empty())
+return std::nullopt;
+return stream.front();
+}
+
+size_t advance(Context &ctx, const std::string &subscriber_id,
+size_t count = 1) {
+auto found = inner_->subscriptions.find(subscriber_id);
+if (found == inner_->subscriptions.end() ||
+count > tail_offset() - found->second.cursor)
+throw std::out_of_range("invalid TopicCell cursor advance");
+if (count != 0) {
+found->second.cursor += count;
+bump_reader(ctx, subscriber_id);
+}
+return found->second.cursor;
+}
+
+/// Drop only the prefix below every durable cursor. No reader invalidation.
+size_t gc() {
+size_t frontier = tail_offset();
+for (const auto &entry : inner_->subscriptions) {
+const auto &subscription = entry.second;
+if (subscription.durability == TopicDurability::Durable &&
+subscription.cursor < frontier)
+frontier = subscription.cursor;
+}
+const size_t removed = frontier - inner_->base_offset;
+for (size_t i = 0; i < removed; ++i)
+inner_->elements.pop_front();
+inner_->base_offset = frontier;
+return removed;
+}
+
+void restart() {}
+
+size_t base_offset() const { return inner_->base_offset; }
+size_t tail_offset() const {
+return inner_->base_offset + inner_->elements.size();
+}
+std::vector<T> elements() const {
+return std::vector<T>(inner_->elements.begin(), inner_->elements.end());
+}
+
+std::optional<TopicSubscriptionSnapshot>
+subscription(const std::string &subscriber_id) const {
+auto found = inner_->subscriptions.find(subscriber_id);
+if (found == inner_->subscriptions.end())
+return std::nullopt;
+return TopicSubscriptionSnapshot{subscriber_id, found->second.cursor,
+found->second.durability,
+found->second.connected};
+}
+
+CellHandle<uint64_t> reader_handle(Context &ctx,
+const std::string &subscriber_id) {
+return ensure_reader(ctx, subscriber_id);
+}
+
+TopicSnapshot<T> snapshot() const {
+TopicSnapshot<T> result;
+result.base_offset = inner_->base_offset;
+result.elements = elements();
+for (const auto &entry : inner_->subscriptions) {
+result.subscriptions.push_back(TopicSubscriptionSnapshot{
+entry.first, entry.second.cursor, entry.second.durability,
+entry.second.connected});
+}
+return result;
+}
+
+private:
+std::shared_ptr<queue_detail::TopicCellInner<T>> inner_;
+
+CellHandle<uint64_t> ensure_reader(Context &ctx,
+const std::string &subscriber_id) {
+auto found = inner_->readers.find(subscriber_id);
+if (found != inner_->readers.end())
+return found->second.cell;
+auto inserted = inner_->readers.emplace(
+subscriber_id,
+queue_detail::TopicReader{ctx.cell(uint64_t(0)), uint64_t(0)});
+return inserted.first->second.cell;
+}
+
+void bump_reader(Context &ctx, const std::string &subscriber_id) {
+auto handle = ensure_reader(ctx, subscriber_id);
+auto &reader = inner_->readers.at(subscriber_id);
+ctx.set_cell(handle, ++reader.version);
+}
 };
 
 } // namespace lazily

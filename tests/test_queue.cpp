@@ -509,7 +509,56 @@ TEST(test_queue_raw_channel_reader_reactive) {
   q.push(ctx, 10);
   assert(log.size() == 2 && log[1] == 1);
   q.pop(ctx);
-  assert(log.size() == 3 && log[2] == 0);
+assert(log.size() == 3 && log[2] == 0);
+}
+
+TEST(test_topic_broadcast_cursor_isolation) {
+Context ctx;
+TopicCell<std::string> topic(ctx);
+assert(topic.subscribe(ctx, "alice") == TopicSubscribeOutcome::Subscribed);
+topic.subscribe(ctx, "bob");
+assert(topic.publish(ctx, "a") == 0);
+assert(topic.publish(ctx, "b") == 1);
+assert(topic.advance(ctx, "alice") == 1);
+assert(topic.read_stream(ctx, "alice") == std::vector<std::string>{"b"});
+assert(topic.read_stream(ctx, "bob") ==
+(std::vector<std::string>{"a", "b"}));
+}
+
+TEST(test_topic_durable_replay_and_gc) {
+Context ctx;
+TopicCell<std::string> topic(ctx);
+topic.subscribe(ctx, "fast");
+topic.subscribe(ctx, "slow");
+topic.publish(ctx, "a");
+topic.publish(ctx, "b");
+topic.advance(ctx, "fast", 2);
+topic.advance(ctx, "slow");
+topic.disconnect(ctx, "slow");
+topic.publish(ctx, "c");
+assert(topic.gc() == 1);
+topic.reconnect(ctx, "slow");
+assert(topic.read_stream(ctx, "slow") ==
+(std::vector<std::string>{"b", "c"}));
+
+Context restored_ctx;
+TopicCell<std::string> restored(restored_ctx, topic.snapshot());
+assert(restored.base_offset() == topic.base_offset());
+assert(restored.elements() == topic.elements());
+}
+
+TEST(test_topic_ephemeral_lifecycle) {
+Context ctx;
+TopicCell<std::string> topic(ctx);
+topic.subscribe(ctx, "durable");
+topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
+topic.publish(ctx, "a");
+topic.advance(ctx, "durable");
+topic.disconnect(ctx, "viewer");
+assert(!topic.subscription("viewer").has_value());
+assert(topic.gc() == 1);
+topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
+assert(topic.subscription("viewer")->cursor == topic.tail_offset());
 }
 
 int main() {
