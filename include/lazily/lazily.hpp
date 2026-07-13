@@ -8,6 +8,7 @@
 #include <lazily/command.hpp>
 #include <lazily/context.hpp>
 #include <lazily/crdt.hpp>
+#include <lazily/crdt_tree.hpp>
 #include <lazily/ffi.hpp>
 #include <lazily/hlc.hpp>
 #include <lazily/ipc.hpp>

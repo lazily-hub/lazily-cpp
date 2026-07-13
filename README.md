@@ -54,7 +54,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | — | — | — | — | — | — | — |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `CrdtTree` lossless document contract (`#lzcrdttree`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| `CrdtTree` lossless document contract (`#lzcrdttree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Lossless tree CRDT core (`LosslessTreeCrdt`, M1) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Lossless tree — dotted-frontier anti-entropy | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -65,7 +65,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Cross-process zero-copy transport (`BlobBackend` / shm / arrow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reliable sync — resync coordinator + at-least-once durable outbox + OR-set/LWW liveness (`#lzsync`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Storage-independent durable outbox (`OutboxStore` + `Outbox<S>`, SQLite/IndexedDB adapters) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Storage-independent durable outbox (`OutboxStore` + shared outbox protocol; SQLite/Room/IndexedDB/file adapters) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reliable-sync transport seam + full-duplex `SyncDriver` loop (`IpcSink`/`IpcSource`, `#sync-driver`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | State projection / mirror | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -131,6 +131,12 @@ caller-supplied `IpcSink`/`IpcSource`/`Clock`/`SnapshotProvider` seam — the ho
 owns threads, cadence, and backoff. `ResyncRequest`/`OutboxAck` are two new
 `IpcMessage` variants (FFI kinds 4/5). Pinned by
 `lazily-spec/conformance/reliable-sync/` and `lazily-formal` `ReliableSync.lean`.
+
+**Document/outbox parity (v0.16.0):** `CrdtTree<T>` is the C++17 structural
+lossless-document contract implemented by `TextCrdt`. `StoredOutbox<Store>` is
+the single byte-store-independent acknowledgement/prune/replay protocol;
+`InMemoryOutbox` now uses it, and `FileOutbox` supplies a locked append-only
+journal whose persisted cursor folds with `max`, including across stale handles.
 
 ## Usage
 
@@ -327,11 +333,13 @@ target_link_libraries(your_target PRIVATE lazily)
 | `async_context.hpp` | AsyncContext (Empty/Computing/Resolved/Error lifecycle) |
 | `hlc.hpp` | Hybrid logical clock, StampFrontier |
 | `crdt.hpp` | TextCrdt (+ delta sync), SeqCrdt, LwwRegister, MvRegister, PnCounter |
+| `crdt_tree.hpp` | C++17 `CrdtTree<T>` structural contract (`#lzcrdttree`) |
 | `lossless_tree_crdt.hpp` | LosslessTreeCrdt (M1, dotted-frontier anti-entropy) |
 | `stable_id.hpp` | Manufactured identity (anchors, content hashes, word-LCS alignment) |
 | `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake |
 | `codec.hpp` | msgpack wire codec — `encode`/`decode` the `IpcMessage` tree |
 | `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker |
+| `reliable_sync.hpp` | Reliable sync plus `OutboxStore`, `StoredOutbox<S>`, `InMemoryStore`, and locked `FileOutboxStore` |
 | `transport.hpp` | Cross-process zero-copy transport — pluggable `BlobBackend` (`InProcessBackend`/`ShmBackend`), spill/resolve, `BlobRouter` |
 | `receipt.hpp` | Causal receipts, StateProjectionMirror |
 | `command.hpp` | Command plane (command-plane-v1), CrdtPlaneRuntime, instrumentation |

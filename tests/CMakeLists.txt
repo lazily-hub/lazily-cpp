@@ -26,6 +26,10 @@ add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
 add_test(NAME crdt COMMAND test_crdt)
 
+add_executable(test_crdt_tree test_crdt_tree.cpp)
+target_link_libraries(test_crdt_tree PRIVATE lazily)
+add_test(NAME CrdtTreeConformance COMMAND test_crdt_tree)
+
 add_executable(test_ipc test_ipc.cpp)
 target_link_libraries(test_ipc PRIVATE lazily lazily_ffi)
 add_test(NAME ipc COMMAND test_ipc)
@@ -65,6 +69,10 @@ add_test(NAME family_sync COMMAND test_family_sync)
 add_executable(test_reliable_sync test_reliable_sync.cpp)
 target_link_libraries(test_reliable_sync PRIVATE lazily)
 add_test(NAME reliable_sync COMMAND test_reliable_sync)
+
+add_executable(test_outbox_store test_outbox_store.cpp)
+target_link_libraries(test_outbox_store PRIVATE lazily)
+add_test(NAME OutboxStoreConformance COMMAND test_outbox_store)
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
 # build`). Skips gracefully (CTest exit code 77) when the sibling checkout or

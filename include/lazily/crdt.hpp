@@ -66,7 +66,11 @@ struct TextElem {
 inline const OpId kTextRootKey = {0, 0};
 
 class TextCrdt {
- public:
+public:
+  using Value = std::string;
+  using VersionVector = std::unordered_map<PeerId, int64_t>;
+  using Delta = std::vector<TextOp>;
+
   explicit TextCrdt(PeerId peer) : peer_(peer), counter_(0) {}
 
   static TextCrdt from_str(PeerId peer, const std::string& s) {
@@ -129,6 +133,9 @@ class TextCrdt {
     return result;
   }
 
+  // CrdtTree materialized-value alias.
+  Value value() const { return text(); }
+
   size_t visible_len() const {
     ensure_visible();
     return visible_order_.size();
@@ -178,9 +185,10 @@ class TextCrdt {
     return changed;
   }
 
-  // -- Delta sync (#lztextsync) --
+  // CrdtTree join alias.
+  bool merge_from(const TextCrdt& other) { return merge(other); }
 
-  using VersionVector = std::unordered_map<PeerId, int64_t>;
+  // -- Delta sync (#lztextsync) --
 
   VersionVector version_vector() const {
     VersionVector vv;
