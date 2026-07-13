@@ -11,6 +11,7 @@
 #include <lazily/ffi.hpp>
 #include <lazily/hlc.hpp>
 #include <lazily/ipc.hpp>
+#include <lazily/merge.hpp>
 #include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/queue.hpp>
 #include <lazily/rc_ptr.hpp>
