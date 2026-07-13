@@ -32,5 +32,6 @@
 #include <lazily/thread_safe_reactive_family.hpp>
 #include <lazily/transport.hpp>
 #include <lazily/types.hpp>
+#include <lazily/work_queue.hpp>
 
 #endif  // LAZILY_LAZILY_HPP

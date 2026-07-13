@@ -38,6 +38,10 @@ add_executable(test_queue test_queue.cpp)
 target_link_libraries(test_queue PRIVATE lazily)
 add_test(NAME queue COMMAND test_queue)
 
+add_executable(test_work_queue test_work_queue.cpp)
+target_link_libraries(test_work_queue PRIVATE lazily)
+add_test(NAME work_queue COMMAND test_work_queue)
+
 add_executable(test_concurrency test_concurrency.cpp)
 target_link_libraries(test_concurrency PRIVATE lazily)
 add_test(NAME concurrency COMMAND test_concurrency)
