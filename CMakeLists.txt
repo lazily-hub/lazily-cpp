@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(lazily-cpp
-VERSION 0.16.1
+VERSION 0.16.2
   LANGUAGES CXX
 )
 
