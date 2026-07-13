@@ -55,6 +55,8 @@ int main() {
          std::string::npos);
   assert(fixture.find("restart reloads cursor and unacked suffix") !=
          std::string::npos);
+  assert(fixture.find("stale handle cannot regress serialized cursor") !=
+         std::string::npos);
 
   InMemoryOutbox outbox;
   outbox.append(3, frame(3));
