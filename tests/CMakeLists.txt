@@ -78,6 +78,41 @@ add_executable(test_outbox_store test_outbox_store.cpp)
 target_link_libraries(test_outbox_store PRIVATE lazily)
 add_test(NAME OutboxStoreConformance COMMAND test_outbox_store)
 
+# Realtime + distributed primitive families (#lztime / #lzrateshape / #lzmemb /
+# #lzcoord / #lzpresence / #lzwindow / #lzresilience / #lzservice). Each replays
+# the shared lazily-spec conformance fixtures vendored under conformance/<family>/.
+add_executable(test_temporal_conformance test_temporal_conformance.cpp)
+target_link_libraries(test_temporal_conformance PRIVATE lazily)
+add_test(NAME TemporalConformance COMMAND test_temporal_conformance)
+
+add_executable(test_rateshape_conformance test_rateshape_conformance.cpp)
+target_link_libraries(test_rateshape_conformance PRIVATE lazily)
+add_test(NAME RateshapeConformance COMMAND test_rateshape_conformance)
+
+add_executable(test_membership_conformance test_membership_conformance.cpp)
+target_link_libraries(test_membership_conformance PRIVATE lazily)
+add_test(NAME MembershipConformance COMMAND test_membership_conformance)
+
+add_executable(test_coordination_conformance test_coordination_conformance.cpp)
+target_link_libraries(test_coordination_conformance PRIVATE lazily)
+add_test(NAME CoordinationConformance COMMAND test_coordination_conformance)
+
+add_executable(test_presence_conformance test_presence_conformance.cpp)
+target_link_libraries(test_presence_conformance PRIVATE lazily)
+add_test(NAME PresenceConformance COMMAND test_presence_conformance)
+
+add_executable(test_windowing_conformance test_windowing_conformance.cpp)
+target_link_libraries(test_windowing_conformance PRIVATE lazily)
+add_test(NAME WindowingConformance COMMAND test_windowing_conformance)
+
+add_executable(test_resilience_conformance test_resilience_conformance.cpp)
+target_link_libraries(test_resilience_conformance PRIVATE lazily)
+add_test(NAME ResilienceConformance COMMAND test_resilience_conformance)
+
+add_executable(test_service_conformance test_service_conformance.cpp)
+target_link_libraries(test_service_conformance PRIVATE lazily)
+add_test(NAME ServiceConformance COMMAND test_service_conformance)
+
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
 # build`). Skips gracefully (CTest exit code 77) when the sibling checkout or
 # the Lean toolchain is absent. The submodule sits next to this repo

@@ -7,20 +7,26 @@
 #include <lazily/collections.hpp>
 #include <lazily/command.hpp>
 #include <lazily/context.hpp>
+#include <lazily/coordination.hpp>
 #include <lazily/crdt.hpp>
 #include <lazily/crdt_tree.hpp>
 #include <lazily/ffi.hpp>
 #include <lazily/hlc.hpp>
 #include <lazily/ipc.hpp>
+#include <lazily/membership.hpp>
 #include <lazily/merge.hpp>
 #include <lazily/lossless_tree_crdt.hpp>
+#include <lazily/presence.hpp>
 #include <lazily/queue.hpp>
+#include <lazily/rateshape.hpp>
 #include <lazily/rc_ptr.hpp>
 #include <lazily/relay.hpp>
 #include <lazily/reactive_family.hpp>
 #include <lazily/receipt.hpp>
 #include <lazily/reliable_sync.hpp>
+#include <lazily/resilience.hpp>
 #include <lazily/sem_tree.hpp>
+#include <lazily/service.hpp>
 #include <lazily/signaling.hpp>
 #include <lazily/small_any.hpp>
 #include <lazily/small_fn.hpp>
@@ -28,10 +34,12 @@
 #include <lazily/stable_id.hpp>
 #include <lazily/state_machine.hpp>
 #include <lazily/statechart.hpp>
+#include <lazily/temporal.hpp>
 #include <lazily/thread_safe.hpp>
 #include <lazily/thread_safe_reactive_family.hpp>
 #include <lazily/transport.hpp>
 #include <lazily/types.hpp>
+#include <lazily/windowing.hpp>
 #include <lazily/work_queue.hpp>
 
 #endif  // LAZILY_LAZILY_HPP

@@ -76,14 +76,14 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Capability negotiation (`SessionHandshake`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Instrumentation / benchmarks | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Temporal sources — `TimerCell` / `IntervalCell` / `CronCell` / `DeadlineCell` over a logical clock (`#lztime`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Rate-shaping operators — `DebounceCell` / `ThrottleCell` / `SampleCell` / `ProbabilisticSampleCell` (`#lzrateshape`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Membership + failure detection — `MembershipCell` (SWIM + Phi-accrual) / `PeerSet` / `PeerChangeEvent` (`#lzmemb`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Distributed coordination — `LeaseCell` / `LeaderCell` / `LockCell` / `SemaphoreCell` / `BarrierCell`+`QuorumCell` (`#lzcoord`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Presence + ephemeral plane — `PresenceCell` / `AwarenessCell` / `EphemeralCell` + `Ephemeral`/`Durable` markers (`#lzpresence`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Stream windowing — `TumblingWindow` / `SlidingWindow` / `SessionWindow` over the merge algebra (`#lzwindow`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Fault tolerance — `CircuitBreakerCell` / `RetryPolicyCell` / `BulkheadCell` / `TimeoutCell` (`#lzresilience`) | ✅ | — | ✅ | ✅ | — | — | — | — |
-| Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) | ✅ | — | ✅ | ✅ | — | — | — | — |
+| Temporal sources — `TimerCell` / `IntervalCell` / `CronCell` / `DeadlineCell` over a logical clock (`#lztime`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Rate-shaping operators — `DebounceCell` / `ThrottleCell` / `SampleCell` / `ProbabilisticSampleCell` (`#lzrateshape`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Membership + failure detection — `MembershipCell` (SWIM + Phi-accrual) / `PeerSet` / `PeerChangeEvent` (`#lzmemb`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Distributed coordination — `LeaseCell` / `LeaderCell` / `LockCell` / `SemaphoreCell` / `BarrierCell`+`QuorumCell` (`#lzcoord`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Presence + ephemeral plane — `PresenceCell` / `AwarenessCell` / `EphemeralCell` + `Ephemeral`/`Durable` markers (`#lzpresence`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Stream windowing — `TumblingWindow` / `SlidingWindow` / `SessionWindow` over the merge algebra (`#lzwindow`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Fault tolerance — `CircuitBreakerCell` / `RetryPolicyCell` / `BulkheadCell` / `TimeoutCell` (`#lzresilience`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
+| Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) | ✅ | — | ✅ | ✅ | — | — | — | ✅ |
 <!-- coverage-table:end -->
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
@@ -368,6 +368,14 @@ target_link_libraries(your_target PRIVATE lazily)
 | `receipt.hpp` | Causal receipts, StateProjectionMirror |
 | `command.hpp` | Command plane (command-plane-v1), CrdtPlaneRuntime, instrumentation |
 | `signaling.hpp` | WebRTC signaling room (peer discovery, SDP/ICE relay) |
+| `temporal.hpp` | Temporal sources over a logical clock — `TimerCell` / `IntervalCell` / `CronCell` / `DeadlineCell` (+ `TimelineSource` cores, `ManualClock`) (`#lztime`) |
+| `rateshape.hpp` | Rate-shaping operators — `DebounceCell` / `ThrottleCell` / `SampleCell` / `ProbabilisticSampleCell` (+ compute cores, deterministic `Lcg`) (`#lzrateshape`) |
+| `membership.hpp` | Membership + Phi-accrual failure detection — `MembershipCell` / `PeerSet` / `PeerChangeEvent` / `PhiAccrual` (`#lzmemb`) |
+| `coordination.hpp` | Distributed coordination — `LeaseCell` / `LeaderCell` / `LockCell` / `SemaphoreCell` / `BarrierCell` (+ `quorum`) with monotone fencing tokens (`#lzcoord`) |
+| `presence.hpp` | Presence + ephemeral plane — `PresenceCell` / `AwarenessCell` / `EphemeralCell` + `Ephemeral`/`Durable` markers over TTL (`#lzpresence`) |
+| `windowing.hpp` | Stream windowing — `TumblingCountWindow` / `TumblingTimeWindow` / `SlidingWindow` / `SessionWindow` over the merge algebra (`#lzwindow`) |
+| `resilience.hpp` | Fault tolerance — `CircuitBreakerCell` / `RetryPolicyCell` / `BulkheadCell` / `TimeoutCell` (`#lzresilience`) |
+| `service.hpp` | Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) |
 | `ffi.hpp` | C-ABI FFI boundary (LazilyFfiChannel, extern "C" exports) |
 
 ## Related Projects
