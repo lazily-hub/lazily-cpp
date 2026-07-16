@@ -12,7 +12,6 @@
 #include <memory>
 #include <optional>
 #include <typeindex>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -126,7 +125,9 @@ class ContextImpl {
  private:
   struct SlotNode {
     AnyValue value;
+#ifndef NDEBUG
     std::type_index type_id;
+#endif
     ComputeFnPtr compute;
     std::optional<EqualsFn> equals;
     EdgeVec dependencies;
@@ -136,18 +137,27 @@ class ContextImpl {
     bool in_progress;
 
     SlotNode()
-        : type_id(std::type_index(typeid(void))),
-          dirty(false),
-          force_recompute(false),
-          in_progress(false) {}
+        :
+#ifndef NDEBUG
+        type_id(std::type_index(typeid(void))),
+#endif
+        dirty(false),
+        force_recompute(false),
+        in_progress(false) {}
   };
 
   struct CellNode {
     AnyValue value;
+#ifndef NDEBUG
     std::type_index type_id;
+#endif
     EdgeVec dependents;
 
-    CellNode() : type_id(std::type_index(typeid(void))) {}
+    CellNode()
+#ifndef NDEBUG
+        : type_id(std::type_index(typeid(void)))
+#endif
+    {}
   };
 
   struct EffectNode {
@@ -160,6 +170,8 @@ class ContextImpl {
   };
 
   using Node = std::variant<SlotNode, CellNode, EffectNode>;
+  using ScheduledEffect = std::pair<SlotId, bool>;
+  using EffectList = SmallVec<ScheduledEffect, 4>;
 
  public:
   ContextImpl() = default;
@@ -207,7 +219,9 @@ class ContextImpl {
     auto id = alloc_id();
     CellNode node;
     node.value = Traits::template make<T>(std::move(value));
+#ifndef NDEBUG
     node.type_id = std::type_index(typeid(T));
+#endif
     insert_node(id, Node(std::move(node)));
     return CellHandle<T>(id);
   }
@@ -278,8 +292,13 @@ class ContextImpl {
     if (is_batching()) {
       batched_cells_.insert(handle.id);
     } else {
-      invalidate_cell_dependents_now(handle.id);
-      flush_effects();
+      // Store-without-cascade: dirty-mark the dependent cone, then flush
+      // effects ONLY when the cone actually contains an active Effect. A cell
+      // with no Effect-bearing dependent stores its latest value (already done
+      // above, so a late subscriber reads it glitch-free) and dirty-marks lazy
+      // Slot dependents, but pays no effect-scheduling flush.
+      if (invalidate_cell_dependents_now(handle.id))
+        flush_effects();
     }
   }
 
@@ -335,7 +354,7 @@ class ContextImpl {
     std::optional<CleanupFn> cleanup;
     {
       deque_erase(pending_effects_, handle.id);
-      scheduled_effects_.erase(handle.id);
+      unschedule_effect(handle.id);
       auto idx = node_index(handle.id);
       if (!idx || *idx >= nodes_.size() || !nodes_[*idx]) return;
       auto& node_opt = nodes_[*idx];
@@ -435,7 +454,11 @@ class ContextImpl {
   uint64_t next_id_ = 0;
   std::vector<uint64_t> free_ids_;
   std::deque<SlotId> pending_effects_;
-  std::unordered_set<SlotId> scheduled_effects_;
+  // Mark bitset over the node id space (mirrors BatchSet below): a set bit
+  // means the effect node is already queued in pending_effects_. Cheaper than
+  // unordered_set (no per-insert bucket alloc, cache-friendly). The bit is
+  // cleared on pop/dispose; ids recycle via free_ids_ but always enter clean.
+  std::vector<bool> effect_scheduled_;
   bool flushing_effects_ = false;
   int batch_depth_ = 0;
   // Alloc-free batch bookkeeping (optimization E): a mark bitset over the node
@@ -534,7 +557,9 @@ class ContextImpl {
   SlotHandle<T> slot_with_equals(F&& compute, std::optional<EqualsFn> eq) {
     auto id = alloc_id();
     SlotNode node;
+#ifndef NDEBUG
     node.type_id = std::type_index(typeid(T));
+#endif
     auto compute_fn =
         ComputeFn([f = std::forward<F>(compute)](ContextImpl& ctx) -> AnyValue {
           return Traits::template make<T>(f(ctx));
@@ -558,6 +583,18 @@ class ContextImpl {
   }
 
   bool refresh_slot(SlotId id) {
+    // Fast path: clean cache hit. When the slot holds a value and is
+    // neither dirty nor force-recompute, no upstream value can have
+    // changed since the last compute — invalidation always sets dirty on
+    // dependents. The dependency-refresh walk, the cycle guard, and the
+    // dirty-flag clear are therefore all unnecessary on this path. This is
+    // the hot path for cached slot reads.
+    {
+      auto* slot = get_slot_node(id);
+      if (slot && slot->value && !slot->dirty && !slot->force_recompute)
+        return false;
+    }
+
     if (!enter_refresh(id)) return false;
     struct RefreshGuard {
       ContextImpl* ctx;
@@ -657,95 +694,115 @@ class ContextImpl {
   }
 
   void notify_slot_value_changed(SlotId id) {
-    EdgeVec dependents;
-    {
-      auto* slot = get_slot_node(id);
-      if (!slot) return;
-      dependents = slot->dependents;
-    }
-    for (auto dep_id : dependents)
-      invalidate_dependent_from_changed_value(dep_id);
+    invalidate_dependents_now(id);
   }
 
-  void invalidate_dependent_from_changed_value(SlotId id) {
-    auto* node = get_node(id);
-    bool is_effect = node && std::holds_alternative<EffectNode>(*node);
-    if (is_effect) {
-      schedule_effect(id, true);
-    } else {
-      mark_slot_dirty(id, true);
+  // Iterative DFS dirty-marking. Roots get force=true; transitive descendants
+  // get force=false (matching the former recursive semantics). Returns
+  // (effect_id, force) pairs for the caller to schedule after the walk.
+  // Stack-based DFS iterates each node's dependents directly without copying
+  // the EdgeVec, and mutates dirty/force flags in place (#lzbatchborrow).
+  EffectList mark_frontier_locked(const EdgeVec& roots) {
+    EffectList effects;
+    SmallVec<SlotId, 16> stack;
+    SmallVec<bool, 16> force_stack;
+    for (SlotId root : roots) {
+      stack.push_back(root);
+      force_stack.push_back(true);
     }
-  }
-
-  void mark_slot_dirty(SlotId id, bool force_recompute) {
-    EdgeVec dependents;
-    bool should_propagate;
-    {
-      auto* slot = get_slot_node(id);
-      if (!slot) return;
-      should_propagate = !slot->dirty || (force_recompute && !slot->force_recompute);
-      slot->dirty = true;
-      if (force_recompute)
-        slot->force_recompute = true;
-      dependents = slot->dependents;
-    }
-    if (!should_propagate) return;
-    for (auto dep_id : dependents) {
-      auto* node = get_node(dep_id);
-      bool is_effect = node && std::holds_alternative<EffectNode>(*node);
-      if (is_effect) {
-        schedule_effect(dep_id, false);
-      } else {
-        mark_slot_dirty(dep_id, false);
+    while (!stack.empty()) {
+      SlotId id = stack.back();
+      bool force = force_stack.back();
+      stack.pop_back();
+      force_stack.pop_back();
+      auto* node = get_node(id);
+      if (!node) continue;
+      auto* slot = std::get_if<SlotNode>(node);
+      if (slot) {
+        bool should_propagate = !slot->dirty || (force && !slot->force_recompute);
+        slot->dirty = true;
+        if (force) slot->force_recompute = true;
+        if (should_propagate) {
+          for (SlotId dep_id : slot->dependents) {
+            stack.push_back(dep_id);
+            force_stack.push_back(false);
+          }
+        }
+      } else if (std::holds_alternative<EffectNode>(*node)) {
+        effects.push_back({id, force});
       }
     }
+    return effects;
   }
 
-  void invalidate_cell_dependents_now(SlotId id) {
-    EdgeVec dependents;
-    {
-      auto* cell = get_cell_node(id);
-      if (!cell) return;
-      dependents = cell->dependents;
+  // Iterative DFS value-clearing. Clears slot values and dirty flags,
+  // collecting effects to schedule. Iterates dependents directly without
+  // copying the EdgeVec (#lzbatchborrow).
+  EffectList clear_frontier_locked(const EdgeVec& roots) {
+    EffectList effects;
+    SmallVec<SlotId, 16> stack;
+    for (SlotId root : roots) {
+      stack.push_back(root);
     }
-    for (auto dep_id : dependents)
-      invalidate_dependent_from_changed_value(dep_id);
+    while (!stack.empty()) {
+      SlotId id = stack.back();
+      stack.pop_back();
+      auto* node = get_node(id);
+      if (!node) continue;
+      auto* slot = std::get_if<SlotNode>(node);
+      if (slot) {
+        if (!slot->value && !slot->dirty) continue;
+        slot->value.reset();
+        slot->dirty = false;
+        slot->force_recompute = false;
+        for (SlotId dep_id : slot->dependents) {
+          stack.push_back(dep_id);
+        }
+      } else if (std::holds_alternative<EffectNode>(*node)) {
+        effects.push_back({id, true});
+      }
+    }
+    return effects;
+  }
+
+  // Iterative batched invalidation: marks all reachable slots dirty via a
+  // single stack-based DFS, then schedules collected effects. Returns true
+  // iff at least one Effect was scheduled (the store-without-cascade fast
+  // path: a cell with no Effect-bearing dependent cone stores its latest
+  // value and dirty-marks lazy Slot dependents, but pays no effect flush).
+  bool invalidate_dependents_now(SlotId id) {
+    auto* node = get_node(id);
+    if (!node) return false;
+    const EdgeVec* roots;
+    if (auto* c = std::get_if<CellNode>(node))
+      roots = &c->dependents;
+    else if (auto* s = std::get_if<SlotNode>(node))
+      roots = &s->dependents;
+    else
+      return false;
+    if (roots->empty()) return false;
+    EffectList effects = mark_frontier_locked(*roots);
+    bool scheduled = !effects.empty();
+    for (auto& entry : effects) schedule_effect(entry.first, entry.second);
+    return scheduled;
+  }
+
+  bool invalidate_cell_dependents_now(SlotId id) {
+    return invalidate_dependents_now(id);
   }
 
   void clear_cell_dependents_now(SlotId id) {
-    EdgeVec dependents;
-    {
-      auto* cell = get_cell_node(id);
-      if (!cell) return;
-      dependents = cell->dependents;
-    }
-    for (auto dep_id : dependents)
-      clear_dependent_now(dep_id);
-  }
-
-  void clear_dependent_now(SlotId id) {
-    auto* node = get_node(id);
-    bool is_effect = node && std::holds_alternative<EffectNode>(*node);
-    if (is_effect) {
-      schedule_effect(id, true);
-    } else {
-      clear_slot_now(id);
-    }
+    auto* cell = get_cell_node(id);
+    if (!cell) return;
+    EffectList effects = clear_frontier_locked(cell->dependents);
+    for (auto& entry : effects) schedule_effect(entry.first, entry.second);
   }
 
   void clear_slot_now(SlotId id) {
-    EdgeVec dependents;
-    {
-      auto* slot = get_slot_node(id);
-      if (!slot) return;
-      if (!slot->value && !slot->dirty) return;
-      slot->value.reset();
-      slot->dirty = false;
-      slot->force_recompute = false;
-      dependents = slot->dependents;
-    }
-    for (auto dep_id : dependents)
-      clear_dependent_now(dep_id);
+    EdgeVec roots;
+    roots.push_back(id);
+    EffectList effects = clear_frontier_locked(roots);
+    for (auto& entry : effects) schedule_effect(entry.first, entry.second);
   }
 
   void schedule_effect(SlotId id, bool force) {
@@ -754,14 +811,21 @@ class ContextImpl {
     auto* eff = std::get_if<EffectNode>(node);
     if (!eff) return;
     if (force) eff->force_run = true;
-    if (scheduled_effects_.insert(id).second) {
+    if (id.value >= effect_scheduled_.size())
+      effect_scheduled_.resize(id.value + 1, false);
+    if (!effect_scheduled_[id.value]) {
+      effect_scheduled_[id.value] = true;
       pending_effects_.push_back(id);
     }
   }
 
+  void unschedule_effect(SlotId id) {
+    if (id.value < effect_scheduled_.size()) effect_scheduled_[id.value] = false;
+  }
+
   void remove_pending_effect(SlotId id) {
     deque_erase(pending_effects_, id);
-    scheduled_effects_.erase(id);
+    unschedule_effect(id);
   }
 
   void flush_effects() {
@@ -776,7 +840,7 @@ class ContextImpl {
         }
         id = pending_effects_.front();
         pending_effects_.pop_front();
-        scheduled_effects_.erase(id);
+        unschedule_effect(id);
       }
       run_effect(id);
     }

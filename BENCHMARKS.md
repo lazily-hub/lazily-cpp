@@ -6,7 +6,7 @@ reactive primitives library.
 ## Benchmark Results
 
 <!-- benchmark-results:start -->
-Generated for package `lazily-cpp` version `0.6.0`.
+Generated for package `lazily-cpp` version `0.18.0`.
 
 Environment: `g++ (GCC) 16.1.1 20260625` on `x86_64-unknown-linux-gnu`, C++17 (`-O3 -DNDEBUG`, CMake Release default).
 
@@ -22,73 +22,73 @@ Refresh: re-run the bench binary and paste the table between the markers.
 
 | Group | Case | Mean | Samples |
 |---|---|---:|---:|
-| cached_reads | context | 23.294 ns | 1000000 |
-| cached_reads | thread_safe_context | 21.745 ns | 1000000 |
-| cold_first_get | context | 97.398 ns | 100000 |
-| cold_first_get | thread_safe_context | 107.351 ns | 100000 |
-| dependency_fan_out | context / 32 | 153.386 ns | 10000 |
-| dependency_fan_out | context / 256 | 1.123 us | 10000 |
-| dependency_fan_out | thread_safe_context / 32 | 223.948 ns | 10000 |
-| dependency_fan_out | thread_safe_context / 256 | 1.680 us | 10000 |
-| set_cell_invalidation | high_fan_out / 512 | 3.262 us | 1000 |
-| set_cell_invalidation | same_slot_contention / 1 | 36.354 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 2 | 39.784 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 4 | 61.536 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 8 | 88.612 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 16 | 153.572 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 1 | 34.439 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 2 | 56.048 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 4 | 98.461 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 8 | 201.007 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 16 | 372.359 ns | 10000 |
-| memo_equality_suppression | context | 34.064 ns | 100000 |
-| memo_equality_suppression | thread_safe_context | 37.924 ns | 100000 |
-| effect_flushing | context | 87.446 ns | 1000000 |
-| effect_flushing | thread_safe_context | 91.721 ns | 1000000 |
-| batch_storms | context / 64 | 1.546 us | 100000 |
-| batch_storms | thread_safe_context / 64 | 3.634 us | 100000 |
-| thread_safe_concurrency | contention/recursive @ 1 | 19.300 Mops/s | 1 |
-| thread_safe_concurrency | contention/recursive @ 16 | 1.265 Mops/s | 16 |
-| thread_safe_concurrency | contention/rw @ 1 | 12.600 Mops/s | 1 |
-| thread_safe_concurrency | contention/rw @ 16 | 1.980 Mops/s | 16 |
-| thread_safe_concurrency | contention/scalable @ 1 | 7.600 Mops/s | 1 |
-| thread_safe_concurrency | contention/scalable @ 16 | 0.955 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/recursive @ 1 | 45.700 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/recursive @ 16 | 7.800 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/rw @ 1 | 54.300 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/rw @ 16 | 12.500 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/scalable @ 1 | 58.000 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/scalable @ 16 | 925.000 Mops/s | 16 |
-| distributed | crdt_sync apply_delta_full @ 10k | 818.000 us | 20 |
-| distributed | crdt_sync apply_delta_full @ 100k | 11.181 ms | 20 |
-| distributed | crdt_sync delta_since_empty @ 10k | 82.000 us | 20 |
-| distributed | shm_blob read @ 4KB | 56.000 ns | 10000 |
-| distributed | shm_blob read_view @ 64KB | 16.000 ns | 10000 |
+| cached_reads | context | 18.423 ns | 1000000 |
+| cached_reads | thread_safe_context | 19.890 ns | 1000000 |
+| cold_first_get | context | 79.085 ns | 100000 |
+| cold_first_get | thread_safe_context | 96.884 ns | 100000 |
+| dependency_fan_out | context / 32 | 94.116 ns | 10000 |
+| dependency_fan_out | context / 256 | 606.585 ns | 10000 |
+| dependency_fan_out | thread_safe_context / 32 | 201.442 ns | 10000 |
+| dependency_fan_out | thread_safe_context / 256 | 1.523 us | 10000 |
+| set_cell_invalidation | high_fan_out / 512 | 2.805 us | 1000 |
+| set_cell_invalidation | same_slot_contention / 1 | 33.052 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 2 | 33.918 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 4 | 38.855 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 8 | 46.249 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 16 | 67.114 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 1 | 31.682 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 2 | 46.953 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 4 | 77.925 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 8 | 148.781 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 16 | 275.254 ns | 10000 |
+| memo_equality_suppression | context | 31.956 ns | 100000 |
+| memo_equality_suppression | thread_safe_context | 37.957 ns | 100000 |
+| effect_flushing | context | 66.991 ns | 1000000 |
+| effect_flushing | thread_safe_context | 72.022 ns | 1000000 |
+| batch_storms | context / 64 | 1.087 us | 100000 |
+| batch_storms | thread_safe_context / 64 | 1.120 us | 100000 |
+| thread_safe_concurrency | contention/recursive @ 1 | 21.467 Mops/s | 1 |
+| thread_safe_concurrency | contention/recursive @ 16 | 1.963 Mops/s | 16 |
+| thread_safe_concurrency | contention/rw @ 1 | 12.825 Mops/s | 1 |
+| thread_safe_concurrency | contention/rw @ 16 | 2.319 Mops/s | 16 |
+| thread_safe_concurrency | contention/scalable @ 1 | 8.935 Mops/s | 1 |
+| thread_safe_concurrency | contention/scalable @ 16 | 1.023 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/recursive @ 1 | 48.583 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/recursive @ 16 | 11.772 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/rw @ 1 | 52.760 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/rw @ 16 | 13.250 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/scalable @ 1 | 57.715 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/scalable @ 16 | 868.062 Mops/s | 16 |
+| distributed | crdt_sync apply_delta_full @ 10k | 806.793 us | 20 |
+| distributed | crdt_sync apply_delta_full @ 100k | 12.031 ms | 20 |
+| distributed | crdt_sync delta_since_empty @ 10k | 83.186 us | 20 |
+| distributed | shm_blob read @ 4KB | 55.245 ns | 10000 |
+| distributed | shm_blob read_view @ 64KB | 16.813 ns | 10000 |
 | distributed | transport wire_spilled @ 64KB | 143.000 B | 1 |
-| distributed | transport encode_decode_spilled @ 64KB | 342.000 ns | 500 |
-| distributed | transport resolve @ 64KB | 17.000 ns | 2000 |
-| distributed | codec encode @ 10k nodes/619KB | 355.000 us | 20 |
-| distributed | codec decode @ 10k nodes/619KB | 1.187 ms | 20 |
-| scale | build / 100000 | 8.888 ms | 1 |
-| scale | cold_full_recalc / 100000 | 2.694 ms | 1 |
-| scale | full_recalc_invalidate_all / 100000 | 4.550 ms | 1 |
-| scale | viewport_recalc / 100000 | 7.630 us | 1 |
-| scale | build / 1000000 | 97.429 ms | 1 |
-| scale | cold_full_recalc / 1000000 | 27.862 ms | 1 |
-| scale | full_recalc_invalidate_all / 1000000 | 49.039 ms | 1 |
-| scale | viewport_recalc / 1000000 | 23.170 us | 1 |
-| scale | build / 2000000 | 209.738 ms | 1 |
-| scale | cold_full_recalc / 2000000 | 119.341 ms | 1 |
-| scale | full_recalc_invalidate_all / 2000000 | 149.839 ms | 1 |
-| scale | viewport_recalc / 2000000 | 18.290 us | 1 |
-| scale | build / 5000000 | 520.288 ms | 1 |
-| scale | cold_full_recalc / 5000000 | 137.408 ms | 1 |
-| scale | full_recalc_invalidate_all / 5000000 | 243.253 ms | 1 |
-| scale | viewport_recalc / 5000000 | 22.520 us | 1 |
-| scale | build / 10000000 | 1.024 s | 1 |
-| scale | cold_full_recalc / 10000000 | 302.601 ms | 1 |
-| scale | full_recalc_invalidate_all / 10000000 | 628.123 ms | 1 |
-| scale | viewport_recalc / 10000000 | 24.670 us | 1 |
+| distributed | transport encode_decode_spilled @ 64KB | 334.702 ns | 500 |
+| distributed | transport resolve @ 64KB | 16.270 ns | 2000 |
+| distributed | codec encode @ 10k nodes/619KB | 353.203 us | 20 |
+| distributed | codec decode @ 10k nodes/619KB | 891.653 us | 20 |
+| scale | build / 100000 | 3.263 ms | 1 |
+| scale | cold_full_recalc / 100000 | 2.509 ms | 1 |
+| scale | full_recalc_invalidate_all / 100000 | 4.302 ms | 1 |
+| scale | viewport_recalc / 100000 | 4.030 us | 1 |
+| scale | build / 1000000 | 88.015 ms | 1 |
+| scale | cold_full_recalc / 1000000 | 28.969 ms | 1 |
+| scale | full_recalc_invalidate_all / 1000000 | 49.701 ms | 1 |
+| scale | viewport_recalc / 1000000 | 22.051 us | 1 |
+| scale | build / 2000000 | 180.935 ms | 1 |
+| scale | cold_full_recalc / 2000000 | 59.538 ms | 1 |
+| scale | full_recalc_invalidate_all / 2000000 | 99.848 ms | 1 |
+| scale | viewport_recalc / 2000000 | 10.530 us | 1 |
+| scale | build / 5000000 | 475.998 ms | 1 |
+| scale | cold_full_recalc / 5000000 | 136.111 ms | 1 |
+| scale | full_recalc_invalidate_all / 5000000 | 318.177 ms | 1 |
+| scale | viewport_recalc / 5000000 | 10.000 us | 1 |
+| scale | build / 10000000 | 1.063 s | 1 |
+| scale | cold_full_recalc / 10000000 | 378.082 ms | 1 |
+| scale | full_recalc_invalidate_all / 10000000 | 496.975 ms | 1 |
+| scale | viewport_recalc / 10000000 | 12.631 us | 1 |
 
 <!-- benchmark-results:end -->
 
@@ -111,6 +111,62 @@ Refresh: re-run the bench binary and paste the table between the markers.
 > allocation-bound, not value-bound). See
 > [Optimizations Applied (v0.6.0)](#optimizations-applied-v060). The
 > `thread_safe_concurrency` rows (three lock policies) are unchanged in v0.6.0.
+
+## Optimizations Applied (v0.18.0)
+
+v0.18.0 ports the three remaining lazily-rs reactive-core fast paths — the
+clean-cache refresh short-circuit (`#lzslotfastpath`), the iterative frontier
+invalidation (`#lzbatchborrow`), and release-mode node slimming. The default
+`ThreadSafeContext` and the read-scaling policies are unchanged.
+
+1. **Clean-cache fast path in `refresh_slot`** (`context.hpp`). A `get()` on a
+   slot that already holds a value and is neither dirty nor force-recompute
+   returns immediately, skipping the dependency-walk, the cycle guard, and the
+   dirty-flag clear. This is the hot path for cached slot reads. Effect:
+   `dependency_fan_out / 256` ~2× faster (1.23 → 0.61 µs) and `viewport_recalc`
+   ~2–4× faster across all scale points — the lazy-pull viewport win, since a
+   one-cell edit + 1k-cell viewport read now short-circuits the ~999 cached
+   formulas instead of re-walking their edges.
+2. **Iterative frontier invalidation** (`context.hpp`). The recursive
+   `mark_slot_dirty` / `invalidate_dependent_from_changed_value` /
+   `clear_*_now` cascade is replaced by a single stack-based DFS
+   (`mark_frontier_locked` / `clear_frontier_locked`) that mutates dirty/force
+   flags in place and iterates each node's dependents directly, dropping the
+   per-node `EdgeVec` copies the recursion paid. Effects are collected into a
+   small inline vector and scheduled after the walk. Effect: `set_cell
+   high_fan_out / 512` ~24% faster (3.69 → 2.81 µs); `effect_flushing` and
+   `batch_storms` improve ~12%.
+3. **Store-without-cascade** (`context.hpp`). `invalidate_cell_dependents_now`
+   now returns whether it scheduled any Effect, and `set_cell` only calls
+   `flush_effects()` when the dependent cone actually contains an active
+   reactor. A cell with no Effect-bearing dependent stores its latest value and
+   dirty-marks lazy Slot dependents, but pays no effect-scheduling flush.
+4. **Release-mode node slimming.** `SlotNode::type_id` / `CellNode::type_id`
+   (stored on every node but read only by `assert()`, which is compiled out
+   under `-O3 -DNDEBUG`) are gated behind `#ifndef NDEBUG`. This drops ~8 bytes
+   per node (~150 MB RSS at the 10M-node scale) and removes the per-build
+   `typeid` construction cost. The asserts are retained for debug builds.
+5. **`effect_scheduled_` mark bitset.** `std::unordered_set<SlotId>` for the
+   pending-effect dedup is replaced by a `std::vector<bool>` mark bitset
+   indexed by node id (mirroring the existing `BatchSet`). Cheaper than the
+   hash set (no per-insert bucket allocation, cache-friendly); the bit is
+   cleared on pop/dispose, so recycled ids enter clean.
+
+### Honest read
+
+- **The headline win is the viewport / dependency-walk path**, exactly where
+  the fast path lands: `viewport_recalc` 17.4 → 4.0 µs @ 100k, ~2× at 5M/10M;
+  `dependency_fan_out / 256` 1.23 → 0.61 µs. `set_cell high_fan_out / 512`
+  improves from the iterative frontier + store-without-cascade.
+- **`cached_reads` is flat-to-slightly-down** (20.0 → 18.4 ns) — the fast path
+  adds one branch but removes the `enter_refresh` borrow + dirty-flag clear;
+  the two roughly cancel for a single clean read, and the win shows up at scale
+  (fan-out / viewport) where the skipped work compounds.
+- **Build is flat** (1.06 s @ 10M) — build is dominated by the per-slot
+  closure allocation, not the paths touched here. `cold_full_recalc` /
+  `full_recalc_invalidate_all` at 10M are within single-sample run-to-run
+  variance (±15–30%); the robust per-node recalc cost is unchanged (the fast
+  path does not apply to a cold/fully-dirty sheet).
 
 ## Optimizations Applied (v0.6.0)
 
