@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -22,7 +23,7 @@ inline constexpr size_t kNodeKeyMaxSegments = 32;
 
 class NodeKey {
  public:
-  static std::optional<NodeKey> create(const std::string& path) {
+  static std::optional<NodeKey> create(std::string_view path) {
     if (path.empty()) return std::nullopt;
     if (path.size() > kNodeKeyMaxLen) return std::nullopt;
     size_t segments = 1;
@@ -33,7 +34,7 @@ class NodeKey {
         if (segments > kNodeKeyMaxSegments) return std::nullopt;
       }
     }
-    return NodeKey(path);
+    return NodeKey(std::string(path));
   }
   const std::string& path() const { return path_; }
   std::string to_wire() const { return path_; }
@@ -50,7 +51,7 @@ class NodeKey {
   }
 
  private:
-  explicit NodeKey(const std::string& path) : path_(path) {}
+  explicit NodeKey(std::string path) : path_(std::move(path)) {}
   std::string path_;
 };
 
@@ -72,7 +73,7 @@ inline const char* blob_backend_kind_str(BlobBackendKind k) {
   return "shm";
 }
 
-inline BlobBackendKind blob_backend_kind_from_str(const std::string& s) {
+inline BlobBackendKind blob_backend_kind_from_str(std::string_view s) {
   if (s == "arrow") return BlobBackendKind::Arrow;
   if (s == "in_process") return BlobBackendKind::InProcess;
   return BlobBackendKind::Shm;  // default (covers absent/unknown → shm)

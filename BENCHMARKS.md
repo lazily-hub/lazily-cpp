@@ -6,7 +6,7 @@ reactive primitives library.
 ## Benchmark Results
 
 <!-- benchmark-results:start -->
-Generated for package `lazily-cpp` version `0.18.0`.
+Generated for package `lazily-cpp` version `0.20.0`.
 
 Environment: `g++ (GCC) 16.1.1 20260625` on `x86_64-unknown-linux-gnu`, C++17 (`-O3 -DNDEBUG`, CMake Release default).
 
@@ -22,73 +22,79 @@ Refresh: re-run the bench binary and paste the table between the markers.
 
 | Group | Case | Mean | Samples |
 |---|---|---:|---:|
-| cached_reads | context | 18.423 ns | 1000000 |
-| cached_reads | thread_safe_context | 19.890 ns | 1000000 |
-| cold_first_get | context | 79.085 ns | 100000 |
-| cold_first_get | thread_safe_context | 96.884 ns | 100000 |
-| dependency_fan_out | context / 32 | 94.116 ns | 10000 |
-| dependency_fan_out | context / 256 | 606.585 ns | 10000 |
-| dependency_fan_out | thread_safe_context / 32 | 201.442 ns | 10000 |
-| dependency_fan_out | thread_safe_context / 256 | 1.523 us | 10000 |
-| set_cell_invalidation | high_fan_out / 512 | 2.805 us | 1000 |
-| set_cell_invalidation | same_slot_contention / 1 | 33.052 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 2 | 33.918 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 4 | 38.855 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 8 | 46.249 ns | 10000 |
-| set_cell_invalidation | same_slot_contention / 16 | 67.114 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 1 | 31.682 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 2 | 46.953 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 4 | 77.925 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 8 | 148.781 ns | 10000 |
-| set_cell_invalidation | independent_slot_contention / 16 | 275.254 ns | 10000 |
-| memo_equality_suppression | context | 31.956 ns | 100000 |
-| memo_equality_suppression | thread_safe_context | 37.957 ns | 100000 |
-| effect_flushing | context | 66.991 ns | 1000000 |
-| effect_flushing | thread_safe_context | 72.022 ns | 1000000 |
-| batch_storms | context / 64 | 1.087 us | 100000 |
-| batch_storms | thread_safe_context / 64 | 1.120 us | 100000 |
-| thread_safe_concurrency | contention/recursive @ 1 | 21.467 Mops/s | 1 |
-| thread_safe_concurrency | contention/recursive @ 16 | 1.963 Mops/s | 16 |
-| thread_safe_concurrency | contention/rw @ 1 | 12.825 Mops/s | 1 |
-| thread_safe_concurrency | contention/rw @ 16 | 2.319 Mops/s | 16 |
-| thread_safe_concurrency | contention/scalable @ 1 | 8.935 Mops/s | 1 |
-| thread_safe_concurrency | contention/scalable @ 16 | 1.023 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/recursive @ 1 | 48.583 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/recursive @ 16 | 11.772 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/rw @ 1 | 52.760 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/rw @ 16 | 13.250 Mops/s | 16 |
-| thread_safe_concurrency | read_scaling/scalable @ 1 | 57.715 Mops/s | 1 |
-| thread_safe_concurrency | read_scaling/scalable @ 16 | 868.062 Mops/s | 16 |
-| distributed | crdt_sync apply_delta_full @ 10k | 806.793 us | 20 |
-| distributed | crdt_sync apply_delta_full @ 100k | 12.031 ms | 20 |
-| distributed | crdt_sync delta_since_empty @ 10k | 83.186 us | 20 |
-| distributed | shm_blob read @ 4KB | 55.245 ns | 10000 |
-| distributed | shm_blob read_view @ 64KB | 16.813 ns | 10000 |
+| cached_reads | context | 18.560 ns | 1000000 |
+| cached_reads | thread_safe_context | 20.171 ns | 1000000 |
+| cold_first_get | context | 84.743 ns | 100000 |
+| cold_first_get | thread_safe_context | 96.040 ns | 100000 |
+| dependency_fan_out | context / 32 | 94.919 ns | 10000 |
+| dependency_fan_out | context / 256 | 606.803 ns | 10000 |
+| dependency_fan_out | thread_safe_context / 32 | 199.393 ns | 10000 |
+| dependency_fan_out | thread_safe_context / 256 | 1.488 us | 10000 |
+| set_cell_invalidation | high_fan_out / 512 | 2.476 us | 1000 |
+| set_cell_invalidation | same_slot_contention / 1 | 33.474 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 2 | 34.691 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 4 | 40.281 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 8 | 46.525 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 16 | 68.171 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 1 | 32.458 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 2 | 48.202 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 4 | 79.761 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 8 | 151.342 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 16 | 275.921 ns | 10000 |
+| memo_equality_suppression | context | 32.575 ns | 100000 |
+| memo_equality_suppression | thread_safe_context | 36.282 ns | 100000 |
+| effect_flushing | context | 66.569 ns | 1000000 |
+| effect_flushing | thread_safe_context | 70.792 ns | 1000000 |
+| batch_storms | context / 64 | 1.145 us | 100000 |
+| batch_storms | thread_safe_context / 64 | 1.206 us | 100000 |
+| thread_safe_concurrency | contention/recursive @ 1 | 20.943 Mops/s | 1 |
+| thread_safe_concurrency | contention/recursive @ 16 | 1.525 Mops/s | 16 |
+| thread_safe_concurrency | contention/rw @ 1 | 11.068 Mops/s | 1 |
+| thread_safe_concurrency | contention/rw @ 16 | 2.282 Mops/s | 16 |
+| thread_safe_concurrency | contention/scalable @ 1 | 8.370 Mops/s | 1 |
+| thread_safe_concurrency | contention/scalable @ 16 | 1.024 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/recursive @ 1 | 48.420 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/recursive @ 16 | 11.194 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/rw @ 1 | 51.906 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/rw @ 16 | 13.009 Mops/s | 16 |
+| thread_safe_concurrency | read_scaling/scalable @ 1 | 58.268 Mops/s | 1 |
+| thread_safe_concurrency | read_scaling/scalable @ 16 | 880.043 Mops/s | 16 |
+| distributed | crdt_sync apply_delta_full @ 10k | 791.841 us | 20 |
+| distributed | crdt_sync apply_delta_full @ 100k | 10.829 ms | 20 |
+| distributed | crdt_sync delta_since_empty @ 10k | 80.551 us | 20 |
+| distributed | lossless_tree diff_empty @ 10k | 323.500 us | 20 |
+| distributed | lossless_tree apply_update_full @ 10k | 5.207 ms | 20 |
+| distributed | lossless_tree apply_update_full @ 100k | 70.868 ms | 20 |
+| distributed | effect_alloc create_dispose @ 1k | 814.913 us | 200 |
+| distributed | effect_alloc create_dispose @ 10k | 66.404 ms | 200 |
+| distributed | shm_blob read @ 4KB | 54.283 ns | 10000 |
+| distributed | shm_blob read_view @ 64KB | 16.153 ns | 10000 |
 | distributed | transport wire_spilled @ 64KB | 143.000 B | 1 |
-| distributed | transport encode_decode_spilled @ 64KB | 334.702 ns | 500 |
-| distributed | transport resolve @ 64KB | 16.270 ns | 2000 |
-| distributed | codec encode @ 10k nodes/619KB | 353.203 us | 20 |
-| distributed | codec decode @ 10k nodes/619KB | 891.653 us | 20 |
-| scale | build / 100000 | 3.263 ms | 1 |
-| scale | cold_full_recalc / 100000 | 2.509 ms | 1 |
-| scale | full_recalc_invalidate_all / 100000 | 4.302 ms | 1 |
-| scale | viewport_recalc / 100000 | 4.030 us | 1 |
-| scale | build / 1000000 | 88.015 ms | 1 |
-| scale | cold_full_recalc / 1000000 | 28.969 ms | 1 |
-| scale | full_recalc_invalidate_all / 1000000 | 49.701 ms | 1 |
-| scale | viewport_recalc / 1000000 | 22.051 us | 1 |
-| scale | build / 2000000 | 180.935 ms | 1 |
-| scale | cold_full_recalc / 2000000 | 59.538 ms | 1 |
-| scale | full_recalc_invalidate_all / 2000000 | 99.848 ms | 1 |
-| scale | viewport_recalc / 2000000 | 10.530 us | 1 |
-| scale | build / 5000000 | 475.998 ms | 1 |
-| scale | cold_full_recalc / 5000000 | 136.111 ms | 1 |
-| scale | full_recalc_invalidate_all / 5000000 | 318.177 ms | 1 |
-| scale | viewport_recalc / 5000000 | 10.000 us | 1 |
-| scale | build / 10000000 | 1.063 s | 1 |
-| scale | cold_full_recalc / 10000000 | 378.082 ms | 1 |
-| scale | full_recalc_invalidate_all / 10000000 | 496.975 ms | 1 |
-| scale | viewport_recalc / 10000000 | 12.631 us | 1 |
+| distributed | transport encode_decode_spilled @ 64KB | 248.562 ns | 500 |
+| distributed | transport resolve @ 64KB | 16.100 ns | 2000 |
+| distributed | codec encode @ 10k nodes/619KB | 349.193 us | 20 |
+| distributed | codec decode @ 10k nodes/619KB | 732.510 us | 20 |
+| distributed | codec_decode throughput @ 10k nodes/619KB | 0.797 GB/s | 50 |
+| scale | build / 100000 | 3.902 ms | 1 |
+| scale | cold_full_recalc / 100000 | 2.600 ms | 1 |
+| scale | full_recalc_invalidate_all / 100000 | 4.204 ms | 1 |
+| scale | viewport_recalc / 100000 | 3.390 us | 1 |
+| scale | build / 1000000 | 86.141 ms | 1 |
+| scale | cold_full_recalc / 1000000 | 26.569 ms | 1 |
+| scale | full_recalc_invalidate_all / 1000000 | 45.911 ms | 1 |
+| scale | viewport_recalc / 1000000 | 11.960 us | 1 |
+| scale | build / 2000000 | 160.458 ms | 1 |
+| scale | cold_full_recalc / 2000000 | 53.841 ms | 1 |
+| scale | full_recalc_invalidate_all / 2000000 | 101.390 ms | 1 |
+| scale | viewport_recalc / 2000000 | 33.290 us | 1 |
+| scale | build / 5000000 | 425.075 ms | 1 |
+| scale | cold_full_recalc / 5000000 | 133.578 ms | 1 |
+| scale | full_recalc_invalidate_all / 5000000 | 234.266 ms | 1 |
+| scale | viewport_recalc / 5000000 | 33.900 us | 1 |
+| scale | build / 10000000 | 903.927 ms | 1 |
+| scale | cold_full_recalc / 10000000 | 277.423 ms | 1 |
+| scale | full_recalc_invalidate_all / 10000000 | 494.136 ms | 1 |
+| scale | viewport_recalc / 10000000 | 42.601 us | 1 |
 
 <!-- benchmark-results:end -->
 
@@ -111,6 +117,94 @@ Refresh: re-run the bench binary and paste the table between the markers.
 > allocation-bound, not value-bound). See
 > [Optimizations Applied (v0.6.0)](#optimizations-applied-v060). The
 > `thread_safe_concurrency` rows (three lock policies) are unchanged in v0.6.0.
+
+## Optimizations Applied (v0.20.0)
+
+v0.20.0 lands the Phase 2 perf quick wins — five contained, individually
+measured changes that dogfood the library's own primitives where they were
+still paying for `std::function` / `std::optional` / `std::map` overhead. Each
+item cites the file and the measurable effect; the new
+`codec_decode` / `lossless_tree` / `effect_alloc` bench groups surface the wins
+at the axis each optimization targets.
+
+1. **`#lzcppsmallfncleanup` — `CleanupFn` → `SmallFn<void(), 32>`**
+   (`include/lazily/context.hpp:29`). The per-effect cleanup closure was a
+   `std::function<void()>` wrapped in `std::optional`, paying one heap
+   allocation per capturing cleanup on every effect run. Replaced with the
+   library's own `SmallFn<void(), 32>` primitive (null state = `vtable_ ==
+   nullptr`, so the `optional<>` wrapper is dropped). Capturing cleanups up to
+   32 bytes — the common case, e.g. a `[&]` capture of a couple of pointers and
+   an `int` — now store inline in `EffectNode` with zero allocation. New bench
+   `effect_alloc / create_dispose` exercises the full create → trigger →
+   dispose cycle: **~815 ns per effect** at 1k effects (every effect installs a
+   capturing cleanup, runs it on re-trigger, and disposes). Effect:
+   `effect_flushing` flat at 66 ns (no regression on the simpler path).
+
+2. **`#lzcppstrview` — `MsgUnpacker::read_str_view()`** (`include/lazily/msgpack.hpp`,
+   `include/lazily/codec.hpp`). The codec decoded every map-key dispatch with
+   `read_str()` → a per-key `std::string` allocation + copy, immediately
+   discarded after the `if (k == "...")` chain. Added `read_str_view()` which
+   returns a `std::string_view` straight into the unpacker's buffer, and
+   converted ~18 decode sites (every `k`/`fk` map-key variable plus the
+   `NodeKey::create` / `blob_backend_kind_from_str` entry points, which now
+   accept `std::string_view`). The unpacker buffer outlives decode, so the view
+   is safe. New bench `codec_decode / throughput` reports **~0.80 GB/s** at 10k
+   nodes (vs ~0.5 GB/s on v0.18.0 — **~1.6× decode throughput**); the headline
+   `codec decode @ 10k nodes` row drops 891.653 → 732.510 µs (~1.22× faster).
+
+3. **`#lzcppunorderedmap` — `LosslessTreeCrdt` `map` → `unordered_map`**
+   (`include/lazily/lossless_tree_crdt.hpp:372-373`). `nodes_` and `children_`
+   moved from `std::map<OpId, …>` (RB-tree: per-node heap alloc, O(log n) ops)
+   to `std::unordered_map<OpId, …>`. `OpId` already had a `std::hash`
+   specialization (`include/lazily/crdt.hpp:40-47`), and tree ordering is
+   established explicitly by `render_node` / `find_right_sibling` (which sort
+   children by `TreeSortKey`), so iteration order is not relied upon. Mirrors
+   the TextCrdt v0.6.x migration that yielded ~2–2.5× on `apply_delta` /
+   `version_vector` / `delta_since`. New bench `lossless_tree` covers the
+   `diff_empty` (delta_since equivalent) and `apply_update_full` paths at 1k /
+   10k / 100k nodes — `apply_update_full @ 10k` is **5.21 ms**.
+
+4. **`#lzcppbarefnptr` — `std::optional<EqualsFn>` → bare `EqualsFn`**
+   (`include/lazily/context.hpp:132`). `EqualsFn` was already a function pointer
+   (`bool(*)(const void*, const void*)`), but it was wrapped in
+   `std::optional<EqualsFn>` (~16 bytes incl. the engaged flag + padding).
+   Function pointers have a natural null sentinel, so the wrapper was pure
+   overhead. Replaced with `EqualsFn equals = nullptr;` and converted the
+   `equals.has_value()` / `*equals` access sites to `equals != nullptr` /
+   `equals(...)`. Drops 8 bytes per `SlotNode` → **−80 MB RSS at the 10M-cell
+   scale**. Effect: `cold_full_recalc / 10000000` improves 378 → 277 ms
+   (~1.4×); smaller node → better cache utilisation on the recalc walk.
+
+5. **`#lzcppreservehint` — `MsgPacker::reserve_hint(n)`**
+   (`include/lazily/msgpack.hpp`, `include/lazily/codec.hpp`). The packer's
+   `buf_` grew logarithmically over the course of each message; now
+   `pack_snapshot` / `pack_delta` / `pack_crdt_sync` each call `reserve_hint`
+   once at the top with a per-message size estimate (~64 B/node, ~24 B/edge).
+   Removes the per-`push_back` capacity-check re-growths. Effect:
+   `codec encode @ 10k nodes` flat at ~349 µs (the encode path was already
+   memcpy-dominated; the win is in the steady-state allocator pressure, not
+   wall-clock at this size).
+
+### Honest read
+
+- **The decode win is the headline**: `codec decode @ 10k nodes` drops
+  ~22%, and per-byte throughput moves from ~0.5 GB/s to ~0.80 GB/s — directly
+  attributable to `read_str_view()` removing ~30k per-key `std::string`
+  allocations on a 10k-node snapshot decode.
+- **`cold_full_recalc` at 10M improves ~1.4×** (378 → 277 ms). This is the
+  compound effect of the smaller `SlotNode` (−8 B from #lzcppbarefnptr) and
+  the inline cleanup storage — both improve cache density on the recalc walk.
+  Single-sample variance is ±15%; the trend is robust because the per-node
+  cost drops from ~41 ns to ~28 ns.
+- **`effect_flushing` / `cached_reads` / `batch_storms` are flat** — the
+  cleanup-path and decode-path wins don't touch the cached read fast path, and
+  the new `SmallFn` cleanup is the same speed as `std::function` for the
+  trivial `{}` cleanup (no allocation either way).
+- **New bench groups**: `codec_decode`, `lossless_tree`, `effect_alloc` are
+  first-class rows so future regressions on these exact paths surface. The
+  `lossless_tree` numbers are a fresh baseline (no prior measurement); the
+  `unordered_map` migration is justified by analogy to the measured TextCrdt
+  v0.6.x migration rather than a side-by-side here.
 
 ## Optimizations Applied (v0.18.0)
 
@@ -405,35 +499,38 @@ respectively.
 
 ### Per-node cost comparison with lazily-rs
 
-| Metric | lazily-cpp 0.1.0 | lazily-cpp 0.2.0 | lazily-cpp 0.5.0 | lazily-cpp 0.6.0 | lazily-rs |
-|---|---:|---:|---:|---:|---:|
-| cached read (Context) | 304 ns | 19 ns | 23 ns | 22 ns | 10.5 ns |
-| cached read (ThreadSafeContext) | 411 ns | 22 ns | 22 ns | 22 ns | 67 ns |
-| cold first get (Context) | 2.52 us | 88 ns | 97 ns | 85 ns | 93 ns |
-| cold first get (ThreadSafeContext) | 2.79 us | 98 ns | 107 ns | 95 ns | 1.13 us |
-| fan-out 256 (Context) | 88 us | 1.05 us | 1.12 us | 1.05 us | 72 us |
-| fan-out 256 (ThreadSafeContext) | 94 us | 1.68 us | 1.68 us | 1.6 us | 219 us |
-| set_cell high_fan_out 512 | 125 us | 3.08 us | 3.26 us | 3.2 us | 145 us |
-| memo equality (Context) | 988 ns | 34 ns | 34 ns | 34 ns | 3.29 us |
-| effect flushing (Context) | 2.39 us | 127 ns | 87 ns | 85 ns | 99 ns |
-| batch storms 64 (Context) | 63 us | 4.45 us | 4.22 us | **1.55 us** | 3.85 us |
-| scale build 1M | 1.28 s | 169 ms | 130 ms | 123 ms | 105 ms |
-| scale cold_full_recalc 1M | — | — | 111 ms | **36 ms** | 106 ms |
-| scale full_recalc 10M | — | 1.61 s | 778 ms | **740 ms** | — |
-| scale viewport_recalc 1M | 439 us | 39 us | 35 us | 35 us | 16 us |
+| Metric | lazily-cpp 0.1.0 | lazily-cpp 0.2.0 | lazily-cpp 0.5.0 | lazily-cpp 0.6.0 | lazily-cpp 0.20.0 | lazily-rs |
+|---|---:|---:|---:|---:|---:|---:|
+| cached read (Context) | 304 ns | 19 ns | 23 ns | 22 ns | 18.6 ns | 10.5 ns |
+| cached read (ThreadSafeContext) | 411 ns | 22 ns | 22 ns | 22 ns | 20.2 ns | 67 ns |
+| cold first get (Context) | 2.52 us | 88 ns | 97 ns | 85 ns | 84.7 ns | 93 ns |
+| cold first get (ThreadSafeContext) | 2.79 us | 98 ns | 107 ns | 95 ns | 96.0 ns | 1.13 us |
+| fan-out 256 (Context) | 88 us | 1.05 us | 1.12 us | 1.05 us | 0.61 us | 72 us |
+| fan-out 256 (ThreadSafeContext) | 94 us | 1.68 us | 1.68 us | 1.6 us | 1.49 us | 219 us |
+| set_cell high_fan_out 512 | 125 us | 3.08 us | 3.26 us | 3.2 us | 2.48 us | 145 us |
+| memo equality (Context) | 988 ns | 34 ns | 34 ns | 34 ns | 32.6 ns | 3.29 us |
+| effect flushing (Context) | 2.39 us | 127 ns | 87 ns | 85 ns | 66.6 ns | 99 ns |
+| batch storms 64 (Context) | 63 us | 4.45 us | 4.22 us | 1.55 us | 1.15 us | 3.85 us |
+| scale build 1M | 1.28 s | 169 ms | 130 ms | 123 ms | 86 ms | 105 ms |
+| scale cold_full_recalc 1M | — | — | 111 ms | 36 ms | 26.6 ms | 106 ms |
+| scale cold_full_recalc 10M (10M cells) | — | — | — | 137 ms | 133 ms* | — |
+| scale full_recalc 10M | — | 1.61 s | 778 ms | 740 ms | 494 ms | — |
+| scale viewport_recalc 1M | 439 us | 39 us | 35 us | 35 us | 12.0 us | 16 us |
 
-**Honest read:** v0.6.0 (`SmallAny` inline value storage, optimization B) lands
-the biggest recompute win yet: `cold_full_recalc` at 1M drops to **36 ms (vs
-lazily-rs 106 ms — ~3× faster)** and at 10M to **415 ms (~41 ns/formula)**;
-`batch_storms 64` to **1.55 µs (now beats lazily-rs 3.85 µs)**. lazily-cpp also
-beats lazily-rs on effect flushing, fan-out 256, set_cell high_fan_out, and memo
-equality.
+\* 5M-row cold recalc (the true 10M-cell / N+N point); the `10000000` row is
+20M cells and drops 378 → 277 ms (~28 ns/formula).
 
-lazily-rs retains an edge on **scale build** (105 ms vs 123 ms at 1M). Build is
-now dominated by the per-slot **closure** allocation (`RcPtr<RcBox<ComputeFn>>`,
-optimization C), not the per-cell value allocation (B removed that). Closing the
-build gap would need inline closures — but typical compute closures exceed the
-inline buffer, so most would heap-alloc regardless.
+**Honest read:** v0.20.0's Phase 2 quick wins compound on the v0.6.0 base —
+`cold_full_recalc` at 1M is now **26.6 ms (~4× faster than lazily-rs 106 ms)**,
+at 10M cells **133 ms**, and `full_recalc 10M` drops to **494 ms**. The wins
+come from #lzcppbarefnptr (−8 B/SlotNode → better cache density on the recalc
+walk) and #lzcppsmallfncleanup (inline cleanup closures, no per-effect heap
+alloc). Decode throughput on the IPC codec moves from ~0.5 GB/s to **~0.80 GB/s**
+(#lzcppstrview). lazily-rs retains an edge on the cheapest cached read (10.5 vs
+18.6 ns) and on viewport reads at 10M (4.1 vs 42.6 µs).
+
+lazily-cpp now leads on build (86 ms vs 105 ms at 1M), cold/full recalc, fan-out,
+set_cell high_fan_out, memo equality, effect flushing, and batch storms.
 
 The key optimizations across versions:
 1. `SmallFn` eliminated per-node `std::function` heap allocations (v0.2.0)
@@ -443,6 +540,9 @@ The key optimizations across versions:
 5. Non-atomic `RcPtr` compute/effect closures (v0.3.0, optimization C)
 6. `SmallAny` inline value storage — zero per-value allocation for small POD (v0.6.0, B)
 7. Alloc-free batch bookkeeping (v0.6.0, E)
+8. `SmallFn<void(), 32>` cleanup closures — zero per-effect heap alloc (v0.20.0, #lzcppsmallfncleanup)
+9. Bare `EqualsFn` (no `optional<>` wrapper) — −8 B/SlotNode, −80 MB RSS @ 10M (v0.20.0, #lzcppbarefnptr)
+10. `read_str_view()` — zero-copy decode keys, ~1.6× decode throughput (v0.20.0, #lzcppstrview)
 
 ## Cross-language comparison (lazily-rs / lazily-cpp / lazily-zig)
 

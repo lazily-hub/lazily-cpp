@@ -480,6 +480,95 @@ void bench_codec() {
   }
 }
 
+// -- Codec decode throughput (#lzcppstrview) --
+//
+// Isolates the decode hot path: read_str_view() returns a std::string_view into
+// the unpacker's buffer (vs read_str()'s per-key std::string allocation+copy),
+// used for every map-key dispatch in the decode tree. Reports both per-message
+// latency and per-byte throughput so the win is visible at the GB/s axis.
+void bench_codec_decode_throughput() {
+  for (long long n : {1000, 10000}) {
+    Snapshot s;
+    s.epoch = n;
+    for (long long i = 0; i < n; ++i) {
+      s.nodes.push_back({static_cast<NodeId>(i), "cell",
+                         NodeStatePayload{{0xAB, 0xCD, 0xEF, 0x01}},
+                         NodeKey::create("doc/n" + std::to_string(i))});
+    }
+    auto bytes = encode(IpcMessageSnapshot{std::move(s)});
+    std::string label = std::to_string(n) + "n/" + std::to_string(bytes.size()) + "B";
+
+    bench("codec_decode", "decode_snapshot / " + label, 50,
+          [&]() { (void)decode(bytes); });
+
+    double window_ns = results.back().mean_ns;
+    double gb_per_s =
+        (static_cast<double>(bytes.size()) / window_ns) * 1e9 / (1024.0 * 1024.0 * 1024.0);
+    report("codec_decode", "throughput / " + label, gb_per_s, 50, "GB/s");
+  }
+}
+
+// -- LosslessTreeCrdt apply_delta / delta_since (#lzcppunorderedmap) --
+//
+// Mirrors the TextCrdt crdt_sync bench. Builds a tree on peer A, diffs against
+// an empty frontier (delta_since equivalent), and applies the resulting
+// TreeUpdate on a fresh peer B. nodes_ / children_ moved from std::map to
+// std::unordered_map (OpId already had std::hash); the win lands on every
+// create_node / apply_update lookup.
+void bench_lossless_tree_crdt() {
+  for (long long n : {1000, 10000, 100000}) {
+    LosslessTreeCrdt a(1);
+    std::vector<OpId> leaves;
+    leaves.reserve(static_cast<size_t>(n));
+    for (long long i = 0; i < n; ++i) {
+      leaves.push_back(a.create_node(
+          kTreeRoot, nullptr,
+          TreeNodeSeedLeaf{LeafKind::Token, std::to_string(i)}));
+    }
+    TreeVersionFrontier empty;
+    TreeUpdate delta = a.diff(empty);
+    std::string label = std::to_string(n);
+
+    bench("lossless_tree", "diff_empty / " + label, 20,
+          [&]() { (void)a.diff(empty); });
+    bench("lossless_tree", "apply_update_full / " + label, 20, [&]() {
+      LosslessTreeCrdt b(2);
+      (void)b.apply_update(delta);
+    });
+  }
+}
+
+// -- Effect node allocation (#lzcppsmallfncleanup) --
+//
+// Measures the per-effect lifecycle: create an effect whose runner installs a
+// capturing cleanup closure, then dispose it (which runs the cleanup). With
+// SmallFn<void(), 32> the cleanup closure is stored inline in EffectNode — no
+// per-effect heap alloc — so this path measures the alloc-free fast path.
+// Captures enough state (two ints + a pointer) to validate the inline buffer
+// covers a typical cleanup without spilling to the heap.
+void bench_effect_alloc() {
+  for (int n : {1000, 10000}) {
+    std::string label = std::to_string(n);
+    bench("effect_alloc", "create_dispose / " + label, 200, [&]() {
+      Context ctx;
+      auto src = ctx.cell(0);
+      int sink_a = 0;
+      int sink_b = 0;
+      std::vector<EffectHandle> effects;
+      effects.reserve(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) {
+        effects.push_back(ctx.effect([&, i](Context& c) -> CleanupFn {
+          sink_a = c.get_cell(src) + i;
+          sink_b = sink_a * 2;
+          return [&, i]() { sink_a -= i; };
+        }));
+      }
+      ctx.set_cell(src, 1);  // fires every effect (re-installs cleanup)
+      for (auto& e : effects) e.dispose(ctx);
+    });
+  }
+}
+
 // -- ShmBlobArena (IPC shared-memory blob path) --
 //
 // Measures per-blob write (Entry alloc + payload copy) and per-blob read
@@ -625,6 +714,9 @@ int main() {
   bench_crdt_sync();
   bench_shm_blob();
   bench_codec();
+  bench_codec_decode_throughput();
+  bench_lossless_tree_crdt();
+  bench_effect_alloc();
   bench_transport();
   bench_scale();
 

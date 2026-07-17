@@ -25,6 +25,12 @@ class MsgPacker {
   const std::vector<uint8_t>& bytes() const { return buf_; }
   std::vector<uint8_t> take() && { return std::move(buf_); }
 
+  // Pre-allocate capacity for the output buffer. Call once at the top of a
+  // pack sequence whose approximate size is known (e.g. encode_snapshot over N
+  // nodes) so per-push_back capacity checks do not trigger logarithmic
+  // re-growths over the course of the message (#lzcppreservehint).
+  void reserve_hint(size_t n) { buf_.reserve(n); }
+
   void nil() { buf_.push_back(0xc0); }
   void boolean(bool v) { buf_.push_back(v ? 0xc3 : 0xc2); }
 
@@ -224,6 +230,32 @@ class MsgUnpacker {
     }
     require(n);
     std::string out(reinterpret_cast<const char*>(p_), n);
+    p_ += n;
+    return out;
+  }
+
+  // Zero-copy string read — returns a view into the unpacker's buffer.
+  // Safe whenever the buffer outlives the consumer (e.g. map-key dispatch
+  // during decode, where keys are matched against literals and discarded).
+  // Removes the per-key std::string allocation + copy that read_str() pays
+  // (#lzcppstrview).
+  std::string_view read_str_view() {
+    require(1);
+    uint8_t b = *p_++;
+    size_t n;
+    if ((b & 0xe0) == 0xa0) {
+      n = b & 0x1f;  // fixstr
+    } else if (b == 0xd9) {
+      n = read_u8();
+    } else if (b == 0xda) {
+      n = read_u16();
+    } else if (b == 0xdb) {
+      n = read_u32();
+    } else {
+      throw std::runtime_error("msgpack: expected str");
+    }
+    require(n);
+    std::string_view out(reinterpret_cast<const char*>(p_), n);
     p_ += n;
     return out;
   }

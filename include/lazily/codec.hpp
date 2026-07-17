@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lazily {
@@ -42,13 +43,13 @@ inline ShmBlobRef unpack_shm_blob_ref(MsgUnpacker& u) {
   ShmBlobRef r{};
   uint32_t n = u.read_map_header();
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "offset") r.offset = u.read_i64();
     else if (k == "len") r.len = u.read_i64();
     else if (k == "generation") r.generation = u.read_i64();
     else if (k == "epoch") r.epoch = u.read_i64();
     else if (k == "checksum") r.checksum = u.read_i64();
-    else if (k == "backend") r.backend = blob_backend_kind_from_str(u.read_str());
+    else if (k == "backend") r.backend = blob_backend_kind_from_str(u.read_str_view());
     else u.skip();
   }
   return r;
@@ -64,7 +65,7 @@ inline WireStamp unpack_wire_stamp(MsgUnpacker& u) {
   WireStamp s{};
   uint32_t n = u.read_map_header();
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "wall_time") s.wall_time = u.read_i64();
     else if (k == "logical") s.logical = u.read_i64();
     else if (k == "peer") s.peer = u.read_i64();
@@ -82,8 +83,7 @@ inline std::optional<NodeKey> unpack_optional_node_key(MsgUnpacker& u) {
     u.expect_nil();
     return std::nullopt;
   }
-  std::string path = u.read_str();
-  return NodeKey::create(path);  // validates; nullopt if invalid
+  return NodeKey::create(u.read_str_view());  // validates; nullopt if invalid
 }
 
 inline void pack_node_state(MsgPacker& p, const NodeState& s) {
@@ -107,7 +107,7 @@ inline NodeState unpack_node_state(MsgUnpacker& u) {
   std::vector<uint8_t> bytes;
   ShmBlobRef blob{};
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "kind") kind = static_cast<int>(u.read_i64());
     else if (k == "bytes") bytes = u.read_bin();
     else if (k == "blob") blob = unpack_shm_blob_ref(u);
@@ -135,7 +135,7 @@ inline IpcValue unpack_ipc_value(MsgUnpacker& u) {
   std::vector<uint8_t> bytes;
   ShmBlobRef blob{};
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "kind") kind = static_cast<int>(u.read_i64());
     else if (k == "bytes") bytes = u.read_bin();
     else if (k == "blob") blob = unpack_shm_blob_ref(u);
@@ -148,6 +148,10 @@ inline IpcValue unpack_ipc_value(MsgUnpacker& u) {
 // ── Snapshot ─────────────────────────────────────────────────────────────────
 
 inline void pack_snapshot(MsgPacker& p, const Snapshot& s) {
+  // ~64 B/node typical (map header + 4 keyed fields incl. short NodeKey path),
+  // ~24 B/edge, ~9 B/root. Reserve once so push_back avoids logarithmic
+  // re-growths over the course of the message (#lzcppreservehint).
+  p.reserve_hint(16 + s.nodes.size() * 64 + s.edges.size() * 24 + s.roots.size() * 9);
   p.map_header(4);
   p.str("epoch"); p.i64(s.epoch);
   p.str("nodes"); {
@@ -177,7 +181,7 @@ inline Snapshot unpack_snapshot(MsgUnpacker& u) {
   Snapshot s{};
   uint32_t n = u.read_map_header();
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "epoch") s.epoch = u.read_i64();
     else if (k == "nodes") {
       uint32_t m = u.read_array_header();
@@ -186,7 +190,7 @@ inline Snapshot unpack_snapshot(MsgUnpacker& u) {
         NodeSnapshot nd;
         uint32_t fn = u.read_map_header();
         for (uint32_t f = 0; f < fn; ++f) {
-          std::string fk = u.read_str();
+          std::string_view fk = u.read_str_view();
           if (fk == "node") nd.node = u.read_i64();
           else if (fk == "type_tag") nd.type_tag = u.read_str();
           else if (fk == "state") nd.state = unpack_node_state(u);
@@ -202,7 +206,7 @@ inline Snapshot unpack_snapshot(MsgUnpacker& u) {
         EdgeSnapshot e;
         uint32_t fn = u.read_map_header();
         for (uint32_t f = 0; f < fn; ++f) {
-          std::string fk = u.read_str();
+          std::string_view fk = u.read_str_view();
           if (fk == "dependent") e.dependent = u.read_i64();
           else if (fk == "dependency") e.dependency = u.read_i64();
           else u.skip();
@@ -223,6 +227,10 @@ inline Snapshot unpack_snapshot(MsgUnpacker& u) {
 // ── Delta ────────────────────────────────────────────────────────────────────
 
 inline void pack_delta(MsgPacker& p, const Delta& d) {
+  // DeltaOp encodings are ~24–80 B each (discriminator + node id + payload/
+  // state). Reserve once at the top so push_back avoids re-growths
+  // (#lzcppreservehint).
+  p.reserve_hint(16 + d.ops.size() * 64);
   p.map_header(3);
   p.str("base_epoch"); p.i64(d.base_epoch);
   p.str("epoch"); p.i64(d.epoch);
@@ -273,7 +281,7 @@ inline Delta unpack_delta(MsgUnpacker& u) {
   Delta d{};
   uint32_t n = u.read_map_header();
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "base_epoch") d.base_epoch = u.read_i64();
     else if (k == "epoch") d.epoch = u.read_i64();
     else if (k == "ops") {
@@ -289,7 +297,7 @@ inline Delta unpack_delta(MsgUnpacker& u) {
         std::optional<NodeKey> key;
         IpcValue payload = IpcValueInline{};
         for (uint32_t f = 0; f < fn; ++f) {
-          std::string fk = u.read_str();
+          std::string_view fk = u.read_str_view();
           if (fk == "op") op_kind = static_cast<int>(u.read_i64());
           else if (fk == "node") node = u.read_i64();
           else if (fk == "dependent") dependent = u.read_i64();
@@ -321,6 +329,8 @@ inline Delta unpack_delta(MsgUnpacker& u) {
 // ── CrdtSync ─────────────────────────────────────────────────────────────────
 
 inline void pack_crdt_sync(MsgPacker& p, const CrdtSync& c) {
+  // ~32 B/frontier entry, ~64 B/op (node + key + stamp + state payload).
+  p.reserve_hint(16 + c.frontier.size() * 32 + c.ops.size() * 64);
   p.map_header(2);
   p.str("frontier"); {
     p.array_header(static_cast<uint32_t>(c.frontier.size()));
@@ -345,7 +355,7 @@ inline CrdtSync unpack_crdt_sync(MsgUnpacker& u) {
   CrdtSync c{};
   uint32_t n = u.read_map_header();
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "frontier") {
       uint32_t m = u.read_array_header();
       c.frontier.reserve(m);
@@ -353,7 +363,7 @@ inline CrdtSync unpack_crdt_sync(MsgUnpacker& u) {
         StampFrontierEntry e{};
         uint32_t fn = u.read_map_header();
         for (uint32_t f = 0; f < fn; ++f) {
-          std::string fk = u.read_str();
+          std::string_view fk = u.read_str_view();
           if (fk == "peer") e.peer = u.read_i64();
           else if (fk == "stamp") e.stamp = unpack_wire_stamp(u);
           else u.skip();
@@ -367,7 +377,7 @@ inline CrdtSync unpack_crdt_sync(MsgUnpacker& u) {
         CrdtOp o{};
         uint32_t fn = u.read_map_header();
         for (uint32_t f = 0; f < fn; ++f) {
-          std::string fk = u.read_str();
+          std::string_view fk = u.read_str_view();
           if (fk == "node") o.node = u.read_i64();
           else if (fk == "key") o.key = unpack_optional_node_key(u);
           else if (fk == "stamp") o.stamp = unpack_wire_stamp(u);
@@ -392,7 +402,7 @@ inline ResyncRequest unpack_resync_request(MsgUnpacker& u) {
   uint32_t n = u.read_map_header();
   ResyncRequest r{0};
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "from_epoch") r.from_epoch = u.read_i64();
     else u.skip();
   }
@@ -406,7 +416,7 @@ inline OutboxAck unpack_outbox_ack(MsgUnpacker& u) {
   uint32_t n = u.read_map_header();
   OutboxAck a{0};
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "through_epoch") a.through_epoch = u.read_i64();
     else u.skip();
   }
@@ -443,7 +453,7 @@ inline IpcMessage unpack_ipc_message(MsgUnpacker& u) {
   // We loop; if we hit "value" before "type" (non-canonical), we must buffer —
   // but our encoder always writes type first, so a single pass suffices.
   for (uint32_t i = 0; i < n; ++i) {
-    std::string k = u.read_str();
+    std::string_view k = u.read_str_view();
     if (k == "type") {
       type = static_cast<int>(u.read_i64());
     } else if (k == "value") {

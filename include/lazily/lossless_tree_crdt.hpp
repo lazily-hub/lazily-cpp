@@ -5,7 +5,6 @@
 #include <lazily/types.hpp>
 
 #include <algorithm>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -369,8 +368,14 @@ class LosslessTreeCrdt {
  private:
   PeerId peer_;
   int64_t counter_;
-  std::map<OpId, TreeNode> nodes_;
-  std::map<OpId, std::vector<OpId>> children_;
+  // Hash-indexed (OpId has std::hash — see crdt.hpp). Mirrors the TextCrdt
+  // v0.6.x migration: drops per-node RB-tree allocation + O(log n) ops to O(1)
+  // avg on every insert / lookup / iteration. Tree ordering is established
+  // explicitly by `render_node` / `find_right_sibling` (which sort children by
+  // `TreeSortKey`), so map iteration order is not relied upon
+  // (#lzcppunorderedmap).
+  std::unordered_map<OpId, TreeNode> nodes_;
+  std::unordered_map<OpId, std::vector<OpId>> children_;
   std::vector<TreeOp> log_;
   TreeVersionFrontier frontier_;
   std::vector<TreeOp> buffered_;

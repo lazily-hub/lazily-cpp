@@ -8,7 +8,6 @@
 
 #include <cassert>
 #include <deque>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <typeindex>
@@ -26,7 +25,11 @@ class ContextImpl;
 using Context = ContextImpl<RcTraits>;
 
 using EdgeVec = SmallVec<SlotId, 2>;
-using CleanupFn = std::function<void()>;
+// Dogfood the library's own SmallFn primitive for per-effect cleanup closures.
+// SmallFn's null state is `vtable_ == nullptr`, so no optional<> wrapper is
+// needed. Capturing cleanups up to 32 bytes inline → no per-effect heap alloc
+// (#lzcppsmallfncleanup).
+using CleanupFn = SmallFn<void(), 32>;
 
 inline bool edge_insert(EdgeVec& edges, SlotId id) {
   for (auto& e : edges)
@@ -129,7 +132,7 @@ class ContextImpl {
     std::type_index type_id;
 #endif
     ComputeFnPtr compute;
-    std::optional<EqualsFn> equals;
+    EqualsFn equals = nullptr;
     EdgeVec dependencies;
     EdgeVec dependents;
     bool dirty;
@@ -163,7 +166,7 @@ class ContextImpl {
   struct EffectNode {
     EffectFnPtr run;
     EdgeVec dependencies;
-    std::optional<CleanupFn> cleanup;
+    CleanupFn cleanup;
     bool force_run;
 
     EffectNode() : force_run(false) {}
@@ -181,7 +184,7 @@ class ContextImpl {
   // -- Slot API --
   template <typename T, typename F>
   SlotHandle<T> slot(F&& compute) {
-    return slot_with_equals<T>(std::forward<F>(compute), std::nullopt);
+    return slot_with_equals<T>(std::forward<F>(compute), nullptr);
   }
 
   template <typename T, typename F>
@@ -191,10 +194,10 @@ class ContextImpl {
 
   template <typename T, typename F>
   SlotHandle<T> memo(F&& compute) {
-    auto eq = EqualsFn([](const void* a, const void* b) {
+    EqualsFn eq = [](const void* a, const void* b) {
       return *static_cast<const T*>(a) == *static_cast<const T*>(b);
-    });
-    return slot_with_equals<T>(std::forward<F>(compute), std::move(eq));
+    };
+    return slot_with_equals<T>(std::forward<F>(compute), eq);
   }
 
   template <typename T>
@@ -351,7 +354,7 @@ class ContextImpl {
 
   void dispose_effect(const EffectHandle& handle) {
     EdgeVec old_deps;
-    std::optional<CleanupFn> cleanup;
+    CleanupFn cleanup;
     {
       deque_erase(pending_effects_, handle.id);
       unschedule_effect(handle.id);
@@ -367,7 +370,7 @@ class ContextImpl {
     }
     for (auto dep_id : old_deps)
       remove_dependent_edge(dep_id, handle.id);
-    if (cleanup && *cleanup) (*cleanup)();
+    if (cleanup) cleanup();
   }
 
   bool is_effect_active(const EffectHandle& handle) {
@@ -554,7 +557,7 @@ class ContextImpl {
   }
 
   template <typename T, typename F>
-  SlotHandle<T> slot_with_equals(F&& compute, std::optional<EqualsFn> eq) {
+  SlotHandle<T> slot_with_equals(F&& compute, EqualsFn eq) {
     auto id = alloc_id();
     SlotNode node;
 #ifndef NDEBUG
@@ -565,8 +568,8 @@ class ContextImpl {
           return Traits::template make<T>(f(ctx));
         });
     node.compute = ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)),
-                                typename ComputeFnPtr::adopt_t{});
-    node.equals = std::move(eq);
+                                 typename ComputeFnPtr::adopt_t{});
+    node.equals = eq;
     insert_node(id, Node(std::move(node)));
     return SlotHandle<T>(id);
   }
@@ -675,8 +678,8 @@ class ContextImpl {
       if (!slot) return false;
       bool had_value = static_cast<bool>(slot->value);
       bool unchanged = false;
-      if (slot->value && slot->equals) {
-        unchanged = (*slot->equals)(slot->value.raw(), result.raw());
+      if (slot->value && slot->equals != nullptr) {
+        unchanged = slot->equals(slot->value.raw(), result.raw());
       }
       slot->dirty = false;
       slot->force_recompute = false;
@@ -852,7 +855,7 @@ class ContextImpl {
 
     EffectFnPtr run;
     EdgeVec old_deps;
-    std::optional<CleanupFn> cleanup;
+    CleanupFn cleanup;
     {
       auto* node = get_node(id);
       if (!node) return;
@@ -866,7 +869,7 @@ class ContextImpl {
 
     for (auto dep_id : old_deps)
       remove_dependent_edge(dep_id, id);
-    if (cleanup && *cleanup) (*cleanup)();
+    if (cleanup) cleanup();
 
     push_tracking_frame(id);
     auto next_cleanup = (*run).value(*this);
@@ -876,7 +879,7 @@ class ContextImpl {
     if (node) {
       auto* effect = std::get_if<EffectNode>(node);
       if (effect) {
-        effect->cleanup = next_cleanup ? std::optional<CleanupFn>(std::move(next_cleanup)) : std::nullopt;
+        effect->cleanup = std::move(next_cleanup);
       } else if (next_cleanup) {
         next_cleanup();
       }
