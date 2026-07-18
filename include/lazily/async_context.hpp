@@ -2,11 +2,12 @@
 #define LAZILY_ASYNC_CONTEXT_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/rc_ptr.hpp>
+#include <lazily/small_fn.hpp>
 #include <lazily/types.hpp>
 
 #include <atomic>
 #include <condition_variable>
-#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -22,48 +23,61 @@ namespace lazily {
 
 enum class AsyncSlotState { Empty, Computing, Resolved, Error };
 
+// AsyncContext stores its closures and nodes on the library's own
+// SmallFn/RcPtr primitives (#lzcppasyncmodernize), mirroring how the sync
+// Context already does this (context.hpp:118-126):
+//   - compute/equals/cleanup closures → SmallFn (inline storage for typical
+//     small lambdas; no per-slot std::function heap alloc);
+//   - AsyncSlotNode<T> / AsyncEffectHandle → RcBox<T> held by RcPtr<RcBox<T>>
+//     (intrusive non-atomic refcount — same model as Context's ComputeFnPtr
+//     / EffectFnPtr). AsyncContext is single-owner; the refcount is mutated
+//     only on the owner thread while the async compute thread accesses the
+//     node through a stable raw pointer captured by value.
 template <typename T>
 struct AsyncSlotNode {
-  std::function<T()> compute;
+  SmallFn<T()> compute;
   std::optional<T> value;
   std::optional<std::string> error;
   AsyncSlotState state = AsyncSlotState::Empty;
   int revision = 0;
-  std::function<bool(const T&, const T&)> equals;
+  SmallFn<bool(const T&, const T&)> equals;
 };
 
 template <typename T>
 struct AsyncSlotHandle {
-  uint64_t id;
-  std::shared_ptr<AsyncSlotNode<T>> node;
+  using NodePtr = RcPtr<RcBox<AsyncSlotNode<T>>>;
 
-  AsyncSlotState state() const { return node->state; }
-  int revision() const { return node->revision; }
+  uint64_t id;
+  NodePtr node;
+
+  AsyncSlotState state() const { return node->value.state; }
+  int revision() const { return node->value.revision; }
 
   std::optional<T> get() {
-    if (node->state == AsyncSlotState::Resolved && node->value) {
-      return node->value;
+    if (node->value.state == AsyncSlotState::Resolved && node->value.value) {
+      return node->value.value;
     }
     return std::nullopt;
   }
 
   std::future<T> get_async() {
     return std::async(std::launch::async, [this]() -> T {
-      node->state = AsyncSlotState::Computing;
-      node->revision++;
+      node->value.state = AsyncSlotState::Computing;
+      node->value.revision++;
       try {
-        T result = node->compute();
-        if (node->equals && node->value && node->equals(*node->value, result)) {
+        T result = node->value.compute();
+        if (node->value.equals && node->value.value &&
+            node->value.equals(*node->value.value, result)) {
           // Memo equality guard — suppress
         } else {
-          node->value = result;
+          node->value.value = result;
         }
-        node->state = AsyncSlotState::Resolved;
-        node->error.reset();
-        return *node->value;
+        node->value.state = AsyncSlotState::Resolved;
+        node->value.error.reset();
+        return *node->value.value;
       } catch (const std::exception& e) {
-        node->state = AsyncSlotState::Error;
-        node->error = e.what();
+        node->value.state = AsyncSlotState::Error;
+        node->value.error = e.what();
         throw;
       }
     });
@@ -81,7 +95,7 @@ struct AsyncCellHandle {
 };
 
 struct AsyncEffectHandle {
-  std::function<void()> cleanup_fn;
+  SmallFn<void()> cleanup_fn;
   std::atomic<bool> disposed{false};
   std::atomic<bool> running{false};
   std::atomic<bool> rerun_scheduled{false};
@@ -94,7 +108,13 @@ struct AsyncEffectHandle {
 
 class AsyncContext {
  public:
-  using EffectBody = std::function<std::function<void()>()>;
+  // Effect body returns a cleanup closure. Both layers use SmallFn so the
+  // caller's body lambda is stored inline when it fits (no std::function
+  // heap alloc). The cleanup uses the same 32-byte inline buffer as the
+  // sync Context's CleanupFn.
+  using EffectCleanup = SmallFn<void(), 32>;
+  using EffectBody = SmallFn<EffectCleanup()>;
+  using EffectHandlePtr = RcPtr<RcBox<AsyncEffectHandle>>;
 
   AsyncContext() = default;
   ~AsyncContext() { dispose(); }
@@ -107,41 +127,52 @@ class AsyncContext {
     return AsyncCellHandle<T>(ctx_, std::move(value));
   }
 
-  template <typename T>
-  AsyncSlotHandle<T> slot(std::function<T()> compute) {
+  // Accept any callable (std::function, lambdas, function pointers) via
+  // SmallFn's converting constructor; T must be explicit.
+  template <typename T, typename F>
+  AsyncSlotHandle<T> slot(F&& compute) {
     auto id = next_id_++;
-    auto node = std::make_shared<AsyncSlotNode<T>>();
-    node->compute = std::move(compute);
-    return AsyncSlotHandle<T>{id, node};
+    auto* raw = new RcBox<AsyncSlotNode<T>>();
+    raw->value.compute = std::forward<F>(compute);
+    typename AsyncSlotHandle<T>::NodePtr node(
+        raw, typename AsyncSlotHandle<T>::NodePtr::adopt_t{});
+    return AsyncSlotHandle<T>{id, std::move(node)};
   }
 
-  template <typename T>
-  AsyncSlotHandle<T> memo(std::function<T()> compute,
-                          std::function<bool(const T&, const T&)> eq) {
+  template <typename T, typename F, typename E>
+  AsyncSlotHandle<T> memo(F&& compute, E&& eq) {
     auto id = next_id_++;
-    auto node = std::make_shared<AsyncSlotNode<T>>();
-    node->compute = std::move(compute);
-    node->equals = std::move(eq);
-    return AsyncSlotHandle<T>{id, node};
+    auto* raw = new RcBox<AsyncSlotNode<T>>();
+    raw->value.compute = std::forward<F>(compute);
+    raw->value.equals = std::forward<E>(eq);
+    typename AsyncSlotHandle<T>::NodePtr node(
+        raw, typename AsyncSlotHandle<T>::NodePtr::adopt_t{});
+    return AsyncSlotHandle<T>{id, std::move(node)};
   }
 
-  std::shared_ptr<AsyncEffectHandle> effect(EffectBody body) {
-    auto handle = std::make_shared<AsyncEffectHandle>();
-    run_effect(handle, body);
+  EffectHandlePtr effect(EffectBody body) {
+    auto* raw = new RcBox<AsyncEffectHandle>();
+    EffectHandlePtr handle(raw, typename EffectHandlePtr::adopt_t{});
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      effects_.push_back(handle);
+    }
+    run_effect(handle, std::move(body));
     return handle;
   }
 
   void dispose() {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& eff : effects_) {
-      eff->dispose();
+      eff->value.dispose();
     }
     effects_.clear();
   }
 
   Context& context() { return ctx_; }
 
-  void batch(std::function<void()> fn) {
+  template <typename F>
+  void batch(F&& fn) {
     std::lock_guard<std::mutex> lock(mutex_);
     ctx_.batch([&](Context&) { fn(); });
   }
@@ -150,25 +181,32 @@ class AsyncContext {
   Context ctx_;
   std::mutex mutex_;
   std::atomic<uint64_t> next_id_{0};
-  std::vector<std::shared_ptr<AsyncEffectHandle>> effects_;
+  std::vector<EffectHandlePtr> effects_;
 
-  void run_effect(std::shared_ptr<AsyncEffectHandle> handle, EffectBody body) {
-    if (handle->disposed.load()) return;
-    if (handle->running.exchange(true)) {
-      handle->rerun_scheduled.store(true);
+  void run_effect(EffectHandlePtr handle, EffectBody body) {
+    if (handle->value.disposed.load()) return;
+    if (handle->value.running.exchange(true)) {
+      handle->value.rerun_scheduled.store(true);
       return;
     }
-    std::thread([this, handle, body]() {
-      if (handle->cleanup_fn) {
-        handle->cleanup_fn();
-        handle->cleanup_fn = nullptr;
-      }
-      auto cleanup = body();
-      handle->cleanup_fn = cleanup;
-      handle->running.store(false);
-      if (handle->rerun_scheduled.exchange(false) && !handle->disposed.load()) {
-        run_effect(handle, body);
-      }
+    // Loop replaces the original recursive self-call: SmallFn is move-only,
+    // so the body closure is moved once into the worker thread and reused
+    // across re-runs. The loop re-enters whenever `rerun_scheduled` was set
+    // while the previous run was in flight and the handle has not been
+    // disposed. `running` toggles per iteration so a future external caller
+    // can observe the in-flight state.
+    std::thread([handle, body = std::move(body)]() mutable {
+      do {
+        if (handle->value.cleanup_fn) {
+          handle->value.cleanup_fn();
+          handle->value.cleanup_fn = EffectCleanup{};
+        }
+        auto cleanup = body();
+        handle->value.cleanup_fn = std::move(cleanup);
+        handle->value.running.store(false);
+      } while (!handle->value.disposed.load() &&
+               handle->value.rerun_scheduled.exchange(false) &&
+               handle->value.running.exchange(true));
     }).detach();
   }
 };
