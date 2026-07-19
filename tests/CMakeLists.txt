@@ -1,3 +1,18 @@
+# The top-level CMakeLists defaults CMAKE_BUILD_TYPE to Release, and CMake's
+# stock CMAKE_CXX_FLAGS_<CONFIG> for Release/MinSizeRel/RelWithDebInfo carry
+# -DNDEBUG, which compiles out every assert(). The suite is assert-driven, so
+# under the default configuration the tests ran to completion while verifying
+# nothing. Strip NDEBUG from the optimized configurations *for this directory
+# only* -- the library and FFI targets keep their Release flags untouched, and
+# tests stay optimized (-O3/-O2) so timing-sensitive cases behave as shipped.
+foreach(_cfg RELEASE MINSIZEREL RELWITHDEBINFO)
+  string(REGEX REPLACE "[-/]D *NDEBUG" "" CMAKE_CXX_FLAGS_${_cfg}
+         "${CMAKE_CXX_FLAGS_${_cfg}}")
+endforeach()
+# Belt-and-braces for any toolchain/config that injects NDEBUG outside the
+# per-config flag variables.
+add_compile_options($<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-UNDEBUG>)
+
 add_executable(test_smoke test_smoke.cpp)
 target_link_libraries(test_smoke PRIVATE lazily)
 add_test(NAME smoke COMMAND test_smoke)
