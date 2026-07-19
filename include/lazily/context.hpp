@@ -31,23 +31,258 @@ using EdgeVec = SmallVec<SlotId, 2>;
 // (#lzcppsmallfncleanup).
 using CleanupFn = SmallFn<void(), 32>;
 
-inline bool edge_insert(EdgeVec& edges, SlotId id) {
-  for (auto& e : edges)
-    if (e == id) return false;
-  edges.push_back(id);
-  return true;
-}
+// ── Dependency-edge set (#lzspecedgeindex) ──
+//
+// Edge registration must be idempotent, so every insert tests membership. A
+// linear scan makes that O(degree), and since a recompute removes and
+// re-registers every edge, building or notifying a width-N fan-out costs
+// ~N^2/2 comparisons. At N=4096 that is a visible regression; at N=1e6 it does
+// not finish. Above a measured degree threshold EdgeSet promotes to a hash
+// index so insert/remove stay amortized O(1).
+//
+// The threshold is NOT portable — it is where a scan over contiguous SlotIds
+// crosses the cost of one hash probe, and it moves with both the scan's cache
+// behaviour and the hash. lazily-rs measured 170 with SipHash and 40 with a
+// multiply-shift finalizer; neither number transfers here.
+//
+// Measured for this binding by sweeping THIS constant and nothing else
+// (benches/pubsub_load.cpp, g++ -O2 -march=native, 3 runs averaged, notify ns
+// per subscriber). Each column is a fan-out width; each row a promote setting,
+// so a cell is indexed when width >= promote and scanned otherwise:
+//
+//   promote \ width   24    32    40    48    64    80    96
+//              24   25.0  25.6  25.7  25.4  25.0  26.2  26.2
+//              32   23.3  25.7  25.9  25.6  24.7  26.2  26.3
+//              48   23.2  25.2  30.0  25.6  25.0  25.9  26.0
+//              64   22.5  25.1  29.5  33.2  24.3  25.8  26.6
+//              96   23.5  25.0  30.1  33.9  39.5  45.9  25.1
+//             128   22.9  25.3  30.1  33.8  39.9  45.9  50.2
+//
+// Read down a column: the indexed cells sit at ~25 ns regardless of width, the
+// scanned ones climb with it. At width 24 the scan wins by ~2 ns, at 32 it is a
+// tie, and from 40 up the index wins and the gap widens. The crossover is
+// therefore degree ~32, and promote is set there.
+//
+// A first attempt measured this as ~96 by comparing an always-indexed build
+// against an always-scanning one. That is the wrong experiment: forcing an
+// index onto every one-element dependency list charges its overhead to the wide
+// dependents list, inflating the apparent crossover ~3x. Only sweeping the
+// threshold in isolation gives the real number.
+#ifndef LAZILY_EDGE_INDEX_PROMOTE
+#define LAZILY_EDGE_INDEX_PROMOTE 32
+#endif
+// Demote is deliberately far below promote. A dependent list oscillates by one
+// on every recompute — edges are removed and re-registered — so a single shared
+// boundary makes a list sitting at the threshold tear down and rebuild its whole
+// index on every publish. Measured with promote == demote == 96: 145.5 ns/sub at
+// width 96 and 141.0 at 97, against 25.8 at width 98 one rung away, a 5.5x spike
+// visible at exactly two widths and nowhere else. The 4x gap here puts the whole
+// oscillation band inside the indexed regime.
+#ifndef LAZILY_EDGE_INDEX_DEMOTE
+#define LAZILY_EDGE_INDEX_DEMOTE 8
+#endif
 
-inline bool edge_remove(EdgeVec& edges, SlotId id) {
-  for (size_t i = 0; i < edges.size(); ++i) {
-    if (edges[i] == id) {
-      edges[i] = edges.back();
-      edges.pop_back();
+// TRADEOFF, measured not assumed. EdgeSet is 32 bytes against EdgeVec's 24 (one
+// owning pointer), and a SlotNode holds two of them, so every node grows 16
+// bytes whether or not it is ever wide. On the one benchmark that iterates a
+// wide dependent list without touching any edge — set_cell_invalidation /
+// high_fan_out / 512, which invalidates 512 lazy slots that are never read —
+// that costs 20% (2.14 -> 2.58 us, stable over 7 runs). Everything that
+// actually registers edges gets faster, including the low-degree cases:
+// dependency_fan_out / 32 is 14% faster and / 256 is 15% faster.
+//
+// Indexing BOTH directions is what buys that, and it is not optional. A variant
+// keeping `dependencies` as a plain EdgeVec removes the 20% entirely, but a slot
+// reading N distinct cells then keeps the full O(N^2) on its own dependency
+// list — measured identical to the unfixed baseline (ns per dependency, one slot
+// reading N cells, recompute):
+//
+//   N            1024    4096   16384   65536  262144
+//   dependents-only index  115.1   400.8  1587.1  5932.0 25126.8
+//   both indexed            18.6    21.4    22.7    24.8    55.6
+//
+// Fan-in degree is degree. Half-fixing it would leave the same defect reachable
+// from the mirror shape, so the 16 bytes are paid on every node.
+
+/// Ordered, deduplicated set of edges. Scans while small; hash-indexed when
+/// wide. The index is owned by the set, so it moves with it, dies with it, and
+/// can never be aliased onto a recycled id — unlike a side table keyed by owner.
+class EdgeSet {
+ public:
+  static constexpr size_t kPromote = LAZILY_EDGE_INDEX_PROMOTE;
+  static constexpr size_t kDemote = LAZILY_EDGE_INDEX_DEMOTE;
+  static_assert(kDemote <= kPromote, "demote must not exceed promote");
+
+  EdgeSet() = default;
+  ~EdgeSet() = default;
+  EdgeSet(EdgeSet&&) noexcept = default;
+  EdgeSet& operator=(EdgeSet&&) noexcept = default;
+
+  EdgeSet(const EdgeSet& other) : edges_(other.edges_) {
+    if (other.index_) rebuild_index();
+  }
+  EdgeSet& operator=(const EdgeSet& other) {
+    if (this != &other) {
+      edges_ = other.edges_;
+      index_.reset();
+      if (other.index_) rebuild_index();
+    }
+    return *this;
+  }
+
+  // Read API mirrors the plain vector it replaced, so every iteration site is
+  // unchanged.
+  size_t size() const noexcept { return edges_.size(); }
+  bool empty() const noexcept { return edges_.empty(); }
+  const SlotId* begin() const noexcept { return edges_.begin(); }
+  const SlotId* end() const noexcept { return edges_.end(); }
+  const SlotId& operator[](size_t i) const noexcept { return edges_[i]; }
+
+  void clear() noexcept {
+    edges_.clear();
+    index_.reset();
+  }
+
+  /// Insert if absent. Returns true if the edge was added.
+  bool insert(SlotId id) {
+    if (index_) {
+      if (lookup(id) != kNpos) return false;
+      edges_.push_back(id);
+      index_->live++;
+      place(id, edges_.size() - 1);
+      if (index_->needs_rehash()) rebuild_index();
       return true;
     }
+    const size_t n = edges_.size();
+    const SlotId* data = edges_.begin();
+    for (size_t i = 0; i < n; ++i)
+      if (data[i] == id) return false;
+    edges_.push_back(id);
+    // Promote once the scan stops paying for itself. uint32_t positions cap the
+    // index at 4G edges on one node; beyond that keep scanning (unreachable in
+    // practice, and correct either way).
+    if (edges_.size() >= kPromote && edges_.size() < kPosMax) rebuild_index();
+    return true;
   }
-  return false;
-}
+
+  /// Remove if present. Returns true if an edge was removed.
+  bool remove(SlotId id) {
+    if (!index_) {
+      for (size_t i = 0; i < edges_.size(); ++i) {
+        if (edges_[i] == id) {
+          edges_[i] = edges_[edges_.size() - 1];
+          edges_.pop_back();
+          return true;
+        }
+      }
+      return false;
+    }
+
+    const size_t slot = probe(id);
+    if (slot == kNpos) return false;
+    const size_t pos = size_t(index_->slots[slot]) - 1;
+
+    // Tombstone the departing id BEFORE the swap. Afterwards edges_[pos] holds
+    // the moved id, so this slot would compare equal to it and the moved id's
+    // position could be written to the wrong slot.
+    index_->slots[slot] = kTomb;
+    index_->live--;
+    index_->tomb++;
+
+    const size_t last = edges_.size() - 1;
+    if (pos != last) {
+      const SlotId moved = edges_[last];
+      edges_[pos] = moved;
+      const size_t moved_slot = probe(moved);
+      // The tombstoned slot is skipped by probe(), so this finds the moved id's
+      // own slot and nothing else.
+      if (moved_slot != kNpos)
+        index_->slots[moved_slot] = static_cast<uint32_t>(pos + 1);
+    }
+    edges_.pop_back();
+
+    if (edges_.size() <= kDemote)
+      index_.reset();  // hysteresis: well below kPromote, so a list oscillating
+                       // by one at the promote boundary never rebuilds.
+    else if (index_->needs_rehash())
+      rebuild_index();
+    return true;
+  }
+
+ private:
+  struct Index {
+    std::vector<uint32_t> slots;  // 0 = empty, kTomb = deleted, else pos + 1
+    size_t live = 0;
+    size_t tomb = 0;
+    bool needs_rehash() const {
+      return (live + tomb) * 2 >= slots.size() || tomb * 4 >= slots.size();
+    }
+  };
+
+  static constexpr size_t kNpos = size_t(-1);
+  static constexpr uint32_t kTomb = 0xFFFFFFFFu;
+  static constexpr size_t kPosMax = 0xFFFFFFFEu;
+
+  // Multiply-shift finalizer. SlotIds are dense and contiguous, so the low bits
+  // alone would collide catastrophically under a power-of-two mask; this is
+  // also markedly cheaper than a general-purpose string-capable hash.
+  static uint64_t mix(uint64_t x) noexcept {
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 29;
+    x *= 0xc4ceb9fe1a85ec53ULL;
+    x ^= x >> 32;
+    return x;
+  }
+
+  /// Slot holding `id`, or kNpos. Stops at the first empty slot; skips
+  /// tombstones, which is what keeps deletion from truncating probe chains.
+  size_t probe(SlotId id) const {
+    const size_t mask = index_->slots.size() - 1;
+    size_t i = size_t(mix(id.value)) & mask;
+    for (;;) {
+      const uint32_t v = index_->slots[i];
+      if (v == 0) return kNpos;
+      if (v != kTomb && edges_[size_t(v) - 1] == id) return i;
+      i = (i + 1) & mask;
+    }
+  }
+
+  size_t lookup(SlotId id) const {
+    const size_t slot = probe(id);
+    return slot == kNpos ? kNpos : size_t(index_->slots[slot]) - 1;
+  }
+
+  /// Write `pos` for an id already known to be absent.
+  void place(SlotId id, size_t pos) {
+    const size_t mask = index_->slots.size() - 1;
+    size_t i = size_t(mix(id.value)) & mask;
+    while (index_->slots[i] != 0 && index_->slots[i] != kTomb)
+      i = (i + 1) & mask;
+    if (index_->slots[i] == kTomb) index_->tomb--;
+    index_->slots[i] = static_cast<uint32_t>(pos + 1);
+  }
+
+  void rebuild_index() {
+    size_t cap = 16;
+    while (cap < edges_.size() * 4) cap <<= 1;  // load factor <= 0.5 after growth
+    index_ = std::unique_ptr<Index>(new Index());
+    index_->slots.assign(cap, 0);
+    index_->live = edges_.size();
+    index_->tomb = 0;
+    for (size_t i = 0; i < edges_.size(); ++i) place(edges_[i], i);
+  }
+
+  EdgeVec edges_;
+  // 8 bytes per edge list when unused; the index itself is one uint32 per hash
+  // slot at load factor <= 0.5, i.e. ~8 bytes per edge — not a node-per-entry
+  // hash map, which would dominate per-subscriber memory at wide fan-out.
+  std::unique_ptr<Index> index_;
+};
+
+inline bool edge_insert(EdgeSet& edges, SlotId id) { return edges.insert(id); }
+
+inline bool edge_remove(EdgeSet& edges, SlotId id) { return edges.remove(id); }
 
 inline void deque_erase(std::deque<SlotId>& dq, SlotId id) {
   for (size_t i = 0; i < dq.size(); ++i) {
@@ -133,8 +368,8 @@ class ContextImpl {
 #endif
     ComputeFnPtr compute;
     EqualsFn equals = nullptr;
-    EdgeVec dependencies;
-    EdgeVec dependents;
+    EdgeSet dependencies;
+    EdgeSet dependents;
     bool dirty;
     bool force_recompute;
     bool in_progress;
@@ -154,7 +389,7 @@ class ContextImpl {
 #ifndef NDEBUG
     std::type_index type_id;
 #endif
-    EdgeVec dependents;
+    EdgeSet dependents;
 
     CellNode()
 #ifndef NDEBUG
@@ -165,7 +400,7 @@ class ContextImpl {
 
   struct EffectNode {
     EffectFnPtr run;
-    EdgeVec dependencies;
+    EdgeSet dependencies;
     CleanupFn cleanup;
     bool force_run;
 
@@ -368,7 +603,7 @@ class ContextImpl {
   }
 
   void dispose_effect(const EffectHandle& handle) {
-    EdgeVec old_deps;
+    EdgeSet old_deps;
     CleanupFn cleanup;
     {
       deque_erase(pending_effects_, handle.id);
@@ -630,11 +865,13 @@ class ContextImpl {
       }
     } guard{this, id};
 
+    // Read-only snapshot: copy the ids, not the EdgeSet, so a wide dependency
+    // list does not rebuild a hash index nobody queries (#lzspecedgeindex).
     EdgeVec dependencies;
     {
       auto* slot = get_slot_node(id);
       if (!slot) return false;
-      dependencies = slot->dependencies;
+      for (SlotId dep : slot->dependencies) dependencies.push_back(dep);
     }
 
     bool dependency_changed = false;
@@ -680,7 +917,7 @@ class ContextImpl {
 
   bool recompute_slot_now(SlotId id) {
     ComputeFnPtr compute;
-    EdgeVec old_deps;
+    EdgeSet old_deps;
     {
       auto* slot = get_slot_node(id);
       if (!slot) return false;
@@ -726,8 +963,8 @@ class ContextImpl {
   // get force=false (matching the former recursive semantics). Returns
   // (effect_id, force) pairs for the caller to schedule after the walk.
   // Stack-based DFS iterates each node's dependents directly without copying
-  // the EdgeVec, and mutates dirty/force flags in place (#lzbatchborrow).
-  EffectList mark_frontier_locked(const EdgeVec& roots) {
+  // the EdgeSet, and mutates dirty/force flags in place (#lzbatchborrow).
+  EffectList mark_frontier_locked(const EdgeSet& roots) {
     EffectList effects;
     SmallVec<SlotId, 16> stack;
     SmallVec<bool, 16> force_stack;
@@ -762,8 +999,8 @@ class ContextImpl {
 
   // Iterative DFS value-clearing. Clears slot values and dirty flags,
   // collecting effects to schedule. Iterates dependents directly without
-  // copying the EdgeVec (#lzbatchborrow).
-  EffectList clear_frontier_locked(const EdgeVec& roots) {
+  // copying the EdgeSet (#lzbatchborrow).
+  EffectList clear_frontier_locked(const EdgeSet& roots) {
     EffectList effects;
     SmallVec<SlotId, 16> stack;
     for (SlotId root : roots) {
@@ -798,7 +1035,7 @@ class ContextImpl {
   bool invalidate_dependents_now(SlotId id) {
     auto* node = get_node(id);
     if (!node) return false;
-    const EdgeVec* roots;
+    const EdgeSet* roots;
     if (auto* c = std::get_if<CellNode>(node))
       roots = &c->dependents;
     else if (auto* s = std::get_if<SlotNode>(node))
@@ -824,8 +1061,8 @@ class ContextImpl {
   }
 
   void clear_slot_now(SlotId id) {
-    EdgeVec roots;
-    roots.push_back(id);
+    EdgeSet roots;
+    roots.insert(id);
     EffectList effects = clear_frontier_locked(roots);
     for (auto& entry : effects) schedule_effect(entry.first, entry.second);
   }
@@ -849,6 +1086,14 @@ class ContextImpl {
   }
 
   void remove_pending_effect(SlotId id) {
+    // The second linear scan on the wide-fan-out notify path, and only visible
+    // once the edge index removed the first (#lzspecedgeindex). flush_effects
+    // pops the front and unschedules it, then run_effect calls this — which
+    // scanned the whole remaining queue to find an id that is provably not in
+    // it. With W pending effects that is O(W) per effect, O(W^2) per publish.
+    // effect_scheduled_ already answers "is it queued" in O(1); ask it first.
+    if (id.value >= effect_scheduled_.size() || !effect_scheduled_[id.value])
+      return;
     deque_erase(pending_effects_, id);
     unschedule_effect(id);
   }
@@ -876,7 +1121,7 @@ class ContextImpl {
     remove_pending_effect(id);
 
     EffectFnPtr run;
-    EdgeVec old_deps;
+    EdgeSet old_deps;
     CleanupFn cleanup;
     {
       auto* node = get_node(id);

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <iostream>
 #include <string>
+#include <set>
 #include <vector>
 
 using namespace lazily;
@@ -305,6 +306,178 @@ TEST(test_small_any) {
   static_assert(sizeof(BigPod) > 16, "should exceed the inline buffer");
   SmallAny<> fit = SmallAny<>::make<BigPod>(BigPod{{1, 2, 3, 4, 5, 6, 7, 8}});
   assert(fit.as<BigPod>()->xs[7] == 8);
+}
+
+// ── EdgeSet: the hash-indexed dependency-edge set (#lzspecedgeindex) ──
+//
+// These exercise the promoted (hash-indexed) regime directly. The reactive
+// tests above only ever build low-degree graphs, which is precisely why the
+// O(n^2) dedup went unnoticed — every one of them stays under the threshold.
+
+TEST(test_edge_set_dedup_and_order) {
+  EdgeSet s;
+  assert(s.insert(SlotId(7)));
+  assert(!s.insert(SlotId(7)));  // idempotent
+  assert(s.size() == 1);
+  assert(s.insert(SlotId(9)));
+  assert(s.size() == 2);
+  assert(!s.remove(SlotId(11)));  // absent
+  assert(s.remove(SlotId(7)));
+  assert(s.size() == 1);
+  assert(s[0] == SlotId(9));
+}
+
+TEST(test_edge_set_promotes_and_stays_correct) {
+  EdgeSet s;
+  const size_t n = EdgeSet::kPromote * 4;
+  for (size_t i = 0; i < n; ++i) assert(s.insert(SlotId(i * 3 + 1)));
+  assert(s.size() == n);
+  // Every member is still found (dedup) once indexed.
+  for (size_t i = 0; i < n; ++i) assert(!s.insert(SlotId(i * 3 + 1)));
+  // Non-members are still absent.
+  for (size_t i = 0; i < n; ++i) assert(!s.remove(SlotId(i * 3 + 2)));
+  assert(s.size() == n);
+}
+
+TEST(test_edge_set_matches_reference_under_churn) {
+  // Differential test against std::set. Removal swaps the last element into the
+  // hole and has to repoint the index at it; a tombstone written in the wrong
+  // order silently loses an edge, which shows up here and nowhere else.
+  EdgeSet s;
+  std::set<uint64_t> reference;
+  uint64_t rng = 0x243f6a8885a308d3ULL;
+  auto next = [&rng]() {
+    rng ^= rng << 13;
+    rng ^= rng >> 7;
+    rng ^= rng << 17;
+    return rng;
+  };
+  for (int step = 0; step < 200000; ++step) {
+    const uint64_t id = next() % 400;  // small space => many collisions
+    if (next() & 1) {
+      assert(s.insert(SlotId(id)) == reference.insert(id).second);
+    } else {
+      assert(s.remove(SlotId(id)) == (reference.erase(id) == 1));
+    }
+    assert(s.size() == reference.size());
+  }
+  std::set<uint64_t> got;
+  for (SlotId id : s) got.insert(id.value);
+  assert(got == reference);
+}
+
+TEST(test_edge_set_crosses_thresholds_repeatedly) {
+  // Drive the list across the promote and demote points many times. With a
+  // single shared boundary this is the thrash case; either way it must stay
+  // correct, which is what this asserts (the cost is measured in
+  // benches/pubsub_load.cpp).
+  EdgeSet s;
+  for (int cycle = 0; cycle < 20; ++cycle) {
+    for (size_t i = 0; i < EdgeSet::kPromote + 8; ++i) s.insert(SlotId(i));
+    assert(s.size() == EdgeSet::kPromote + 8);
+    for (size_t i = 0; i < EdgeSet::kPromote + 8; ++i) assert(s.remove(SlotId(i)));
+    assert(s.empty());
+  }
+}
+
+TEST(test_edge_set_clear_drops_the_index) {
+  // A recycled id must not inherit an index. Here the index is owned by the set
+  // rather than held in a side table keyed by owner, so clearing the set frees
+  // it and no stale index can be aliased onto a later, unrelated node.
+  EdgeSet s;
+  for (size_t i = 0; i < EdgeSet::kPromote * 2; ++i) s.insert(SlotId(i));
+  s.clear();
+  assert(s.empty());
+  assert(s.insert(SlotId(0)));  // would report "already present" against a stale index
+  assert(s.size() == 1);
+}
+
+TEST(test_edge_set_copy_is_independent) {
+  EdgeSet a;
+  for (size_t i = 0; i < EdgeSet::kPromote * 2; ++i) a.insert(SlotId(i));
+  EdgeSet b = a;  // copies past the promote point, so b rebuilds its own index
+  assert(b.size() == a.size());
+  assert(b.remove(SlotId(0)));
+  assert(b.size() == a.size() - 1);
+  assert(!a.insert(SlotId(0)));  // a is untouched
+}
+
+TEST(test_wide_fanout_dispose_and_recycle) {
+  // End to end, above the promote threshold, with id recycling in the middle:
+  // dispose half the subscribers (their ids go to the free list and are handed
+  // to the replacements), then publish and check every survivor observed it.
+  Context ctx;
+  const size_t width = EdgeSet::kPromote * 3;
+  auto topic = ctx.cell(0);
+  std::vector<int> seen(width * 2, -1);
+  std::vector<EffectHandle> handles;
+  for (size_t i = 0; i < width; ++i)
+    handles.push_back(ctx.effect_void(
+        [&, i](Context& c) { seen[i] = c.get_cell(topic); }));
+
+  for (size_t i = 0; i < width; i += 2) ctx.dispose_effect(handles[i]);
+  for (size_t i = width; i < width + width / 2; ++i)
+    handles.push_back(ctx.effect_void(
+        [&, i](Context& c) { seen[i] = c.get_cell(topic); }));
+
+  ctx.set_cell(topic, 42);
+  for (size_t i = 1; i < width; i += 2) assert(seen[i] == 42);
+  for (size_t i = width; i < width + width / 2; ++i) assert(seen[i] == 42);
+  for (size_t i = 0; i < width; i += 2) assert(seen[i] == 0);  // disposed
+}
+
+TEST(test_wide_fanout_repeated_publish) {
+  // Every publish tears down and re-registers every edge. Above the threshold
+  // that is the indexed remove/insert pair; a lost or duplicated edge shows up
+  // as a subscriber missing a later publish.
+  Context ctx;
+  const size_t width = EdgeSet::kPromote * 2 + 1;
+  auto topic = ctx.cell(0);
+  std::vector<int> seen(width, -1);
+  std::vector<int> runs(width, 0);
+  for (size_t i = 0; i < width; ++i)
+    ctx.effect_void([&, i](Context& c) {
+      seen[i] = c.get_cell(topic);
+      runs[i]++;
+    });
+  for (int v = 1; v <= 5; ++v) ctx.set_cell(topic, v);
+  for (size_t i = 0; i < width; ++i) {
+    assert(seen[i] == 5);
+    assert(runs[i] == 6);  // creation + 5 publishes, no duplicate edges
+  }
+}
+
+TEST(test_wide_fanin_tracks_dynamic_dependencies) {
+  // The mirror of wide fan-out: one slot reading many cells, so the indexed list
+  // is the reader's own `dependencies`. Dependencies are re-registered on every
+  // recompute, and a dynamic read set must still shrink correctly when indexed.
+  Context ctx;
+  const size_t n = EdgeSet::kPromote * 4;
+  std::vector<CellHandle<int>> cells;
+  for (size_t i = 0; i < n; ++i) cells.push_back(ctx.cell(1));
+  auto use_all = ctx.cell(true);
+
+  int computes = 0;
+  auto sum = ctx.computed<long>([&](Context& c) {
+    computes++;
+    if (!c.get_cell(use_all)) return long(-1);
+    long total = 0;
+    for (auto& h : cells) total += c.get_cell(h);
+    return total;
+  });
+
+  assert(ctx.get(sum) == long(n));
+  ctx.set_cell(cells[n / 2], 3);
+  assert(ctx.get(sum) == long(n) + 2);
+
+  // Collapse the read set to a single cell; the other n edges must detach.
+  ctx.set_cell(use_all, false);
+  assert(ctx.get(sum) == -1);
+  const int before = computes;
+  // A cell that is no longer read must not invalidate the slot any more.
+  ctx.set_cell(cells[0], 99);
+  (void)ctx.get(sum);
+  assert(computes == before);
 }
 
 int main() {
