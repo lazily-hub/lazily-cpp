@@ -180,7 +180,19 @@ class EdgeSet {
 
     const size_t slot = probe(id);
     if (slot == kNpos) return false;
+#ifdef LAZILY_NAIVE_EDGE_REMOVE
+    // Audit-only: force the position lookup back to the linear scan this index
+    // exists to remove, changing nothing else. Every other line below — the
+    // tombstone, the swap, the moved-id fixup, demote and rehash — runs
+    // identically, so a measured delta is the scan and only the scan. Never
+    // define this in a shipping build; see the #lzspecedgeindex audit.
+    size_t pos = kNpos;
+    for (size_t i = 0; i < edges_.size(); ++i)
+      if (edges_[i] == id) { pos = i; break; }
+    if (pos == kNpos) return false;
+#else
     const size_t pos = size_t(index_->slots[slot]) - 1;
+#endif
 
     // Tombstone the departing id BEFORE the swap. Afterwards edges_[pos] holds
     // the moved id, so this slot would compare equal to it and the moved id's
