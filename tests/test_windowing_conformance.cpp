@@ -24,6 +24,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include "test_require.hpp"
 
 using namespace lazily;
 
@@ -45,7 +46,7 @@ static std::string fixture_text(const std::string& file) {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "conformance/windowing" / file;
   std::ifstream input(path);
-  assert(input && "windowing fixture missing");
+  REQUIRE(input, "windowing conformance fixture missing — a conformance test must not pass without its fixture");
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }

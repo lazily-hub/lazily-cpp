@@ -20,6 +20,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include "test_require.hpp"
 
 using namespace lazily;
 
@@ -42,7 +43,7 @@ static std::string fixture_text(const std::string& name) {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "conformance/coordination" / name;
   std::ifstream input(path);
-  assert(input && "vendored coordination fixture present");
+  REQUIRE(input, "coordination conformance fixture missing — a conformance test must not pass without its fixture");
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }

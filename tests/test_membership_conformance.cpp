@@ -18,6 +18,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "test_require.hpp"
 
 using namespace lazily;
 
@@ -39,7 +40,7 @@ static std::string fixture_text() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "conformance/membership/membership_lifecycle.json";
   std::ifstream input(path);
-  assert(input && "membership_lifecycle.json fixture must be vendored");
+  REQUIRE(input, "membership_lifecycle.json fixture missing — a conformance test must not pass without its fixture");
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }

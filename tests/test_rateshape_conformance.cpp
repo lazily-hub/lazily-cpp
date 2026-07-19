@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "test_require.hpp"
 
 using namespace lazily;
 
@@ -40,7 +41,7 @@ static std::string fixture_text(const std::string& file) {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "conformance/rateshape" / file;
   std::ifstream input(path);
-  assert(input && "vendored fixture missing");
+  REQUIRE(input, "rateshape conformance fixture missing — a conformance test must not pass without its fixture");
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }

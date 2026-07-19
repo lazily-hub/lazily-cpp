@@ -7,21 +7,15 @@
 #include <set>
 #include <vector>
 
+#include "test_require.hpp"
+
 using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
 
-// `make check` builds Release (-DNDEBUG), which compiles assert() out — an
-// assert-only test passes vacuously there. REQUIRE survives NDEBUG.
-#define REQUIRE(cond, msg)                                              \
-  do {                                                                  \
-    if (!(cond)) {                                                      \
-      std::cout << "FAIL: " << (msg) << " @" << __FILE__ << ":"         \
-                << __LINE__ << std::endl;                               \
-      std::abort();                                                     \
-    }                                                                   \
-  } while (0)
+// REQUIRE now lives in test_require.hpp so every test file can use it; see the
+// header for why fixture-presence checks in particular must not be assert().
 
 #define TEST(name)                                        \
   static void name();                                     \

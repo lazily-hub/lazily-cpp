@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "test_require.hpp"
 
 using namespace lazily;
 
@@ -19,7 +20,7 @@ static std::string fixture_text() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "conformance/reliable-sync/outbox_store_protocol.json";
   std::ifstream input(path);
-  assert(input);
+  REQUIRE(input, "outbox store fixture missing — a fixture-driven test must not pass without its fixture");
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }
