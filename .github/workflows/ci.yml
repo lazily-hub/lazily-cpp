@@ -24,9 +24,37 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build ${{ matrix.compiler == 'g++' && 'g++' || 'clang' }}
+      # lazily-spec is the canonical cross-language conformance source. Clone it
+      # as a sibling BEFORE configuring, so every conformance target resolves
+      # ../lazily-spec/conformance/<area> and CI validates lazily-cpp against
+      # the canonical fixtures rather than a copy in this repo (#lzspecconf).
+      - name: Fetch canonical lazily-spec conformance fixtures (#lzspecconf)
+        run: git clone --depth 1 https://github.com/lazily-hub/lazily-spec.git ../lazily-spec
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Build
         run: cmake --build build --parallel
+      # The conformance suites SKIP (CTest exit 77) when the sibling checkout is
+      # absent, which ctest reports as success. Assert the corpus is present so
+      # a skip can never pass silently in CI.
+      - name: Assert canonical conformance fixtures are present (#lzspecconf)
+        run: |
+          for area in coordination crdt-tree membership presence rateshape \
+                      reliable-sync resilience service temporal windowing; do
+            test -d "../lazily-spec/conformance/$area" || {
+              echo "::error::../lazily-spec/conformance/$area missing — the $area conformance suite would skip instead of validating"
+              exit 1
+            }
+          done
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      # An absence guard proves the corpus exists; it cannot prove the suites
+      # read it. Fail the run if ctest reported any conformance test as skipped.
+      - name: Assert no conformance suite was skipped (#lzspecconf)
+        run: |
+          ctest --test-dir build -R Conformance --output-on-failure --no-tests=error \
+            | tee ctest-conformance.log
+          if grep -q "Skipped" ctest-conformance.log; then
+            echo "::error::a conformance suite skipped — it validated nothing"
+            exit 1
+          fi

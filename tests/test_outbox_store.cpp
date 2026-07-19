@@ -8,7 +8,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -17,12 +17,7 @@ static IpcMessage frame(Epoch epoch) {
 }
 
 static std::string fixture_text() {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/reliable-sync/outbox_store_protocol.json";
-  std::ifstream input(path);
-  REQUIRE(input, "outbox store fixture missing — a fixture-driven test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("reliable-sync", "outbox_store_protocol.json");
 }
 
 struct TempJournal {
@@ -126,5 +121,6 @@ int main() {
   low_writer.join();
   FileOutboxStore after_race(stale_journal.file);
   assert(after_race.load_cursor() == 25);
+  REQUIRE_FIXTURES_LOADED(1);
   return 0;
 }

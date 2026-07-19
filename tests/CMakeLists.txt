@@ -95,7 +95,9 @@ add_test(NAME OutboxStoreConformance COMMAND test_outbox_store)
 
 # Realtime + distributed primitive families (#lztime / #lzrateshape / #lzmemb /
 # #lzcoord / #lzpresence / #lzwindow / #lzresilience / #lzservice). Each replays
-# the shared lazily-spec conformance fixtures vendored under conformance/<family>/.
+# the canonical lazily-spec conformance fixtures read from the sibling checkout
+# at ../lazily-spec/conformance/<family>/ — see the LAZILY_SPEC_CONFORMANCE_DIR
+# block below (#lzspecconf).
 add_executable(test_temporal_conformance test_temporal_conformance.cpp)
 target_link_libraries(test_temporal_conformance PRIVATE lazily)
 add_test(NAME TemporalConformance COMMAND test_temporal_conformance)
@@ -127,6 +129,55 @@ add_test(NAME ResilienceConformance COMMAND test_resilience_conformance)
 add_executable(test_service_conformance test_service_conformance.cpp)
 target_link_libraries(test_service_conformance PRIVATE lazily)
 add_test(NAME ServiceConformance COMMAND test_service_conformance)
+
+# Canonical conformance fixtures (#lzspecconf).
+#
+# These suites read fixtures from the sibling lazily-spec checkout, NOT from a
+# copy inside this repo. A vendored copy makes drift invisible: the suite goes
+# green against whatever this repo happens to hold, which is exactly how a
+# fixture elsewhere in the family shrank to a third of its source unnoticed.
+# lazily-cpp vendored its fixtures under tests/conformance/ and its CI never
+# cloned the spec, so it had never once validated against the canonical corpus.
+#
+# The path is baked in at configure time so it resolves identically regardless
+# of the working directory ctest launches the binary from (`ctest --test-dir
+# build` runs from the build tree, not the source root). CMAKE_CURRENT_SOURCE_DIR
+# is <repo>/tests, so ../../lazily-spec is the sibling checkout — the same
+# relative arrangement LAZILY_FORMAL_DIR above relies on. Nothing is absolute in
+# the source; CMake derives it from the source tree location.
+#
+# Absence is a SKIP (CTest exit 77) with an explicit message rather than a
+# silent pass. CI asserts the directory exists so a skip cannot go unnoticed
+# there, and each suite additionally asserts a positive distinct-fixture count.
+set(LAZILY_SPEC_CONFORMANCE_TESTS
+  test_crdt_tree
+  test_outbox_store
+  test_temporal_conformance
+  test_rateshape_conformance
+  test_membership_conformance
+  test_coordination_conformance
+  test_presence_conformance
+  test_windowing_conformance
+  test_resilience_conformance
+  test_service_conformance)
+
+foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
+  target_compile_definitions(${_target} PRIVATE
+    LAZILY_SPEC_CONFORMANCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../lazily-spec/conformance")
+endforeach()
+
+set_tests_properties(
+  CrdtTreeConformance
+  OutboxStoreConformance
+  TemporalConformance
+  RateshapeConformance
+  MembershipConformance
+  CoordinationConformance
+  PresenceConformance
+  WindowingConformance
+  ResilienceConformance
+  ServiceConformance
+  PROPERTIES SKIP_RETURN_CODE 77)
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
 # build`). Skips gracefully (CTest exit code 77) when the sibling checkout or

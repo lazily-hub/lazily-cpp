@@ -2,7 +2,7 @@
 //
 // C++ port of `lazily-rs/tests/membership_conformance.rs`. Replays the SWIM
 // lifecycle fixture `lazily-spec/conformance/membership/membership_lifecycle.json`
-// (vendored under tests/conformance/membership/): each op asserts the acted
+// (read from the sibling lazily-spec checkout): each op asserts the acted
 // peers' `state`, the `alive_set` (the reactive `PeerSet`), and that the
 // `PeerSet` reader invalidates exactly when the alive set changes (via
 // `ctx.is_set`). Also replays the Rust unit tests (`PhiAccrual` thresholds +
@@ -18,7 +18,7 @@
 #include <set>
 #include <string>
 #include <vector>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -37,15 +37,10 @@ static int test_passed = 0;
   static void name()
 
 static std::string fixture_text() {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/membership/membership_lifecycle.json";
-  std::ifstream input(path);
-  REQUIRE(input, "membership_lifecycle.json fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("membership", "membership_lifecycle.json");
 }
 
-// The vendored fixture carries the `"model": "MembershipCell"` marker and the
+// The canonical fixture carries the `"model": "MembershipCell"` marker and the
 // canonical config replayed below.
 TEST(test_fixture_present_and_model_marker) {
   const auto fixture = fixture_text();
@@ -169,4 +164,5 @@ TEST(test_core_heartbeat_refutes_suspicion) {
                                                         PeerState::Alive)}));
 }
 
-int main() { return test_count == test_passed ? 0 : 1; }
+int main() {
+  REQUIRE_FIXTURES_LOADED(1); return test_count == test_passed ? 0 : 1; }

@@ -2,7 +2,7 @@
 //
 // Replays the shared cross-language fixtures in
 // `lazily-spec/conformance/resilience/{circuit_breaker,retry,bulkhead,timeout}.json`
-// (vendored under tests/conformance/resilience/). Mirrors the Rust reference
+// (read from the sibling lazily-spec checkout). Mirrors the Rust reference
 // `lazily-rs/tests/resilience_conformance.rs`: per step assert the op result +
 // projected reader value and the reader's INVALIDATION via a `computed` +
 // `is_set` cache-survival probe.
@@ -16,7 +16,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -35,12 +35,7 @@ static int test_passed = 0;
   static void name()
 
 static std::string fixture_text(const char* file) {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/resilience" / file;
-  std::ifstream input(path);
-  REQUIRE(input, "resilience conformance fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("resilience", file);
 }
 
 // -- circuit_breaker.json --
@@ -199,5 +194,6 @@ TEST(test_timeout) {
 }
 
 int main() {
+  REQUIRE_FIXTURES_LOADED(4);
   return test_count == test_passed ? 0 : 1;
 }

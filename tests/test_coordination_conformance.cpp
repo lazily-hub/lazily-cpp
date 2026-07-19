@@ -2,8 +2,8 @@
 //
 // A C++17 port of `lazily-rs/tests/coordination_conformance.rs`. Replays each
 // primitive's op sequence transcribed from the shared fixtures in
-// `lazily-spec/conformance/coordination/*.json` (vendored under
-// tests/conformance/coordination/), asserting the returned value, the projected
+// `lazily-spec/conformance/coordination/*.json` (read from the sibling
+// lazily-spec checkout), asserting the returned value, the projected
 // readers (`expected.*`), and reader invalidation.
 //
 // Invalidation is checked with the cache-survival technique: a `computed` slot
@@ -20,7 +20,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -38,14 +38,9 @@ static int test_passed = 0;
   } name##_instance;               \
   static void name()
 
-// Read a vendored fixture's raw text (used to assert the `"model"` marker).
+// Read a canonical fixture's raw text (used to assert the `"model"` marker).
 static std::string fixture_text(const std::string& name) {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/coordination" / name;
-  std::ifstream input(path);
-  REQUIRE(input, "coordination conformance fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("coordination", name);
 }
 
 static void assert_model(const std::string& name, const std::string& model) {
@@ -279,4 +274,5 @@ TEST(test_quorum) {
   step(false);
 }
 
-int main() { return test_count == test_passed ? 0 : 1; }
+int main() {
+  REQUIRE_FIXTURES_LOADED(5); return test_count == test_passed ? 0 : 1; }

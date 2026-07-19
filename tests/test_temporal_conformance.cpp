@@ -1,8 +1,8 @@
 // Temporal source conformance tests (`#lztime`).
 //
 // A C++17 port of `lazily-rs/tests/temporal_conformance.rs`. These are **compute**
-// fixtures (`lazily-spec/conformance/temporal/*.json`, vendored under
-// `tests/conformance/temporal/`): load the `initial` state, replay each
+// fixtures (`lazily-spec/conformance/temporal/*.json`, read from the sibling
+// lazily-spec checkout): load the `initial` state, replay each
 // `tick(now)` op, and assert the fire edge (`returns`), the projected reader
 // values, and — the core of the spec — that the primary reader invalidates
 // exactly on the fire edge. Invalidation is observed by wrapping the reader cell
@@ -10,8 +10,8 @@
 // (`ctx.is_set`).
 //
 // Each scenario is transcribed directly from its fixture JSON (initial + steps),
-// mirroring the repo's other conformance tests; the vendored fixture text is also
-// read via `__FILE__` and asserted to carry its `"model"` marker so the test
+// mirroring the repo's other conformance tests; the canonical fixture text is also
+// read from the sibling checkout and asserted to carry its `"model"` marker so the test
 // stays coupled to the fixture.
 
 #include <lazily/temporal.hpp>
@@ -22,7 +22,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -41,12 +41,7 @@ static int test_passed = 0;
   static void name()
 
 static std::string fixture_text(const std::string& file) {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/temporal" / file;
-  std::ifstream input(path);
-  REQUIRE(input, "temporal conformance fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("temporal", file);
 }
 
 // timer_single_shot.json — initial { fire_at: 3 }.
@@ -221,4 +216,5 @@ TEST(test_manual_clock_and_core_idempotence) {
   assert(t.fired());
 }
 
-int main() { return test_count == test_passed ? 0 : 1; }
+int main() {
+  REQUIRE_FIXTURES_LOADED(4); return test_count == test_passed ? 0 : 1; }

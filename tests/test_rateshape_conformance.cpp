@@ -1,12 +1,12 @@
 // Cross-language conformance for the rate-shaping source operators
 // (`#lzrateshape`) — port of `lazily-rs/tests/rateshape_conformance.rs`.
 //
-// Each fixture's `initial` + `steps` are transcribed from the vendored JSON in
-// `tests/conformance/rateshape/*.json`. Per step we assert: the emitted value
+// Each fixture's `initial` + `steps` are transcribed from the canonical JSON in
+// `lazily-spec/conformance/rateshape/*.json`. Per step we assert: the emitted value
 // (`returns`), the projected `output` reader, and that the `output` reader
 // invalidates exactly on an emit — observed via `ctx.is_set` on a wrapping
 // `computed` (the cache-survival technique). We also assert each fixture's
-// `"model"` marker string is present in the vendored text.
+// `"model"` marker string is present in the canonical text.
 
 #include <lazily/rateshape.hpp>
 
@@ -17,7 +17,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -38,12 +38,7 @@ static int test_passed = 0;
 using OptS = std::optional<std::string>;
 
 static std::string fixture_text(const std::string& file) {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/rateshape" / file;
-  std::ifstream input(path);
-  REQUIRE(input, "rateshape conformance fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("rateshape", file);
 }
 
 static void assert_model(const std::string& file, const std::string& model) {
@@ -269,4 +264,5 @@ TEST(probabilistic_sample) {
   assert(frac > 0.28 && frac < 0.32 && "empirical rate near target");
 }
 
-int main() { return test_count == test_passed ? 0 : 1; }
+int main() {
+  REQUIRE_FIXTURES_LOADED(6); return test_count == test_passed ? 0 : 1; }

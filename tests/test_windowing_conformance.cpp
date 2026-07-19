@@ -1,8 +1,8 @@
 // Stream windowing conformance tests (`#lzwindow`).
 //
 // A C++17 port of `lazily-rs/tests/windowing_conformance.rs`. These are
-// **compute** fixtures (`lazily-spec/conformance/windowing/*.json`, vendored
-// under `tests/conformance/windowing/`, all using the `Sum` u64 aggregate):
+// **compute** fixtures (`lazily-spec/conformance/windowing/*.json`, read from
+// the sibling lazily-spec checkout, all using the `Sum` u64 aggregate):
 // replay each `push`/`tick`/`flush` op and assert (1) the emit edge
 // (`returns`), (2) the projected reader value (`expected.output`), and — the
 // core of the spec — that the output reader invalidates exactly on an emit
@@ -11,7 +11,7 @@
 // op (`ctx.is_set`).
 //
 // Each scenario is transcribed directly from its fixture JSON (config + steps);
-// the vendored fixture text is also read via `__FILE__` and asserted to carry
+// the canonical fixture text is also read from the sibling checkout and asserted to carry
 // its `"model"` marker so the test stays coupled to the fixture.
 
 #include <lazily/windowing.hpp>
@@ -24,7 +24,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -43,12 +43,7 @@ static int test_passed = 0;
   static void name()
 
 static std::string fixture_text(const std::string& file) {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/windowing" / file;
-  std::ifstream input(path);
-  REQUIRE(input, "windowing conformance fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("windowing", file);
 }
 
 using OptU = std::optional<uint64_t>;
@@ -252,4 +247,5 @@ TEST(test_pure_cores) {
   }
 }
 
-int main() { return test_count == test_passed ? 0 : 1; }
+int main() {
+  REQUIRE_FIXTURES_LOADED(4); return test_count == test_passed ? 0 : 1; }

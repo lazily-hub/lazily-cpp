@@ -3,7 +3,7 @@
 //
 // Steps are transcribed directly from the shared fixtures
 // (`lazily-spec/conformance/presence/{presence,awareness,ephemeral}.json`,
-// vendored under tests/conformance/presence/). Each step asserts the op's
+// read from the sibling lazily-spec checkout). Each step asserts the op's
 // projected reader value(s) (`expected.*`) and INVALIDATION (`expected.
 // invalidates.*`) via the `computed` + `is_set` cache-survival technique:
 // before re-reading the observer slot, `is_set` is true iff the cached value
@@ -19,7 +19,7 @@
 #include <map>
 #include <optional>
 #include <string>
-#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
@@ -40,12 +40,7 @@ static int test_passed = 0;
 using PresenceMap = std::map<uint64_t, std::string>;
 
 static std::string fixture_text(const std::string& name) {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "conformance/presence" / name;
-  std::ifstream input(path);
-  REQUIRE(input, "presence conformance fixture missing — a conformance test must not pass without its fixture");
-  return {std::istreambuf_iterator<char>(input),
-          std::istreambuf_iterator<char>()};
+  return lazily_test::spec_fixture_text("presence", name);
 }
 
 // -- PresenceCell: heartbeat / evict / TTL tick; live-view invalidation --
@@ -197,4 +192,5 @@ TEST(test_cores) {
   static_assert(is_ephemeral_v<EphemeralCore<int>>, "core is ephemeral");
 }
 
-int main() { return test_count == test_passed ? 0 : 1; }
+int main() {
+  REQUIRE_FIXTURES_LOADED(3); return test_count == test_passed ? 0 : 1; }
