@@ -1,6 +1,7 @@
 #include <lazily/lazily.hpp>
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <set>
@@ -10,6 +11,17 @@ using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
+
+// `make check` builds Release (-DNDEBUG), which compiles assert() out — an
+// assert-only test passes vacuously there. REQUIRE survives NDEBUG.
+#define REQUIRE(cond, msg)                                              \
+  do {                                                                  \
+    if (!(cond)) {                                                      \
+      std::cout << "FAIL: " << (msg) << " @" << __FILE__ << ":"         \
+                << __LINE__ << std::endl;                               \
+      std::abort();                                                     \
+    }                                                                   \
+  } while (0)
 
 #define TEST(name)                                        \
   static void name();                                     \
@@ -478,6 +490,124 @@ TEST(test_wide_fanin_tracks_dynamic_dependencies) {
   ctx.set_cell(cells[0], 99);
   (void)ctx.get(sum);
   assert(computes == before);
+}
+
+TEST(test_pending_queue_matches_reference_model) {
+  // Randomised differential against a straight vector implementing the same
+  // contract: FIFO pop at the head, swap-with-back erase in the middle. Drives
+  // the queue well past the promote threshold and back down so the scanned,
+  // indexed and demoted regimes all run, and so the moved-id position fixup on
+  // the indexed path is exercised thousands of times.
+  PendingQueue q;
+  std::vector<SlotId> model;
+  uint64_t rng = 0x9E3779B97F4A7C15ULL;
+  auto next = [&rng]() {
+    rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng;
+  };
+  for (int step = 0; step < 200000; ++step) {
+    const uint64_t r = next() % 100;
+    if (r < 55) {  // push a fresh id (the bitset upstream keeps ids unique)
+      SlotId id(next() % 4096);
+      bool dup = false;
+      for (auto& m : model) if (m == id) { dup = true; break; }
+      if (dup) continue;
+      q.push_back(id);
+      model.push_back(id);
+    } else if (r < 80) {  // pop head
+      if (model.empty()) continue;
+      SlotId got = q.pop_front();
+      REQUIRE(got == model.front(), "pop_front returned the wrong id");
+      model.erase(model.begin());
+    } else {  // erase an arbitrary live id
+      if (model.empty()) continue;
+      const size_t i = size_t(next() % model.size());
+      const SlotId id = model[i];
+      q.erase(id);
+      model[i] = model.back();
+      model.pop_back();
+    }
+    REQUIRE(q.size() == model.size(), "size diverged from model");
+  }
+  // Drain and compare element-for-element.
+  while (!model.empty()) {
+    REQUIRE(q.pop_front() == model.front(), "drain order diverged from model");
+    model.erase(model.begin());
+  }
+  REQUIRE(q.empty(), "queue must be empty when the model is");
+}
+
+// ── PendingQueue: the scheduler queue backing pending_effects_
+// (#lzspecedgeindex) ──
+//
+// The shape that matters is disposing effects from INSIDE a flush, while the
+// rest of a wide cascade is still queued. That is the only way pending depth
+// reaches the fan-out width, and it is what made the old linear erase
+// quadratic. Nothing else in this file builds a queue deeper than a couple of
+// entries, which is why it hid.
+
+TEST(test_dispose_from_inside_flush_runs_survivors_only) {
+  Context ctx;
+  auto topic = ctx.cell(0);
+  const size_t n = 200;  // > PendingQueue promote, so the indexed path runs
+  std::vector<int> ran(n, 0);
+  std::vector<EffectHandle> effects;
+  for (size_t i = 0; i < n; ++i)
+    effects.push_back(
+        ctx.effect_void([topic, i, &ran](Context& c) { c.get_cell(topic); ++ran[i]; }));
+
+  // Registered last => scheduled first (the invalidation walk uses a stack), so
+  // this runs with all n still queued. Disposes every even-indexed sibling.
+  int runs = 0;
+  ctx.effect_void([topic, &effects, &runs, n](Context& c) {
+    c.get_cell(topic);
+    if (++runs != 2) return;  // run 1 is the registration flush
+    for (size_t i = 0; i < n; i += 2) c.dispose_effect(effects[i]);
+  });
+
+  for (auto& r : ran) r = 0;
+  ctx.set_cell(topic, 1);
+
+  for (size_t i = 0; i < n; ++i) {
+    if (i % 2 == 0)
+      REQUIRE(ran[i] == 0, "disposed effect must not run");
+    else
+      REQUIRE(ran[i] == 1, "survivor must run exactly once");
+  }
+}
+
+TEST(test_dispose_from_inside_flush_survives_id_recycling) {
+  // Disposing frees the id for immediate reuse, so a queue entry left behind by
+  // a sloppy erase would fire the *new* effect. Create replacements during the
+  // same flush and assert each runs exactly once.
+  Context ctx;
+  auto topic = ctx.cell(0);
+  const size_t n = 128;
+  std::vector<EffectHandle> effects;
+  std::vector<int> ran(n, 0);
+  for (size_t i = 0; i < n; ++i)
+    effects.push_back(
+        ctx.effect_void([topic, i, &ran](Context& c) { c.get_cell(topic); ++ran[i]; }));
+
+  int fresh_runs = 0;
+  int runs = 0;
+  ctx.effect_void([topic, &effects, &runs, &fresh_runs, n](Context& c) {
+    c.get_cell(topic);
+    if (++runs != 2) return;
+    for (size_t i = 0; i < n; ++i) c.dispose_effect(effects[i]);
+    for (size_t i = 0; i < n; ++i)
+      c.effect_void([topic, &fresh_runs](Context& cc) {
+        cc.get_cell(topic);
+        ++fresh_runs;
+      });
+  });
+
+  for (auto& r : ran) r = 0;
+  ctx.set_cell(topic, 1);
+
+  for (size_t i = 0; i < n; ++i) REQUIRE(ran[i] == 0, "disposed must not run");
+  // Each replacement runs once on creation; none may be run a second time by a
+  // stale queue entry inherited from the id it recycled.
+  REQUIRE(fresh_runs == int(n), "replacement effects must run exactly once");
 }
 
 int main() {

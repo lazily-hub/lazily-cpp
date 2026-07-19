@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <typeindex>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -296,15 +297,107 @@ inline bool edge_insert(EdgeSet& edges, SlotId id) { return edges.insert(id); }
 
 inline bool edge_remove(EdgeSet& edges, SlotId id) { return edges.remove(id); }
 
-inline void deque_erase(std::deque<SlotId>& dq, SlotId id) {
-  for (size_t i = 0; i < dq.size(); ++i) {
-    if (dq[i] == id) {
-      dq[i] = dq.back();
-      dq.pop_back();
-      return;
-    }
+/// Scheduler queue for pending effects: FIFO at the head, swap-remove in the
+/// middle. Scans while shallow, position-indexed when deep — the same shape as
+/// EdgeSet, for the same reason (#lzspecedgeindex).
+///
+/// Removal used to be a bare linear scan. That is O(depth) per dispose, and the
+/// shape that hits it is disposing effects from inside a flush — an effect
+/// tearing down its siblings while the rest of a wide cascade is still queued.
+/// There the depth IS the fan-out width, so a width-W teardown cost W^2/2
+/// comparisons: measured 134,225,920 iterations at W=16384 against W^2/2 =
+/// 134,217,728.
+///
+/// The effect_scheduled_ bitset alone does not fix it. It answers "is this
+/// queued" in O(1), which skips the scan for an effect that is not queued — but
+/// in the biting shape every disposed effect IS queued, so the guard says yes
+/// and the scan still runs. Measured: guard alone left iterations unchanged at
+/// 134,225,920. The position index is what removes the quadratic; the guard is
+/// kept as well because it is free and does fix the not-queued case.
+///
+/// Positions are absolute (base_ + offset) because pop_front shifts every
+/// index; base_ counts pops so stored positions survive them.
+class PendingQueue {
+ public:
+  bool empty() const noexcept { return q_.empty(); }
+  size_t size() const noexcept { return q_.size(); }
+
+  void push_back(SlotId id) {
+    q_.push_back(id);
+    // No promote check here: the index is built lazily by the first erase that
+    // needs it, so a queue that is only ever pushed and popped — which is what
+    // a plain publish does — never allocates or hashes at all.
+    if (index_) (*index_)[id.value] = base_ + q_.size() - 1;
   }
-}
+
+  SlotId pop_front() {
+    const SlotId id = q_.front();
+    q_.pop_front();
+    ++base_;
+    if (index_) {
+      index_->erase(id.value);
+      if (q_.size() <= kDemote) index_.reset();
+    }
+    return id;
+  }
+
+  /// Remove `id` if present. Swap-with-back, matching the previous linear
+  /// implementation exactly — removal has never preserved FIFO order here.
+  void erase(SlotId id) {
+    if (!index_) {
+      // Shallow: scanning beats building an index for a queue this size.
+      if (q_.size() < kPromote) {
+        for (size_t i = 0; i < q_.size(); ++i) {
+          if (q_[i] == id) {
+            q_[i] = q_.back();
+            q_.pop_back();
+            return;
+          }
+        }
+        return;
+      }
+      build_index();  // pay O(depth) once, then every erase in this teardown
+                      // is O(1) — that is what turns W^2/2 into W.
+    }
+    auto it = index_->find(id.value);
+    if (it == index_->end()) return;
+    const uint64_t abs = it->second;
+    const uint64_t last_abs = base_ + q_.size() - 1;
+    if (abs != last_abs) {
+      const SlotId moved = q_.back();
+      q_[size_t(abs - base_)] = moved;
+      (*index_)[moved.value] = abs;
+    }
+    index_->erase(it);
+    q_.pop_back();
+    if (q_.size() <= kDemote) index_.reset();
+  }
+
+ private:
+  // Deep enough that the index earns its allocation; a queue this shallow is
+  // scanned faster than it is hashed. Hysteresis, as in EdgeSet, so a queue
+  // oscillating at the boundary does not rebuild on every publish.
+  //
+  // Eager promotion on push_back was measured and rejected: it regressed wide
+  // notify 28-38 -> 45-57 ns/sub (~1.5x), because a wide cascade pushes every
+  // effect through a hash insert and pops it through a hash erase to fix a
+  // teardown-only defect that notify never triggers.
+  static constexpr size_t kPromote = 64;
+  static constexpr size_t kDemote = 16;
+
+  void build_index() {
+    index_ = std::unique_ptr<std::unordered_map<uint64_t, uint64_t>>(
+        new std::unordered_map<uint64_t, uint64_t>());
+    index_->reserve(q_.size() * 2);
+    for (size_t i = 0; i < q_.size(); ++i) (*index_)[q_[i].value] = base_ + i;
+  }
+
+  std::deque<SlotId> q_;
+  uint64_t base_ = 0;  // absolute index of q_.front()
+  // Allocated only while the queue is deep, so a shallow queue — the common
+  // case — pays one pointer and no hashing.
+  std::unique_ptr<std::unordered_map<uint64_t, uint64_t>> index_;
+};
 
 // ── Handle types (Traits-independent — just SlotId wrappers) ──
 
@@ -618,8 +711,7 @@ class ContextImpl {
     EdgeSet old_deps;
     CleanupFn cleanup;
     {
-      deque_erase(pending_effects_, handle.id);
-      unschedule_effect(handle.id);
+      remove_pending_effect(handle.id);
       auto idx = node_index(handle.id);
       if (!idx || *idx >= nodes_.size() ||
           std::holds_alternative<EmptyNode>(nodes_[*idx]))
@@ -724,7 +816,7 @@ class ContextImpl {
   std::vector<Node> nodes_;
   uint64_t next_id_ = 0;
   std::vector<uint64_t> free_ids_;
-  std::deque<SlotId> pending_effects_;
+  PendingQueue pending_effects_;
   // Mark bitset over the node id space (mirrors BatchSet below): a set bit
   // means the effect node is already queued in pending_effects_. Cheaper than
   // unordered_set (no per-insert bucket alloc, cache-friendly). The bit is
@@ -1106,7 +1198,7 @@ class ContextImpl {
     // effect_scheduled_ already answers "is it queued" in O(1); ask it first.
     if (id.value >= effect_scheduled_.size() || !effect_scheduled_[id.value])
       return;
-    deque_erase(pending_effects_, id);
+    pending_effects_.erase(id);
     unschedule_effect(id);
   }
 
@@ -1120,8 +1212,7 @@ class ContextImpl {
           flushing_effects_ = false;
           return;
         }
-        id = pending_effects_.front();
-        pending_effects_.pop_front();
+        id = pending_effects_.pop_front();
         unschedule_effect(id);
       }
       run_effect(id);
