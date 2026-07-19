@@ -40,7 +40,8 @@ jobs:
       - name: Assert canonical conformance fixtures are present (#lzspecconf)
         run: |
           for area in coordination crdt-tree membership presence rateshape \
-                      reliable-sync resilience service temporal windowing; do
+                      reactive-graph reliable-sync resilience service \
+                      temporal windowing; do
             test -d "../lazily-spec/conformance/$area" || {
               echo "::error::../lazily-spec/conformance/$area missing — the $area conformance suite would skip instead of validating"
               exit 1

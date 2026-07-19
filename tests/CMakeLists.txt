@@ -130,6 +130,14 @@ add_executable(test_service_conformance test_service_conformance.cpp)
 target_link_libraries(test_service_conformance PRIVATE lazily)
 add_test(NAME ServiceConformance COMMAND test_service_conformance)
 
+# Reactive-graph disposal/teardown + invalidation corpus (#lzspecedgeindex).
+# Replays ../lazily-spec/conformance/reactive-graph/. lazily-cpp replayed NONE
+# of this corpus until now — only lazily-rs did, family-wide, which is why an
+# invalidation-cascade defect shipped undetected in two other bindings.
+add_executable(test_reactive_graph_conformance test_reactive_graph_conformance.cpp)
+target_link_libraries(test_reactive_graph_conformance PRIVATE lazily)
+add_test(NAME ReactiveGraphConformance COMMAND test_reactive_graph_conformance)
+
 # Canonical conformance fixtures (#lzspecconf).
 #
 # These suites read fixtures from the sibling lazily-spec checkout, NOT from a
@@ -159,7 +167,8 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_presence_conformance
   test_windowing_conformance
   test_resilience_conformance
-  test_service_conformance)
+  test_service_conformance
+  test_reactive_graph_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
   target_compile_definitions(${_target} PRIVATE
@@ -177,6 +186,7 @@ set_tests_properties(
   WindowingConformance
   ResilienceConformance
   ServiceConformance
+  ReactiveGraphConformance
   PROPERTIES SKIP_RETURN_CODE 77)
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
