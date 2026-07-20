@@ -23,6 +23,34 @@
 // deleted precisely because an empty ledger that is *checked* is a stronger
 // statement than no ledger at all.
 //
+// ## Signal eagerness (`#lzsignaleager`) and the `computes_of` observable
+//
+// Three fixtures pin the four normative clauses of *Signal eagerness*. They
+// need one observable the rest of the corpus does not: `computes_of`, the
+// CUMULATIVE number of times a node's compute has run, counted from the start
+// of the scenario and including the invocation at creation.
+//
+// The key exists because an eager signal and a lazy memo return IDENTICAL
+// values for every read sequence in these fixtures. The only caller-observable
+// difference is *when* compute runs, so a corpus asserting values alone cannot
+// distinguish `signal()` from `memo()`. That makes the counter's provenance the
+// whole point: it is incremented inside the compute body itself
+// (`counting_body`), never inferred by the runner from ops it saw. Two further
+// consequences are enforced below rather than left to convention — the counter
+// is never reset per step, and `computes_of` is evaluated before any other
+// expectation key, because several of those keys read and a read of a stale
+// memo would advance the counter it is being compared against.
+//
+// lazily-cpp passes all four clauses structurally rather than by accident.
+// `Context::signal` (context.hpp) is the textbook composition — `memo<T>()`
+// plus an `effect_void` puller — and `dispose_signal` disposes only the effect.
+// Clause 3 (one re-materialization per batch, not one per write) falls out of
+// the puller being an ordinary effect: effects are scheduled, not inline, so N
+// invalidations inside a batch coalesce into a single run at the flush. A
+// binding that instead re-pulls from its slot's invalidation handler recomputes
+// once per write with identical values everywhere, which is the defect these
+// fixtures exist to separate from a conforming implementation.
+//
 // ## What the corpus does NOT pin, and what covers it instead
 //
 // Mutation testing in the sibling bindings found two teardown semantics the
@@ -42,8 +70,8 @@
 // An absence guard proves the corpus is on disk; it cannot prove this binary
 // read any of it. Every fixture — including the skipped ones, which are parsed
 // to discover their ops — is opened through `spec_fixture_text`, so
-// `REQUIRE_FIXTURES_LOADED(11)` is a positive assertion that all eleven distinct
-// canonical files were actually read. The runner additionally asserts (a) the
+// `REQUIRE_FIXTURES_LOADED(14)` is a positive assertion that all fourteen
+// distinct canonical files were actually read. The runner additionally asserts (a) the
 // on-disk fixture set matches `FIXTURES` exactly, so an upstream addition
 // cannot arrive unexecuted, and (b) a non-zero number of ops and expectations
 // actually executed.
@@ -88,10 +116,13 @@ const std::vector<std::string> FIXTURES = {
     "disarm_disposes_nothing.json",
     "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
+    "dispose_signal_reverts_to_lazy.json",
     "read_after_dispose_is_an_error.json",
     "recycled_id_inherits_nothing.json",
     "scope_teardown_equals_fold_of_disposals.json",
     "scoping_bounds_teardown_not_visibility.json",
+    "signal_materializes_once_per_batch.json",
+    "signal_materializes_without_a_read.json",
     "teardown_runs_members_in_reverse_creation_order.json",
     "transitive_invalidation_reaches_depth.json",
 };
@@ -99,11 +130,12 @@ const std::vector<std::string> FIXTURES = {
 // Ops this runner can execute against the synchronous `Context`. The corpus's
 // full op vocabulary.
 const std::set<std::string> SUPPORTED_OPS = {
-    "begin_scope", "cell",           "churn",
-    "computed",    "disarm",         "dispose",
-    "dispose_fanout", "dispose_stale_handle", "effect",
-    "end_scope",   "fanout",         "read",
-    "set_cell"};
+    "batch",       "begin_scope",    "cell",
+    "churn",       "computed",       "disarm",
+    "dispose",     "dispose_fanout", "dispose_signal",
+    "dispose_stale_handle", "effect", "end_scope",
+    "fanout",      "read",           "set_cell",
+    "signal"};
 
 // Fixture shapes this runner can replay.
 const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
@@ -305,13 +337,20 @@ struct JsonParser {
 // the id. Handles in lazily-cpp are typed wrappers around a `SlotId`, and the
 // corpus is untyped, so the runner carries the kind alongside rather than
 // keeping three parallel maps.
-enum class Kind { Cell, Slot, Effect };
+// `Signal` is the one kind that is two nodes: a backing memo slot plus an
+// eager puller effect. `id` is the SLOT — every read, degree query, and
+// dependency edge goes through it — and `effect_id` is the puller, which only
+// `dispose_signal` touches. Keeping both here is what lets the runner express
+// clause 4 (dispose the puller, keep the value) without a second map.
+enum class Kind { Cell, Slot, Effect, Signal };
 
 struct Ref {
   Kind kind = Kind::Cell;
   SlotId id;
+  SlotId effect_id;
   Ref() = default;
   Ref(Kind k, SlotId i) : kind(k), id(i) {}
+  Ref(Kind k, SlotId i, SlotId e) : kind(k), id(i), effect_id(e) {}
 };
 
 // Everything a scenario leaves behind that `observationally_equal` compares.
@@ -354,6 +393,14 @@ struct World {
   std::deque<std::string> names;
   std::vector<std::string> run_log;
   std::vector<std::string> cleanup_log;
+  // CUMULATIVE compute invocations per node id, counted from the start of the
+  // scenario and never reset per step. The count is incremented by the compute
+  // body itself (see `make_computed`/`make_signal`), which is the only honest
+  // way to observe it: an eager signal and a lazy memo return identical values
+  // for every read sequence in the signal fixtures, so a `computes_of` derived
+  // from anything other than the real compute would defeat the fixtures it is
+  // there to satisfy.
+  std::map<std::string, long long> computes;
 
   // Read through the tracking context `c` so a read inside a compute registers
   // the dependency edge. That edge registration is the whole point of the
@@ -364,6 +411,12 @@ struct World {
       case Kind::Cell:
         return c.get_cell(CellHandle<long long>(ref.id));
       case Kind::Slot:
+      // A signal reads through its backing slot — `get_signal` is defined as
+      // exactly that. Reading the slot directly is not a shortcut around the
+      // signal API; it is the same call with one fewer indirection, and it is
+      // what makes a de-eagered signal indistinguishable from a memo at the
+      // read site, which is clause 4's whole claim.
+      case Kind::Signal:
         return c.get(SlotHandle<long long>(ref.id));
       case Kind::Effect:
         REQUIRE(false, "fixture read of an effect — effects are pure sinks");
@@ -412,6 +465,7 @@ std::size_t dependents_of(World& w, const std::string& id) {
     case Kind::Cell:
       return w.ctx.dependent_count(CellHandle<long long>(ref.id));
     case Kind::Slot:
+    case Kind::Signal:
       return w.ctx.dependent_count(SlotHandle<long long>(ref.id));
     case Kind::Effect:
       return w.ctx.dependent_count(EffectHandle(ref.id));
@@ -425,6 +479,7 @@ std::size_t dependencies_of(World& w, const std::string& id) {
     case Kind::Cell:
       return w.ctx.dependency_count(CellHandle<long long>(ref.id));
     case Kind::Slot:
+    case Kind::Signal:
       return w.ctx.dependency_count(SlotHandle<long long>(ref.id));
     case Kind::Effect:
       return w.ctx.dependency_count(EffectHandle(ref.id));
@@ -443,6 +498,14 @@ void dispose_ref(World& w, const Ref& ref) {
     case Kind::Effect:
       w.ctx.dispose_effect(EffectHandle(ref.id));
       return;
+    case Kind::Signal:
+      // The generic `dispose` op means node teardown, so a signal loses BOTH
+      // halves here. This is deliberately not what `dispose_signal` does — see
+      // the op below, which drops only the puller. Conflating the two is
+      // failure (a) in dispose_signal_reverts_to_lazy.json.
+      w.ctx.dispose_effect(EffectHandle(ref.effect_id));
+      w.ctx.dispose_slot(SlotHandle<long long>(ref.id));
+      return;
   }
 }
 
@@ -452,16 +515,39 @@ void dispose_ref(World& w, const Ref& ref) {
 // context directly, which is exactly the distinction the corpus draws with its
 // optional `"scope"` key.
 
-SlotHandle<long long> make_computed(World& w, std::vector<Ref> sources,
-                                    long long offset, TeardownScope* scope) {
+// The compute the corpus specifies for both `computed` and `signal`:
+// `sum(reads) + offset`, wrapped in the cumulative counter `computes_of`
+// asserts on. The counter lives INSIDE the body, so it advances exactly when
+// the runtime actually invokes the compute — including the invocation at
+// creation — and cannot be faked by the runner inferring "a write happened, so
+// presumably it recomputed."
+auto counting_body(World& w, const std::string& id, std::vector<Ref> sources,
+                   long long offset) {
   World* wp = &w;
-  auto body = [wp, sources, offset](Context& c) -> long long {
+  return [wp, id, sources, offset](Context& c) -> long long {
+    ++wp->computes[id];
     long long sum = offset;
     for (const auto& source : sources) sum += wp->read_ref(c, source);
     return sum;
   };
+}
+
+SlotHandle<long long> make_computed(World& w, const std::string& id,
+                                    std::vector<Ref> sources, long long offset,
+                                    TeardownScope* scope) {
+  auto body = counting_body(w, id, std::move(sources), offset);
   return scope ? scope->computed<long long>(body)
                : w.ctx.computed<long long>(body);
+}
+
+// An eager signal: a memo plus an effect that pulls it. `Context::signal` is
+// that composition (context.hpp), which is why this binding gets clause 3 for
+// free — the puller is an ordinary effect, effects are scheduled rather than
+// inline, so N invalidations inside a batch coalesce into one run at the flush.
+SignalHandle<long long> make_signal(World& w, const std::string& id,
+                                    std::vector<Ref> sources,
+                                    long long offset) {
+  return w.ctx.signal<long long>(counting_body(w, id, std::move(sources), offset));
 }
 
 EffectHandle make_effect(World& w, const std::string& name,
@@ -620,9 +706,40 @@ void replay(const std::string& fixture, World& w,
       bind_node(w, op_id(), Ref(Kind::Cell, h.id));
     } else if (kind == "computed") {
       const Json* offset = op->find("offset");
-      auto h = make_computed(w, reads_of(w, op), offset ? offset->as_int() : 0,
-                             scope_of(w, op));
-      bind_node(w, op_id(), Ref(Kind::Slot, h.id));
+      const std::string id = op_id();
+      auto h = make_computed(w, id, reads_of(w, op),
+                             offset ? offset->as_int() : 0, scope_of(w, op));
+      bind_node(w, id, Ref(Kind::Slot, h.id));
+    } else if (kind == "signal") {
+      const Json* offset = op->find("offset");
+      const std::string id = op_id();
+      auto h = make_signal(w, id, reads_of(w, op),
+                           offset ? offset->as_int() : 0);
+      bind_node(w, id, Ref(Kind::Signal, h.slot.id, h.effect.id));
+    } else if (kind == "dispose_signal") {
+      const Ref ref = w.lookup(op_id());
+      REQUIRE(ref.kind == Kind::Signal, "dispose_signal on a node that is not a signal");
+      // ONLY the puller. The backing memo keeps its value, its edges, and its
+      // readability — the op de-eagers the signal rather than tearing it down,
+      // which is what clause 4 pins and what the op's name obscures.
+      w.ctx.dispose_signal(SignalHandle<long long>(SlotHandle<long long>(ref.id),
+                                                   EffectHandle(ref.effect_id)));
+    } else if (kind == "batch") {
+      const Json* writes = op->find("writes");
+      REQUIRE(writes != nullptr, "batch op has no writes");
+      // Every write inside ONE batch. lazily-cpp's batch API is a closure, so
+      // the writes are the closure body and the flush happens at the outermost
+      // exit — which is the coalescing point clause 3 asserts on.
+      w.ctx.batch([&](Context& c) {
+        for (const auto& write : writes->array) {
+          const Json* wid = write->find("id");
+          const Json* wvalue = write->find("value");
+          REQUIRE(wid && wvalue, "batch write needs an id and a value");
+          const Ref ref = w.lookup(wid->str);
+          REQUIRE(ref.kind == Kind::Cell, "batch write to a node that is not a cell");
+          c.set_cell(CellHandle<long long>(ref.id), wvalue->as_int());
+        }
+      });
     } else if (kind == "effect") {
       const std::string id = op_id();
       auto h = make_effect(w, id, reads_of(w, op), scope_of(w, op));
@@ -742,11 +859,32 @@ void replay(const std::string& fixture, World& w,
     const Json* expect = step.find("expect");
     if (!expect) continue;
 
+    // `computes_of` is checked BEFORE every other key, in its own pass.
+    // Several keys below can perform a read (`value` on a non-reading op,
+    // `read`, `readable`), and a read of a stale memo triggers the lazy
+    // recompute — which would advance the very counter being asserted and make
+    // a lazy binding's count agree with an eager one.
+    //
+    // The canonical fixtures currently list `computes_of` before those keys, so
+    // evaluating in JSON key order would happen to catch today's defects too
+    // (verified by mutation). This pass makes the guarantee independent of key
+    // order instead of contingent on it: the fixtures order their STEPS
+    // deliberately so no read intervenes before a discriminating count, and
+    // that intent should not silently depend on how a key was typed within a
+    // step.
+    for (const auto& kv : expect->object) {
+      if (kv.first != "computes_of") continue;
+      for (const auto& e : kv.second->object) {
+        check(fixture, i, "computes_of." + e.first, w.computes[e.first],
+              e.second->as_int(), report);
+      }
+    }
+
     for (const auto& kv : expect->object) {
       const std::string& key = kv.first;
       const Json& want = *kv.second;
 
-      if (key == "note") {
+      if (key == "note" || key == "computes_of") {
         continue;
       } else if (key == "dependents_of") {
         for (const auto& e : want.object)
@@ -768,7 +906,22 @@ void replay(const std::string& fixture, World& w,
         // Skipped when the same step expects an error — there is no value then.
         const Json* err = expect->find("error");
         if (err && err->type == Json::Type::String) continue;
-        REQUIRE(have_value, "fixture expects a value from an op that read none");
+        if (!have_value) {
+          // A creating op returns no value of its own, but the signal fixtures
+          // pin `value` on the `signal` step to assert that what materialized
+          // eagerly is the CORRECT value and not merely some value. Reading it
+          // here is safe only because `computes_of` was already checked above:
+          // if this binding had been lazy, the count assertion has failed
+          // before this read could paper over it.
+          const Json* id = op->find("id");
+          REQUIRE(id != nullptr,
+                  "fixture expects a value from an op that read none and has "
+                  "no id to read back");
+          const ReadOut out = try_read(w, id->str);
+          REQUIRE(out.ok, "fixture expects a value from an unreadable node");
+          check(fixture, i, "value", out.value, want.as_int(), report);
+          continue;
+        }
         check(fixture, i, "value", op_value, want.as_int(), report);
       } else if (key == "read") {
         for (const auto& e : want.object) {
@@ -1131,9 +1284,21 @@ int main() {
          "Neither is conformance — AsyncContext needs a dependency graph, or "
          "should declare async: none."
       << std::endl;
+  std::cout
+      << "SKIP signal_materializes_without_a_read.json, "
+         "signal_materializes_once_per_batch.json, "
+         "dispose_signal_reverts_to_lazy.json [AsyncContext]: AsyncContext "
+         "exposes no signal API at all — no signal(), get_signal(), or "
+         "dispose_signal() (async_context.hpp; it forwards only batch()). "
+         "These fixtures are therefore not merely unreplayable for want of a "
+         "dependency graph, they are INEXPRESSIBLE against this context: "
+         "there is no eager puller to materialize, coalesce, or dispose. "
+         "Reported rather than emulated — synthesizing a signal out of "
+         "get_async() in the runner would measure the runner, not the binding."
+      << std::endl;
 
-  // All nine canonical fixtures were actually opened and parsed.
-  REQUIRE_FIXTURES_LOADED(11);
+  // All canonical fixtures were actually opened and parsed.
+  REQUIRE_FIXTURES_LOADED(14);
 
   std::cout << "reactive-graph conformance: " << replayed << "/"
             << FIXTURES.size() << " fixtures replayed against Context ("
