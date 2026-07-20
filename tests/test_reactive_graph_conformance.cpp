@@ -42,7 +42,7 @@
 // An absence guard proves the corpus is on disk; it cannot prove this binary
 // read any of it. Every fixture — including the skipped ones, which are parsed
 // to discover their ops — is opened through `spec_fixture_text`, so
-// `REQUIRE_FIXTURES_LOADED(9)` is a positive assertion that all nine distinct
+// `REQUIRE_FIXTURES_LOADED(11)` is a positive assertion that all eleven distinct
 // canonical files were actually read. The runner additionally asserts (a) the
 // on-disk fixture set matches `FIXTURES` exactly, so an upstream addition
 // cannot arrive unexecuted, and (b) a non-zero number of ops and expectations
@@ -86,11 +86,13 @@ const std::vector<std::string> FIXTURES = {
     "churn_returns_to_baseline.json",
     "cross_scope_teardown_hazard.json",
     "disarm_disposes_nothing.json",
+    "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
     "read_after_dispose_is_an_error.json",
     "recycled_id_inherits_nothing.json",
     "scope_teardown_equals_fold_of_disposals.json",
     "scoping_bounds_teardown_not_visibility.json",
+    "teardown_runs_members_in_reverse_creation_order.json",
     "transitive_invalidation_reaches_depth.json",
 };
 
@@ -1131,7 +1133,7 @@ int main() {
       << std::endl;
 
   // All nine canonical fixtures were actually opened and parsed.
-  REQUIRE_FIXTURES_LOADED(9);
+  REQUIRE_FIXTURES_LOADED(11);
 
   std::cout << "reactive-graph conformance: " << replayed << "/"
             << FIXTURES.size() << " fixtures replayed against Context ("
