@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
@@ -22,8 +23,35 @@ namespace lazily {
 template <typename Traits = RcTraits>
 class ContextImpl;
 
+template <typename Traits = RcTraits>
+class TeardownScopeImpl;
+
 /// Default Context — uses non-atomic RcPtr (≈ Rust Rc).
 using Context = ContextImpl<RcTraits>;
+
+/// Default teardown scope — the RAII handle returned by `Context::scope()`.
+using TeardownScope = TeardownScopeImpl<RcTraits>;
+
+/// Reading a node that has been disposed (#lzspecedgeindex).
+///
+/// Thrown by every read path — `get`, `get_cell`, `get_rc`, `get_cell_rc` — when
+/// the node behind the handle is gone from the arena, and thrown transitively
+/// out of a live reader's recompute when that recompute reads a disposed
+/// dependency.
+///
+/// This is deliberately an error rather than a stale, default, or recycled
+/// value. A binding that returns the last-computed value makes "torn down"
+/// indistinguishable from "legitimately this value", and a use-after-dispose
+/// bug then surfaces as a wrong number far from its cause. Note the
+/// asymmetry the corpus pins: *reading* a disposed node throws, but *disposing*
+/// one again is a no-op, so teardown paths stay idempotent.
+class DisposedError : public std::runtime_error {
+ public:
+  DisposedError()
+      : std::runtime_error(
+            "lazily: read after dispose — the node behind this handle has been "
+            "torn down") {}
+};
 
 using EdgeVec = SmallVec<SlotId, 2>;
 // Dogfood the library's own SmallFn primitive for per-effect cleanup closures.
@@ -566,7 +594,8 @@ class ContextImpl {
       register_dependency(handle.id, *parent);
     refresh_slot(handle.id);
     auto* slot = get_slot_node(handle.id);
-    assert(slot && slot->value && "get_rc on unset/non-slot");
+    if (!slot) throw DisposedError();
+    assert(slot->value && "get_rc on unset slot");
     assert(slot->type_id == std::type_index(typeid(T)));
     return std::make_shared<T>(*Traits::template cast<T>(slot->value));
   }
@@ -589,7 +618,7 @@ class ContextImpl {
     if (auto parent = current_tracking_frame())
       register_dependency(handle.id, *parent);
     auto* cell = get_cell_node(handle.id);
-    assert(cell && "get_cell on non-cell");
+    if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
     return *Traits::template cast<T>(cell->value);
   }
@@ -599,7 +628,7 @@ class ContextImpl {
     if (auto parent = current_tracking_frame())
       register_dependency(handle.id, *parent);
     auto* cell = get_cell_node(handle.id);
-    assert(cell && "get_cell_rc on non-cell");
+    if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
     return std::make_shared<T>(*Traits::template cast<T>(cell->value));
   }
@@ -711,14 +740,17 @@ class ContextImpl {
     EdgeSet old_deps;
     CleanupFn cleanup;
     {
-      remove_pending_effect(handle.id);
       auto idx = node_index(handle.id);
       if (!idx || *idx >= nodes_.size() ||
           std::holds_alternative<EmptyNode>(nodes_[*idx]))
         return;
       auto& node = nodes_[*idx];
+      // Read the kind from the arena BEFORE touching anything. A stale handle
+      // whose id has since been recycled onto a node of another kind must be a
+      // no-op, not a silent teardown of an unrelated node.
       auto* eff = std::get_if<EffectNode>(&node);
       if (!eff) return;
+      remove_pending_effect(handle.id);
       old_deps = std::move(eff->dependencies);
       cleanup = std::move(eff->cleanup);
       nodes_[*idx] = EmptyNode{};
@@ -733,6 +765,121 @@ class ContextImpl {
     auto* node = get_node(handle.id);
     return node && std::holds_alternative<EffectNode>(*node);
   }
+
+  // ── Node disposal (#lzspecedgeindex) ──────────────────────────────────────
+  //
+  // Without these a Slot or Cell is permanent. Handles are copyable ids, not
+  // owners, so dropping every handle to a node reclaims nothing: the node and
+  // its edge on each dependency live as long as the context. Under
+  // subscribe/unsubscribe churn that is unbounded growth in both memory and
+  // propagation cost — a source's dependent list keeps lengthening even though
+  // the live subscriber count is constant, and every publish walks the whole
+  // list.
+
+  /// Tear down a derived slot: detach both edge directions, dirty the surviving
+  /// dependent cone, clear the node, and recycle its id.
+  ///
+  /// A no-op if `handle` names no node, or names one of another kind — a stale
+  /// handle whose id has been recycled must not destroy the new occupant.
+  /// Disposing twice is therefore a no-op too, which keeps teardown paths
+  /// idempotent.
+  ///
+  /// Callers must ensure nothing still reads the slot in a live compute:
+  /// reading a disposed node throws `DisposedError`, and so does a surviving
+  /// reader's next recompute if it still names one.
+  template <typename T>
+  void dispose_slot(const SlotHandle<T>& handle) {
+    dispose_slot_id(handle.id);
+  }
+
+  /// Tear down a source cell: detach its dependents, dirty the surviving cone,
+  /// clear the node, and recycle its id.
+  ///
+  /// Cells are pure sources with no dependencies, so only downstream edges need
+  /// detaching. Same contract as `dispose_slot` in every other respect.
+  template <typename T>
+  void dispose_cell(const CellHandle<T>& handle) {
+    dispose_cell_id(handle.id);
+  }
+
+  /// Tear down whatever node `id` names, dispatching on the kind recorded in
+  /// the arena.
+  ///
+  /// The kind is read from the arena rather than remembered by the caller, so a
+  /// teardown scope stores 8 bytes per node and no tag. A no-op for an id that
+  /// names nothing.
+  void dispose_id(SlotId id) {
+    auto* node = get_node(id);
+    if (!node) return;
+    if (std::holds_alternative<SlotNode>(*node)) {
+      dispose_slot_id(id);
+    } else if (std::holds_alternative<CellNode>(*node)) {
+      dispose_cell_id(id);
+    } else if (std::holds_alternative<EffectNode>(*node)) {
+      dispose_effect(EffectHandle(id));
+    }
+  }
+
+  // ── Degree introspection (#lzspecedgeindex) ───────────────────────────────
+  //
+  // Counts, never collections. The edge sets themselves stay private, so a
+  // caller can assert on graph *shape* — which is what the disposal contract is
+  // written against — without any path to the arena or to a set it could
+  // mutate. Nothing about how an edge set is stored (linear scan, promoted hash
+  // index, arena layout) is pinned by exposing a size.
+  //
+  // The overload set is the C++ spelling of lazily-rs's sealed `GraphNode`
+  // trait: exactly the three handle types are accepted and there is no
+  // `SlotId` overload, so the introspection surface cannot be widened by a
+  // caller-side implementation the way an open interface could.
+
+  /// How many nodes currently depend on this one — the size of its reverse edge
+  /// set.
+  ///
+  /// This is the observable the churn contract is written against: a
+  /// subscribe/unsubscribe cycle that disposes what it creates must leave this
+  /// at its starting value no matter how many cycles run. A binding that leaks
+  /// shows total-ever-created here instead of live-subscriber count.
+  ///
+  /// Returns 0 for a disposed or unknown node.
+  template <typename T>
+  size_t dependent_count(const SlotHandle<T>& handle) const {
+    return dependent_count_id(handle.id);
+  }
+  template <typename T>
+  size_t dependent_count(const CellHandle<T>& handle) const {
+    return dependent_count_id(handle.id);
+  }
+  /// Always 0: effects are pure sinks, so nothing can read one.
+  size_t dependent_count(const EffectHandle& handle) const {
+    return dependent_count_id(handle.id);
+  }
+
+  /// How many nodes this one currently depends on — the size of its forward
+  /// edge set.
+  ///
+  /// Counterpart to `dependent_count`. Disposal must detach both directions,
+  /// and a binding that detaches only one leaves a dangling half-edge visible
+  /// here.
+  ///
+  /// Returns 0 for a disposed or unknown node, and for source cells, which have
+  /// no dependencies by construction.
+  template <typename T>
+  size_t dependency_count(const SlotHandle<T>& handle) const {
+    return dependency_count_id(handle.id);
+  }
+  template <typename T>
+  size_t dependency_count(const CellHandle<T>& handle) const {
+    return dependency_count_id(handle.id);
+  }
+  size_t dependency_count(const EffectHandle& handle) const {
+    return dependency_count_id(handle.id);
+  }
+
+  /// Open a teardown scope: nodes created through it are disposed when it ends.
+  ///
+  /// Defined out of line below, once `TeardownScopeImpl` is complete.
+  TeardownScopeImpl<Traits> scope();
 
   // -- Signal API --
   template <typename T, typename F>
@@ -873,6 +1020,75 @@ class ContextImpl {
 
   CellNode* get_cell_node_mut(SlotId id) { return get_cell_node(id); }
 
+  const Node* get_node_const(SlotId id) const {
+    auto idx = node_index(id);
+    if (!idx || *idx >= nodes_.size()) return nullptr;
+    const auto& n = nodes_[*idx];
+    if (std::holds_alternative<EmptyNode>(n)) return nullptr;
+    return &n;
+  }
+
+  size_t dependent_count_id(SlotId id) const {
+    const auto* node = get_node_const(id);
+    if (!node) return 0;
+    if (const auto* s = std::get_if<SlotNode>(node)) return s->dependents.size();
+    if (const auto* c = std::get_if<CellNode>(node)) return c->dependents.size();
+    return 0;  // effects are pure sinks
+  }
+
+  size_t dependency_count_id(SlotId id) const {
+    const auto* node = get_node_const(id);
+    if (!node) return 0;
+    if (const auto* s = std::get_if<SlotNode>(node))
+      return s->dependencies.size();
+    if (const auto* e = std::get_if<EffectNode>(node))
+      return e->dependencies.size();
+    return 0;  // cells are pure sources
+  }
+
+  void dispose_slot_id(SlotId id) {
+    EdgeSet deps;
+    EdgeSet dependents;
+    {
+      auto idx = node_index(id);
+      if (!idx || *idx >= nodes_.size()) return;
+      // Kind check first — a stale handle whose id was recycled onto a cell or
+      // an effect must not tear that node down.
+      auto* slot = std::get_if<SlotNode>(&nodes_[*idx]);
+      if (!slot) return;
+      deps = std::move(slot->dependencies);
+      dependents = std::move(slot->dependents);
+    }
+    // Detach both directions before the node goes away.
+    for (auto dep_id : deps) remove_dependent_edge(dep_id, id);
+    for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);
+    // Then dirty what survives. The roots are the saved copy, so the walk is
+    // unaffected by the detach above; everything below the roots is untouched.
+    invalidate_disposed_dependents(dependents);
+    // Clear the node last: it owns the compute closure, and anything that
+    // closure captured is destroyed here.
+    auto idx = node_index(id);
+    nodes_[*idx] = EmptyNode{};
+    free_ids_.push_back(id.value);
+  }
+
+  void dispose_cell_id(SlotId id) {
+    EdgeSet dependents;
+    {
+      auto idx = node_index(id);
+      if (!idx || *idx >= nodes_.size()) return;
+      auto* cell = std::get_if<CellNode>(&nodes_[*idx]);
+      if (!cell) return;
+      dependents = std::move(cell->dependents);
+    }
+    // Cells are pure sources: only the downstream half exists to detach.
+    for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);
+    invalidate_disposed_dependents(dependents);
+    auto idx = node_index(id);
+    nodes_[*idx] = EmptyNode{};
+    free_ids_.push_back(id.value);
+  }
+
   void insert_node(SlotId id, Node node) {
     auto idx = node_index(id);
     assert(idx && "SlotId overflow");
@@ -888,6 +1104,26 @@ class ContextImpl {
 
   void push_tracking_frame(SlotId id) { tracking_stack_.push_back(id); }
   void pop_tracking_frame() { tracking_stack_.pop_back(); }
+
+  // Balances the tracking stack on the unwind path (#lzspecedgeindex).
+  //
+  // A compute or effect body that reads a disposed node throws DisposedError,
+  // and that throw travels through the recompute. With a bare push/pop pair the
+  // frame would be stranded on the stack and every later read in the context
+  // would register its dependency against a dead node — a corrupted graph
+  // arising from an error the spec says callers may recover from. lazily-rs
+  // has the same bare pair and works around it by catching inside the callback
+  // and setting a poison flag; C++ has destructors, so the fix belongs here
+  // rather than in every caller.
+  struct TrackingFrame {
+    ContextImpl* ctx;
+    explicit TrackingFrame(ContextImpl* c, SlotId id) : ctx(c) {
+      ctx->push_tracking_frame(id);
+    }
+    ~TrackingFrame() { ctx->pop_tracking_frame(); }
+    TrackingFrame(const TrackingFrame&) = delete;
+    TrackingFrame& operator=(const TrackingFrame&) = delete;
+  };
 
   void register_dependency(SlotId dependency_id, SlotId dependent_id) {
     if (dependency_id == dependent_id) return;
@@ -917,6 +1153,50 @@ class ContextImpl {
     }
   }
 
+  // The mirror of remove_dependent_edge: drop `dependency_id` from the *forward*
+  // edge set of `dependent_id`.
+  //
+  // Disposal must detach both directions. Detaching only the upstream half
+  // leaves the surviving reader holding a forward edge to a cleared arena slot,
+  // which its next recompute walks — reading a node that is gone or, once the id
+  // is recycled, an unrelated one.
+  void remove_dependency_edge(SlotId dependent_id, SlotId dependency_id) {
+    auto* dpt_node = get_node(dependent_id);
+    if (dpt_node) {
+      if (auto* s = std::get_if<SlotNode>(dpt_node))
+        edge_remove(s->dependencies, dependency_id);
+      else if (auto* e = std::get_if<EffectNode>(dpt_node))
+        edge_remove(e->dependencies, dependency_id);
+    }
+  }
+
+  // Dirty the cone that survives a disposal — WITHOUT scheduling any effect the
+  // walk reaches (#lzspecedgeindex).
+  //
+  // Two halves, and both are load-bearing:
+  //
+  // 1. The cone MUST be dirtied. Detaching edges alone leaves a live reader
+  //    permanently frozen on a cache computed from a node that no longer
+  //    exists, because the edge that would have carried the invalidation is the
+  //    one disposal just removed. That defect shipped in lazily-rs (5db90d2)
+  //    and lazily-js (4d20670) before the corpus caught it. This reuses the
+  //    ordinary publish cascade rather than a second walk, so the two can never
+  //    disagree about what the cone is.
+  //
+  // 2. The effects it reaches MUST NOT be scheduled. Disposal is not a publish.
+  //    Running an effect mid-teardown re-enters a compute that reads the node
+  //    being disposed, and in C++ the arena entry may already be Empty or the
+  //    disposed node's value may be mid-destruction — so the outcome is
+  //    destruction-order-dependent, not merely surprising. mark_frontier_locked
+  //    *collects* effects and leaves scheduling to its caller; this caller
+  //    deliberately drops the list. The effects stay dirty and will run on the
+  //    next real publish that reaches them, which is the point.
+  void invalidate_disposed_dependents(const EdgeSet& dependents) {
+    if (dependents.empty()) return;
+    EffectList unscheduled = mark_frontier_locked(dependents);
+    (void)unscheduled;  // deliberately dropped — see (2) above.
+  }
+
   template <typename T, typename F>
   SlotHandle<T> slot_with_equals(F&& compute, EqualsFn eq) {
     auto id = alloc_id();
@@ -941,7 +1221,8 @@ class ContextImpl {
       register_dependency(id, *parent);
     refresh_slot(id);
     auto* slot = get_slot_node(id);
-    assert(slot && slot->value && "get_slot on unset/non-slot");
+    if (!slot) throw DisposedError();
+    assert(slot->value && "get_slot on unset slot");
     assert(slot->type_id == std::type_index(typeid(T)));
     return *Traits::template cast<T>(slot->value);
   }
@@ -1031,9 +1312,11 @@ class ContextImpl {
     for (auto dep_id : old_deps)
       remove_dependent_edge(dep_id, id);
 
-    push_tracking_frame(id);
-    AnyValue result = (*compute).value(*this);
-    pop_tracking_frame();
+    AnyValue result;
+    {
+      TrackingFrame frame(this, id);
+      result = (*compute).value(*this);
+    }
 
     bool changed;
     {
@@ -1241,9 +1524,11 @@ class ContextImpl {
       remove_dependent_edge(dep_id, id);
     if (cleanup) cleanup();
 
-    push_tracking_frame(id);
-    auto next_cleanup = (*run).value(*this);
-    pop_tracking_frame();
+    CleanupFn next_cleanup;
+    {
+      TrackingFrame frame(this, id);
+      next_cleanup = (*run).value(*this);
+    }
 
     auto* node = get_node(id);
     if (node) {
@@ -1297,6 +1582,162 @@ class ContextImpl {
     flush_effects();
   }
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TeardownScope — RAII grouping for disposal (#lzspecedgeindex)
+//
+// ## Why RAII
+//
+// The spec models a scope as "a set and a moment": it names some nodes and
+// disposes exactly those, at one point in time. Of the eight bindings, C++ is
+// the one whose native lifetime story matches lazily-rs's `Drop` exactly —
+// destruction is deterministic and happens at a syntactically visible point —
+// so a scope guard whose destructor tears down is not merely a convenient
+// spelling here, it is the same construct. Python needed `with`, Go needed an
+// explicit `defer`-able `Close`; C++ needs neither, and an explicit `end()` is
+// offered only because the corpus's `end_scope` op names a moment earlier than
+// the enclosing block's close.
+//
+// ## Move-only, deliberately
+//
+// Copying is deleted. A copyable teardown scope would hold two owned-id lists
+// naming the same nodes, and the second destructor to run would dispose ids
+// that are gone or — worse, since disposal recycles ids — ids that now name
+// unrelated nodes. That is the same stale-handle hazard the corpus pins in
+// recycled_id_inherits_nothing.json, manufactured by the ownership type itself.
+// Moving is allowed and is what makes `Context::scope()` returnable by value:
+// the moved-from scope is left owning nothing, so its destructor is a no-op and
+// exactly one teardown happens.
+//
+// ## Scoping bounds teardown, not visibility
+//
+// A scope's nodes read parent-owned and sibling-scope-owned nodes freely, and
+// nodes outside a scope may read into it. Ending a scope carries the same
+// hazard as disposing its members one at a time — an outside reader that still
+// names a scoped node throws on its next recompute — and that is contract, not
+// an accident: a binding that kept such nodes alive would be safer and still
+// non-conforming, because callers would write code against behaviour only some
+// bindings have.
+// ═══════════════════════════════════════════════════════════════════════════
+
+template <typename Traits>
+class TeardownScopeImpl {
+ public:
+  using ContextType = ContextImpl<Traits>;
+
+  explicit TeardownScopeImpl(ContextType& ctx) : ctx_(&ctx) {}
+
+  ~TeardownScopeImpl() { end(); }
+
+  // Copying would double-dispose — see the header comment above.
+  TeardownScopeImpl(const TeardownScopeImpl&) = delete;
+  TeardownScopeImpl& operator=(const TeardownScopeImpl&) = delete;
+
+  TeardownScopeImpl(TeardownScopeImpl&& other) noexcept
+      : ctx_(other.ctx_), owned_(std::move(other.owned_)) {
+    other.owned_.clear();
+  }
+
+  TeardownScopeImpl& operator=(TeardownScopeImpl&& other) noexcept {
+    if (this != &other) {
+      // The scope being overwritten reaches its end of life here.
+      end();
+      ctx_ = other.ctx_;
+      owned_ = std::move(other.owned_);
+      other.owned_.clear();
+    }
+    return *this;
+  }
+
+  // ── Node creation. Identical to the context's, plus ownership. ──
+
+  template <typename T, typename F>
+  SlotHandle<T> computed(F&& compute) {
+    auto handle = ctx_->template computed<T>(std::forward<F>(compute));
+    owned_.push_back(handle.id);
+    return handle;
+  }
+
+  template <typename T, typename F>
+  SlotHandle<T> slot(F&& compute) {
+    auto handle = ctx_->template slot<T>(std::forward<F>(compute));
+    owned_.push_back(handle.id);
+    return handle;
+  }
+
+  template <typename T, typename F>
+  SlotHandle<T> memo(F&& compute) {
+    auto handle = ctx_->template memo<T>(std::forward<F>(compute));
+    owned_.push_back(handle.id);
+    return handle;
+  }
+
+  template <typename T>
+  CellHandle<T> cell(T value) {
+    auto handle = ctx_->template cell<T>(std::move(value));
+    owned_.push_back(handle.id);
+    return handle;
+  }
+
+  template <typename F>
+  EffectHandle effect(F&& run) {
+    auto handle = ctx_->effect(std::forward<F>(run));
+    owned_.push_back(handle.id);
+    return handle;
+  }
+
+  template <typename F>
+  EffectHandle effect_void(F&& run) {
+    auto handle = ctx_->effect_void(std::forward<F>(run));
+    owned_.push_back(handle.id);
+    return handle;
+  }
+
+  /// The context this scope belongs to.
+  ContextType& context() const { return *ctx_; }
+
+  /// How many nodes this scope currently owns.
+  size_t size() const noexcept { return owned_.size(); }
+  bool empty() const noexcept { return owned_.empty(); }
+
+  /// Cancel this scope's teardown. The nodes are untouched — they keep their
+  /// values, their edges, and their ability to propagate, and they stay
+  /// individually disposable. The only thing that changes is whether this scope
+  /// fires at end of life, which is the sense the name carries: disarming the
+  /// guard, not releasing the nodes. Ending a disarmed scope disposes nothing,
+  /// and its former members revert to plain context ownership — the state every
+  /// unscoped node is already in.
+  void disarm() noexcept { owned_.clear(); }
+
+  /// Tear down this scope's nodes now. Idempotent: ending twice, or ending a
+  /// disarmed or moved-from scope, disposes nothing. The destructor calls this,
+  /// so an explicit call is only needed to end a scope before its block does.
+  void end() {
+    if (owned_.empty()) return;
+    std::vector<SlotId> owned;
+    owned.swap(owned_);
+    // Reverse creation order: dependents before what they read, so the scope
+    // never transiently dangles inside itself while tearing down. This ordering
+    // is observable only through effect cleanup order — a derived slot runs no
+    // cleanup callback — which is exactly what the corpus pins as
+    // `cleanup_order`, and it is why disposing forward would still leave every
+    // edge and readability assertion in the corpus green.
+    for (auto it = owned.rbegin(); it != owned.rend(); ++it)
+      ctx_->dispose_id(*it);
+  }
+
+ private:
+  ContextType* ctx_;
+  // Ids only — 8 bytes per node, no boxing and no kind tag. The kind is read
+  // back from the arena at teardown, which is also what makes a scope safe
+  // against a member that was already disposed individually.
+  std::vector<SlotId> owned_;
+};
+
+template <typename Traits>
+inline TeardownScopeImpl<Traits> ContextImpl<Traits>::scope() {
+  return TeardownScopeImpl<Traits>(*this);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Handle method implementations — use Context (= ContextImpl<RcTraits>)

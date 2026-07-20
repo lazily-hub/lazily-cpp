@@ -10,18 +10,32 @@
 //
 // The corpus is written against a reactive graph with first-class *teardown*:
 // `begin_scope`/`end_scope`, node `dispose`, `disarm`, and fanout/churn
-// generators. lazily-cpp's `Context` has none of those — it exposes
-// `dispose_effect`/`dispose_signal` only, and no `TeardownScope` type exists
-// anywhere in `include/`. So exactly one fixture is replayable today:
-// `transitive_invalidation_reaches_depth.json`, which needs only `cell`,
-// `computed`, `read`, and `set_cell`.
+// generators. lazily-cpp's `Context` had none of those and replayed exactly one
+// of the nine fixtures. It now has all of them (`Context::scope()`,
+// `dispose_slot`/`dispose_cell`/`dispose_id`, `TeardownScope::disarm`,
+// `dependent_count`/`dependency_count`), so all nine replay against `Context`.
 //
-// The other eight are SKIPPED **by name, with the unsupported ops named**, and
-// the skip set is asserted against `EXPECTED_UNSUPPORTED` below so it cannot
-// drift silently in either direction: a fixture that becomes replayable fails
-// this test until its ledger entry is removed, and a newly-unsupported op fails
-// it immediately. Silence is the failure mode this whole effort exists to
-// eliminate, so nothing here is allowed to be quiet.
+// The `EXPECTED_UNSUPPORTED` ledger below is consequently EMPTY, and it is
+// asserted to match the observed skip set exactly. That assertion runs in both
+// directions and neither is allowed to be quiet: a fixture that stops being
+// replayable fails this test immediately, and a fixture that becomes replayable
+// fails it until its ledger entry is removed. The ledger is kept rather than
+// deleted precisely because an empty ledger that is *checked* is a stronger
+// statement than no ledger at all.
+//
+// ## What the corpus does NOT pin, and what covers it instead
+//
+// Mutation testing in the sibling bindings found two teardown semantics the
+// corpus leaves green when broken, so neither may be trusted to this file:
+//
+//   1. Scheduling effects during disposal — all nine fixtures still pass.
+//   2. Tearing a scope down in forward instead of reverse order — likewise.
+//
+// Both are covered by direct tests in `tests/test_core.cpp`
+// (`test_disposal_does_not_schedule_effects_in_the_cone`,
+// `test_scope_teardown_runs_in_reverse_creation_order`), each verified to go
+// red under exactly the mutation it names. Conformance here is necessary and
+// documented as insufficient.
 //
 // ## Positive assertion
 //
@@ -48,6 +62,7 @@
 
 #include <cctype>
 #include <cstddef>
+#include <deque>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -79,28 +94,28 @@ const std::vector<std::string> FIXTURES = {
     "transitive_invalidation_reaches_depth.json",
 };
 
-// Ops this runner can execute against the synchronous `Context`.
-const std::set<std::string> SUPPORTED_OPS = {"cell", "computed", "read",
-                                             "set_cell"};
+// Ops this runner can execute against the synchronous `Context`. The corpus's
+// full op vocabulary.
+const std::set<std::string> SUPPORTED_OPS = {
+    "begin_scope", "cell",           "churn",
+    "computed",    "disarm",         "dispose",
+    "dispose_fanout", "dispose_stale_handle", "effect",
+    "end_scope",   "fanout",         "read",
+    "set_cell"};
 
-// Fixtures that cannot be replayed today, with the reason. Asserted to match
-// the observed skip set EXACTLY — this is a ledger of findings against the
-// implementation, not a relaxation of the corpus. Every entry here is a
-// capability `lazily::Context` does not have.
-const std::map<std::string, std::string> EXPECTED_UNSUPPORTED = {
-    {"churn_returns_to_baseline.json", "churn, dispose_fanout, fanout"},
-    {"cross_scope_teardown_hazard.json", "begin_scope, dispose, end_scope"},
-    {"disarm_disposes_nothing.json",
-     "begin_scope, disarm, dispose, effect, end_scope"},
-    {"dispose_detaches_edges_both_directions.json", "dispose, effect"},
-    {"read_after_dispose_is_an_error.json", "dispose"},
-    {"recycled_id_inherits_nothing.json",
-     "dispose, dispose_fanout, dispose_stale_handle, fanout"},
-    {"scope_teardown_equals_fold_of_disposals.json",
-     "shape 'scenarios' unsupported; begin_scope, dispose, effect, end_scope"},
-    {"scoping_bounds_teardown_not_visibility.json",
-     "begin_scope, end_scope"},
-};
+// Fixture shapes this runner can replay.
+const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
+
+// Fixtures that cannot be replayed, with the reason. Asserted to match the
+// observed skip set EXACTLY — this is a ledger of findings against the
+// implementation, not a relaxation of the corpus.
+//
+// It is now EMPTY: `Context` gained teardown scopes, node disposal, and degree
+// introspection (#lzspecedgeindex), and all nine fixtures replay. Keeping the
+// checked-empty ledger is what makes a regression loud — a fixture that stops
+// replaying shows up here as a diff rather than as a quietly smaller pass
+// count.
+const std::map<std::string, std::string> EXPECTED_UNSUPPORTED = {};
 
 // ── Minimal JSON reader ────────────────────────────────────────────────────
 //
@@ -284,29 +299,193 @@ struct JsonParser {
 
 // ── Replay engine (synchronous Context) ────────────────────────────────────
 
-struct Graph {
-  Context ctx;
-  std::map<std::string, CellHandle<long long>> cells;
-  std::map<std::string, SlotHandle<long long>> slots;
+// A node reference: the kind, so teardown and degree queries can dispatch, plus
+// the id. Handles in lazily-cpp are typed wrappers around a `SlotId`, and the
+// corpus is untyped, so the runner carries the kind alongside rather than
+// keeping three parallel maps.
+enum class Kind { Cell, Slot, Effect };
 
-  // Read through the tracking context `c` so a read inside a compute registers
-  // the dependency edge. That edge registration is the whole point of the
-  // fixture: a chain that does not register at depth stops refreshing there.
-  long long read(Context& c, const std::string& id) {
-    auto cell = cells.find(id);
-    if (cell != cells.end()) return c.get_cell(cell->second);
-    auto slot = slots.find(id);
-    REQUIRE(slot != slots.end(), "fixture read of an id that was never created");
-    return c.get(slot->second);
+struct Ref {
+  Kind kind = Kind::Cell;
+  SlotId id;
+  Ref() = default;
+  Ref(Kind k, SlotId i) : kind(k), id(i) {}
+};
+
+// Everything a scenario leaves behind that `observationally_equal` compares.
+struct Observation {
+  std::vector<std::string> cleanup_order;
+  std::map<std::string, bool> readable;
+  std::map<std::string, long long> reads;
+  std::vector<std::string> after_publish_observed;
+  std::map<std::string, long long> after_publish_reads;
+  std::map<std::string, std::size_t> degrees;
+
+  bool operator==(const Observation& o) const {
+    return cleanup_order == o.cleanup_order && readable == o.readable &&
+           reads == o.reads &&
+           after_publish_observed == o.after_publish_observed &&
+           after_publish_reads == o.after_publish_reads && degrees == o.degrees;
   }
-
-  long long read(const std::string& id) { return read(ctx, id); }
+  bool operator!=(const Observation& o) const { return !(*this == o); }
 };
 
 struct Report {
   std::size_t ops = 0;
   std::size_t checks = 0;
+  Observation observation;
 };
+
+struct World {
+  Context ctx;
+  // Live bindings. A disposed id is NOT erased: it stays readable-as-an-error,
+  // and disposing it again must be a no-op.
+  std::map<std::string, Ref> nodes;
+  // Every handle ever minted, never erased, so `dispose_stale_handle` can
+  // dispose through an id that has since been recycled onto another node.
+  std::map<std::string, Ref> stale;
+  // Scopes are move-only (copying one would double-dispose), which a map holds
+  // fine as long as nothing default-constructs an entry.
+  std::map<std::string, TeardownScope> scopes;
+  // Stable storage for effect names: the effect body and its cleanup capture a
+  // pointer into this, and a deque never reallocates its existing elements.
+  std::deque<std::string> names;
+  std::vector<std::string> run_log;
+  std::vector<std::string> cleanup_log;
+
+  // Read through the tracking context `c` so a read inside a compute registers
+  // the dependency edge. That edge registration is the whole point of the
+  // transitive fixture: a chain that does not register at depth stops
+  // refreshing there.
+  long long read_ref(Context& c, const Ref& ref) {
+    switch (ref.kind) {
+      case Kind::Cell:
+        return c.get_cell(CellHandle<long long>(ref.id));
+      case Kind::Slot:
+        return c.get(SlotHandle<long long>(ref.id));
+      case Kind::Effect:
+        REQUIRE(false, "fixture read of an effect — effects are pure sinks");
+    }
+    return 0;
+  }
+
+  const Ref& lookup(const std::string& id) const {
+    auto it = nodes.find(id);
+    REQUIRE(it != nodes.end(), "fixture names an id that was never created");
+    return it->second;
+  }
+};
+
+// Top-level read. A `DisposedError` here is the corpus's `read_after_dispose`,
+// whether it came from the node itself being gone or from a live reader whose
+// recompute reached a disposed dependency — the throw propagates out of the
+// compute either way, which is why this binding needs no poison flag.
+struct ReadOut {
+  bool ok = false;
+  long long value = 0;
+};
+
+ReadOut try_read(World& w, const std::string& id) {
+  const Ref ref = w.lookup(id);
+  try {
+    return {true, w.read_ref(w.ctx, ref)};
+  } catch (const DisposedError&) {
+    return {false, 0};
+  }
+}
+
+bool readable(World& w, const std::string& id) {
+  auto it = w.nodes.find(id);
+  if (it == w.nodes.end()) return false;
+  if (it->second.kind == Kind::Effect)
+    return w.ctx.is_effect_active(EffectHandle(it->second.id));
+  return try_read(w, id).ok;
+}
+
+// Degree queries, dispatched on kind. Counts only — the runner has no way to
+// reach an edge set, which is the point of the introspection API's shape.
+std::size_t dependents_of(World& w, const std::string& id) {
+  const Ref ref = w.lookup(id);
+  switch (ref.kind) {
+    case Kind::Cell:
+      return w.ctx.dependent_count(CellHandle<long long>(ref.id));
+    case Kind::Slot:
+      return w.ctx.dependent_count(SlotHandle<long long>(ref.id));
+    case Kind::Effect:
+      return w.ctx.dependent_count(EffectHandle(ref.id));
+  }
+  return 0;
+}
+
+std::size_t dependencies_of(World& w, const std::string& id) {
+  const Ref ref = w.lookup(id);
+  switch (ref.kind) {
+    case Kind::Cell:
+      return w.ctx.dependency_count(CellHandle<long long>(ref.id));
+    case Kind::Slot:
+      return w.ctx.dependency_count(SlotHandle<long long>(ref.id));
+    case Kind::Effect:
+      return w.ctx.dependency_count(EffectHandle(ref.id));
+  }
+  return 0;
+}
+
+void dispose_ref(World& w, const Ref& ref) {
+  switch (ref.kind) {
+    case Kind::Cell:
+      w.ctx.dispose_cell(CellHandle<long long>(ref.id));
+      return;
+    case Kind::Slot:
+      w.ctx.dispose_slot(SlotHandle<long long>(ref.id));
+      return;
+    case Kind::Effect:
+      w.ctx.dispose_effect(EffectHandle(ref.id));
+      return;
+  }
+}
+
+// ── Node constructors ──────────────────────────────────────────────────────
+//
+// `scope` is nullable: a null scope means the node is created through the
+// context directly, which is exactly the distinction the corpus draws with its
+// optional `"scope"` key.
+
+SlotHandle<long long> make_computed(World& w, std::vector<Ref> sources,
+                                    long long offset, TeardownScope* scope) {
+  World* wp = &w;
+  auto body = [wp, sources, offset](Context& c) -> long long {
+    long long sum = offset;
+    for (const auto& source : sources) sum += wp->read_ref(c, source);
+    return sum;
+  };
+  return scope ? scope->computed<long long>(body)
+               : w.ctx.computed<long long>(body);
+}
+
+EffectHandle make_effect(World& w, const std::string& name,
+                         std::vector<Ref> sources, TeardownScope* scope) {
+  World* wp = &w;
+  w.names.push_back(name);
+  const std::string* np = &w.names.back();
+  auto body = [wp, sources, np](Context& c) -> CleanupFn {
+    for (const auto& source : sources) {
+      // A publish that reaches an effect whose source is gone is not what any
+      // fixture asserts on, and it must not abort the replay.
+      try {
+        wp->read_ref(c, source);
+      } catch (const DisposedError&) {
+      }
+    }
+    wp->run_log.push_back(*np);
+    return CleanupFn([wp, np]() { wp->cleanup_log.push_back(*np); });
+  };
+  return scope ? scope->effect(body) : w.ctx.effect(body);
+}
+
+CellHandle<long long> make_cell(World& w, long long value,
+                                TeardownScope* scope) {
+  return scope ? scope->cell<long long>(value) : w.ctx.cell<long long>(value);
+}
 
 // Collect every distinct `op.type` a fixture uses.
 std::set<std::string> op_types(const Json& fixture) {
@@ -342,102 +521,436 @@ std::string join(const std::set<std::string>& items) {
   return out;
 }
 
-// Replay a `steps`-shaped fixture. Any expectation mismatch is a FINDING and
-// aborts — the fixture is never edited and no assertion is loosened.
-Report replay_steps(const std::string& name, const Json& fixture) {
-  Graph graph;
-  Report report;
+// Any expectation mismatch is a FINDING and aborts — the fixture is canonical,
+// so it is never edited and no assertion is ever loosened.
+template <typename T>
+void check(const std::string& fixture, std::size_t step, const std::string& key,
+           const T& got, const T& want, Report& report) {
+  ++report.checks;
+  if (got == want) return;
+  std::cout << "FAIL: " << fixture << " step " << step << " " << key
+            << ": observed " << got << ", expected " << want
+            << " — reactive-graph conformance FINDING (fixture is canonical "
+               "and is not edited)"
+            << std::endl;
+  std::abort();
+}
 
-  const Json* steps = fixture.find("steps");
-  REQUIRE(steps != nullptr, "fixture declares shape 'steps' but has no steps");
+void check_strs(const std::string& fixture, std::size_t step,
+                const std::string& key, const std::vector<std::string>& got,
+                const std::vector<std::string>& want, Report& report) {
+  ++report.checks;
+  if (got == want) return;
+  auto join_vec = [](const std::vector<std::string>& v) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < v.size(); ++i) {
+      if (i) out += ", ";
+      out += v[i];
+    }
+    return out + "]";
+  };
+  std::cout << "FAIL: " << fixture << " step " << step << " " << key
+            << ": observed " << join_vec(got) << ", expected "
+            << join_vec(want)
+            << " — reactive-graph conformance FINDING (fixture is canonical "
+               "and is not edited)"
+            << std::endl;
+  std::abort();
+}
 
-  for (const auto& step : steps->array) {
-    const Json* op = step->find("op");
+std::vector<std::string> strs(const Json* node) {
+  std::vector<std::string> out;
+  if (node)
+    for (const auto& item : node->array) out.push_back(item->str);
+  return out;
+}
+
+// Resolve an op's `reads` list to live refs.
+std::vector<Ref> reads_of(World& w, const Json* op) {
+  std::vector<Ref> refs;
+  if (const Json* reads = op->find("reads"))
+    for (const auto& r : reads->array) refs.push_back(w.lookup(r->str));
+  return refs;
+}
+
+// The scope an op creates its node through, or nullptr for context ownership.
+TeardownScope* scope_of(World& w, const Json* op) {
+  const Json* scope = op->find("scope");
+  if (!scope) return nullptr;
+  auto it = w.scopes.find(scope->str);
+  REQUIRE(it != w.scopes.end(), "op names a scope that was never opened");
+  return &it->second;
+}
+
+void bind_node(World& w, const std::string& id, Ref ref) {
+  w.nodes[id] = ref;
+  w.stale[id] = ref;
+}
+
+// Replay one op stream into `w`. `tail` is the `scenarios` shape's `expected`
+// block, evaluated against the final world state when present.
+void replay(const std::string& fixture, World& w,
+            const std::vector<JsonPtr>& steps, const Json* tail,
+            Report& report) {
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    const Json& step = *steps[i];
+    const Json* op = step.find("op");
     REQUIRE(op != nullptr, "fixture step has no op");
     const Json* type = op->find("type");
     REQUIRE(type != nullptr, "fixture op has no type");
     const std::string& kind = type->str;
-    const Json* id_node = op->find("id");
-    REQUIRE(id_node != nullptr, "fixture op has no id");
-    const std::string id = id_node->str;
+    const std::size_t runs_before = w.run_log.size();
+    bool op_error = false;
+    bool have_value = false;
+    long long op_value = 0;
     ++report.ops;
+
+    auto op_id = [&]() -> std::string {
+      const Json* id = op->find("id");
+      REQUIRE(id != nullptr, "fixture op has no id");
+      return id->str;
+    };
 
     if (kind == "cell") {
       const Json* value = op->find("value");
       REQUIRE(value != nullptr, "cell op has no value");
-      graph.cells.emplace(id, graph.ctx.cell<long long>(value->as_int()));
+      auto h = make_cell(w, value->as_int(), scope_of(w, op));
+      bind_node(w, op_id(), Ref(Kind::Cell, h.id));
     } else if (kind == "computed") {
-      const Json* reads = op->find("reads");
-      REQUIRE(reads != nullptr, "computed op has no reads");
-      std::vector<std::string> sources;
-      for (const auto& r : reads->array) sources.push_back(r->str);
-      const Json* offset_node = op->find("offset");
-      const long long offset = offset_node ? offset_node->as_int() : 0;
-      Graph* g = &graph;
-      graph.slots.emplace(
-          id, graph.ctx.computed<long long>([g, sources, offset](Context& c) {
-            long long sum = offset;
-            for (const auto& source : sources) sum += g->read(c, source);
-            return sum;
-          }));
+      const Json* offset = op->find("offset");
+      auto h = make_computed(w, reads_of(w, op), offset ? offset->as_int() : 0,
+                             scope_of(w, op));
+      bind_node(w, op_id(), Ref(Kind::Slot, h.id));
+    } else if (kind == "effect") {
+      const std::string id = op_id();
+      auto h = make_effect(w, id, reads_of(w, op), scope_of(w, op));
+      bind_node(w, id, Ref(Kind::Effect, h.id));
     } else if (kind == "read") {
-      graph.read(id);
+      const ReadOut out = try_read(w, op_id());
+      op_error = !out.ok;
+      have_value = out.ok;
+      op_value = out.value;
     } else if (kind == "set_cell") {
       const Json* value = op->find("value");
       REQUIRE(value != nullptr, "set_cell op has no value");
-      auto cell = graph.cells.find(id);
-      REQUIRE(cell != graph.cells.end(), "set_cell on an id that is not a cell");
-      graph.ctx.set_cell(cell->second, value->as_int());
+      const Ref ref = w.lookup(op_id());
+      REQUIRE(ref.kind == Kind::Cell, "set_cell on a node that is not a cell");
+      w.ctx.set_cell(CellHandle<long long>(ref.id), value->as_int());
+    } else if (kind == "dispose") {
+      // The binding is deliberately NOT erased: a disposed id stays
+      // readable-as-an-error, and disposing it again must be a no-op.
+      dispose_ref(w, w.lookup(op_id()));
+    } else if (kind == "fanout") {
+      const Json* prefix = op->find("id_prefix");
+      const Json* count = op->find("count");
+      REQUIRE(prefix && count, "fanout op needs id_prefix and count");
+      const std::vector<Ref> base = reads_of(w, op);
+      for (long long n = 0; n < count->as_int(); ++n) {
+        const std::string id = prefix->str + "_" + std::to_string(n);
+        // Subscribers are effects, not derived slots: the corpus asserts
+        // `observed_count` on a publish, and in a lazy binding only an eager
+        // reader observes a publish without being pulled.
+        bind_node(w, id, Ref(Kind::Effect, make_effect(w, id, base, nullptr).id));
+      }
+    } else if (kind == "dispose_fanout") {
+      const Json* prefix = op->find("id_prefix");
+      const Json* count = op->find("count");
+      REQUIRE(prefix && count, "dispose_fanout op needs id_prefix and count");
+      for (long long n = 0; n < count->as_int(); ++n) {
+        auto it = w.nodes.find(prefix->str + "_" + std::to_string(n));
+        if (it != w.nodes.end()) dispose_ref(w, it->second);
+      }
+    } else if (kind == "churn") {
+      const Json* source = op->find("source");
+      const Json* prefix = op->find("id_prefix");
+      const Json* width = op->find("live_width");
+      const Json* cycles = op->find("cycles");
+      const Json* mode = op->find("mode");
+      REQUIRE(source && prefix && width && cycles && mode,
+              "churn op is missing a field");
+      const Ref src = w.lookup(source->str);
+      if (mode->str == "dispose_then_create") {
+        // Hold `live_width` subscribers; each cycle disposes one and creates
+        // its replacement, so the live count is invariant.
+        for (long long c = 0; c < cycles->as_int(); ++c) {
+          const std::string id =
+              prefix->str + "_" + std::to_string(c % width->as_int());
+          auto it = w.nodes.find(id);
+          if (it != w.nodes.end()) dispose_ref(w, it->second);
+          bind_node(w, id,
+               Ref(Kind::Effect, make_effect(w, id, {src}, nullptr).id));
+        }
+      } else if (mode->str == "scope_per_cycle") {
+        // One teardown scope per cycle; its subscriber is gone by the end of
+        // its own cycle, which in C++ is just the closing brace.
+        const std::string id = prefix->str + "_scoped";
+        for (long long c = 0; c < cycles->as_int(); ++c) {
+          TeardownScope sc = w.ctx.scope();
+          make_effect(w, id, {src}, &sc);
+        }
+      } else {
+        REQUIRE(false, "unknown churn mode");
+      }
+    } else if (kind == "begin_scope") {
+      const Json* scope = op->find("scope");
+      REQUIRE(scope != nullptr, "begin_scope op has no scope");
+      w.scopes.emplace(scope->str, w.ctx.scope());
+    } else if (kind == "end_scope") {
+      const Json* scope = op->find("scope");
+      REQUIRE(scope != nullptr, "end_scope op has no scope");
+      auto it = w.scopes.find(scope->str);
+      REQUIRE(it != w.scopes.end(), "end_scope names a scope never opened");
+      try {
+        it->second.end();
+      } catch (const DisposedError&) {
+        op_error = true;
+      }
+      w.scopes.erase(it);
+    } else if (kind == "disarm") {
+      const Json* scope = op->find("scope");
+      REQUIRE(scope != nullptr, "disarm op has no scope");
+      auto it = w.scopes.find(scope->str);
+      REQUIRE(it != w.scopes.end(), "disarm names a scope never opened");
+      // A disarmed scope owns nothing, so it stays in the map and a later
+      // `end_scope` on it is a no-op — which is precisely what the fixture
+      // asserts.
+      it->second.disarm();
+    } else if (kind == "dispose_stale_handle") {
+      const Json* of = op->find("handle_of");
+      const Json* want_kind = op->find("handle_kind");
+      REQUIRE(of && want_kind,
+              "dispose_stale_handle op needs handle_of and handle_kind");
+      auto it = w.stale.find(of->str);
+      REQUIRE(it != w.stale.end(), "no recorded handle for handle_of");
+      const Kind expected_kind = want_kind->str == "cell"   ? Kind::Cell
+                                 : want_kind->str == "slot" ? Kind::Slot
+                                                            : Kind::Effect;
+      REQUIRE(it->second.kind == expected_kind,
+              "handle_kind does not match the recorded handle");
+      dispose_ref(w, it->second);
     } else {
       REQUIRE(false, "unsupported op reached the replay engine");
     }
 
-    const Json* expect = step->find("expect");
+    // The synchronous Context is quiescent when an op returns — no settle step
+    // is needed, unlike the async models the corpus also targets.
+    const std::vector<std::string> observed(w.run_log.begin() + runs_before,
+                                            w.run_log.end());
+
+    const Json* expect = step.find("expect");
     if (!expect) continue;
 
-    // `value`: the value observable at this step's own id.
-    if (const Json* expected = expect->find("value")) {
-      const long long actual = graph.read(id);
-      ++report.checks;
-      if (actual != expected->as_int()) {
-        std::cout << "FAIL: " << name << " op " << kind << "(" << id
-                  << ") expected value " << expected->as_int() << ", observed "
-                  << actual
-                  << " — reactive-graph conformance FINDING (fixture is "
-                     "canonical and is not edited)"
-                  << std::endl;
-        std::abort();
+    for (const auto& kv : expect->object) {
+      const std::string& key = kv.first;
+      const Json& want = *kv.second;
+
+      if (key == "note") {
+        continue;
+      } else if (key == "dependents_of") {
+        for (const auto& e : want.object)
+          check(fixture, i, "dependents_of." + e.first,
+                dependents_of(w, e.first),
+                static_cast<std::size_t>(e.second->as_int()), report);
+      } else if (key == "dependencies_of") {
+        for (const auto& e : want.object)
+          check(fixture, i, "dependencies_of." + e.first,
+                dependencies_of(w, e.first),
+                static_cast<std::size_t>(e.second->as_int()), report);
+      } else if (key == "error") {
+        const bool wants_error = want.type == Json::Type::String;
+        if (wants_error)
+          REQUIRE(want.str == "read_after_dispose",
+                  "fixture expects an error kind this runner does not know");
+        check(fixture, i, "error", op_error, wants_error, report);
+      } else if (key == "value") {
+        // Skipped when the same step expects an error — there is no value then.
+        const Json* err = expect->find("error");
+        if (err && err->type == Json::Type::String) continue;
+        REQUIRE(have_value, "fixture expects a value from an op that read none");
+        check(fixture, i, "value", op_value, want.as_int(), report);
+      } else if (key == "read") {
+        for (const auto& e : want.object) {
+          const ReadOut out = try_read(w, e.first);
+          check(fixture, i, "read." + e.first + ".readable", out.ok, true,
+                report);
+          check(fixture, i, "read." + e.first, out.value, e.second->as_int(),
+                report);
+        }
+      } else if (key == "readable") {
+        for (const auto& e : want.object)
+          check(fixture, i, "readable." + e.first, readable(w, e.first),
+                e.second->boolean, report);
+      } else if (key == "observed_by") {
+        check_strs(fixture, i, "observed_by", observed, strs(&want), report);
+      } else if (key == "observed_count") {
+        check(fixture, i, "observed_count", observed.size(),
+              static_cast<std::size_t>(want.as_int()), report);
+      } else if (key == "cleanup_order") {
+        // Only effects run a cleanup callback — a derived slot has none — so
+        // the expected order is projected onto its effect entries. The log is
+        // cumulative, not per-step: the individual-disposal scenario spreads
+        // three disposals over three steps and pins the whole order on the
+        // last one.
+        std::vector<std::string> want_effects;
+        for (const auto& id : strs(&want)) {
+          auto it = w.stale.find(id);
+          if (it != w.stale.end() && it->second.kind == Kind::Effect)
+            want_effects.push_back(id);
+        }
+        check_strs(fixture, i, "cleanup_order", w.cleanup_log, want_effects,
+                   report);
+      } else if (key == "scope_owned_count") {
+        for (const auto& e : want.object) {
+          auto it = w.scopes.find(e.first);
+          REQUIRE(it != w.scopes.end(),
+                  "scope_owned_count names a scope that is not open");
+          check(fixture, i, "scope_owned_count." + e.first, it->second.size(),
+                static_cast<std::size_t>(e.second->as_int()), report);
+        }
+      } else {
+        REQUIRE(false,
+                "unrecognised expectation key in fixture — it would be "
+                "silently ignored");
       }
     }
+  }
 
-    // `read`: values observable at a set of ids after this step. This is the
-    // discriminating assertion for transitive invalidation — depth 2 and 3
-    // only refresh if the cascade reaches the whole cone.
-    if (const Json* reads = expect->find("read")) {
-      for (const auto& kv : reads->object) {
-        const long long actual = graph.read(kv.first);
-        ++report.checks;
-        if (actual != kv.second->as_int()) {
-          std::cout << "FAIL: " << name << " after op " << kind << "(" << id
-                    << ") expected read " << kv.first << " == "
-                    << kv.second->as_int() << ", observed " << actual
-                    << " — reactive-graph conformance FINDING (fixture is "
-                       "canonical and is not edited)"
+  // ── `scenarios`-shaped tail ──────────────────────────────────────────────
+  report.observation.cleanup_order = w.cleanup_log;
+  if (!tail) return;
+
+  const std::size_t tail_step = steps.size();
+  if (const Json* fin = tail->find("final_state")) {
+    if (const Json* deps = fin->find("dependents_of")) {
+      for (const auto& e : deps->object) {
+        const std::size_t got = dependents_of(w, e.first);
+        check(fixture, tail_step, "final.dependents_of." + e.first, got,
+              static_cast<std::size_t>(e.second->as_int()), report);
+        report.observation.degrees[e.first] = got;
+      }
+    }
+    if (const Json* rd = fin->find("readable")) {
+      for (const auto& e : rd->object) {
+        const bool alive = readable(w, e.first);
+        check(fixture, tail_step, "final.readable." + e.first, alive,
+              e.second->boolean, report);
+        report.observation.readable[e.first] = alive;
+      }
+    }
+    if (const Json* rd = fin->find("read")) {
+      for (const auto& e : rd->object) {
+        const ReadOut out = try_read(w, e.first);
+        check(fixture, tail_step, "final.read." + e.first + ".readable", out.ok,
+              true, report);
+        check(fixture, tail_step, "final.read." + e.first, out.value,
+              e.second->as_int(), report);
+        report.observation.reads[e.first] = out.value;
+      }
+    }
+  }
+
+  const Json* publish = tail->find("after_publish");
+  if (!publish) return;
+  const Json* pop = publish->find("op");
+  if (!pop) return;
+
+  const Json* pid = pop->find("id");
+  const Json* pvalue = pop->find("value");
+  REQUIRE(pid && pvalue, "after_publish op needs id and value");
+  const Ref ref = w.lookup(pid->str);
+  REQUIRE(ref.kind == Kind::Cell, "after_publish set_cell on a non-cell");
+  const std::size_t before = w.run_log.size();
+  w.ctx.set_cell(CellHandle<long long>(ref.id), pvalue->as_int());
+  report.observation.after_publish_observed.assign(w.run_log.begin() + before,
+                                                   w.run_log.end());
+  check_strs(fixture, tail_step, "after_publish.observed_by",
+             report.observation.after_publish_observed,
+             strs(publish->find("observed_by")), report);
+  if (const Json* rd = publish->find("read")) {
+    for (const auto& e : rd->object) {
+      const ReadOut out = try_read(w, e.first);
+      check(fixture, tail_step, "after_publish.read." + e.first + ".readable",
+            out.ok, true, report);
+      check(fixture, tail_step, "after_publish.read." + e.first, out.value,
+            e.second->as_int(), report);
+      report.observation.after_publish_reads[e.first] = out.value;
+    }
+  }
+  if (const Json* deps = publish->find("dependents_of")) {
+    for (const auto& e : deps->object)
+      check(fixture, tail_step, "after_publish.dependents_of." + e.first,
+            dependents_of(w, e.first),
+            static_cast<std::size_t>(e.second->as_int()), report);
+  }
+  // Recorded after the publish so the cleanup log the comparison sees is the
+  // complete one.
+  report.observation.cleanup_order = w.cleanup_log;
+}
+
+// A `steps`-shaped fixture: one op stream, one fresh context.
+Report replay_steps(const std::string& name, const Json& fixture) {
+  const Json* steps = fixture.find("steps");
+  REQUIRE(steps != nullptr, "fixture declares shape 'steps' but has no steps");
+  World w;
+  Report report;
+  replay(name, w, steps->array, nullptr, report);
+  return report;
+}
+
+// A `scenarios`-shaped fixture. Each scenario is replayed in its OWN context —
+// they are alternative histories of the same graph, not a sequence — and the
+// `observationally_equal` relation then demands their observation records
+// agree. Replaying them into one world would make the relation vacuous.
+Report replay_scenarios(const std::string& name, const Json& fixture) {
+  const Json* scenarios = fixture.find("scenarios");
+  REQUIRE(scenarios != nullptr,
+          "fixture declares shape 'scenarios' but has none");
+  const Json* expected = fixture.find("expected");
+
+  Report total;
+  std::map<std::string, Observation> observations;
+
+  for (const auto& scenario : scenarios->array) {
+    const Json* sname = scenario->find("name");
+    const Json* ssteps = scenario->find("steps");
+    REQUIRE(sname && ssteps, "scenario needs a name and steps");
+    World w;
+    Report report;
+    replay(name + "/" + sname->str, w, ssteps->array, expected, report);
+    total.ops += report.ops;
+    total.checks += report.checks;
+    observations.emplace(sname->str, std::move(report.observation));
+  }
+
+  // `observationally_equal` names the scenario pair whose observations must
+  // agree. This is the fixture's central claim — a scope introduces no disposal
+  // semantics of its own, it only names a set and a moment — and it is a
+  // relation between two op streams, so no per-step assertion can express it.
+  if (expected) {
+    if (const Json* pair = expected->find("observationally_equal")) {
+      REQUIRE(pair->array.size() >= 2,
+              "observationally_equal needs at least two scenario names");
+      const std::string& first = pair->array[0]->str;
+      for (std::size_t i = 1; i < pair->array.size(); ++i) {
+        const std::string& other = pair->array[i]->str;
+        auto a = observations.find(first);
+        auto b = observations.find(other);
+        REQUIRE(a != observations.end() && b != observations.end(),
+                "observationally_equal names a scenario that was not replayed");
+        ++total.checks;
+        if (a->second != b->second) {
+          std::cout << "FAIL: " << name << " scenarios '" << first << "' and '"
+                    << other
+                    << "' are not observationally equal — reactive-graph "
+                       "conformance FINDING (fixture is canonical and is not "
+                       "edited)"
                     << std::endl;
           std::abort();
         }
       }
     }
-
-    // An unrecognised assertion key must not pass unnoticed.
-    for (const auto& kv : expect->object) {
-      REQUIRE(kv.first == "value" || kv.first == "read" || kv.first == "note",
-              "unrecognised expectation key in fixture — it would be silently "
-              "ignored");
-    }
   }
-
-  return report;
+  return total;
 }
 
 // ── AsyncContext stub probe (a finding, not a conformance run) ─────────────
@@ -552,7 +1065,7 @@ int main() {
     }
 
     std::string reason;
-    if (shape->str != "steps") {
+    if (SUPPORTED_SHAPES.count(shape->str) == 0) {
       reason = "shape '" + shape->str + "' unsupported";
     }
     if (!unsupported.empty()) {
@@ -563,19 +1076,19 @@ int main() {
     if (!reason.empty()) {
       observed_unsupported.emplace(name, reason);
       std::cout << "SKIP " << name << ": unsupported by lazily::Context — "
-                << reason
-                << ". lazily-cpp exposes no teardown-scope or node-disposal "
-                   "API (dispose_effect/dispose_signal only)."
-                << std::endl;
+                << reason << std::endl;
       continue;
     }
 
-    const Report report = replay_steps(name, *fixture);
+    const Report report = shape->str == "scenarios"
+                              ? replay_scenarios(name, *fixture)
+                              : replay_steps(name, *fixture);
     ++replayed;
     total_ops += report.ops;
     total_checks += report.checks;
     std::cout << "PASS " << name << " [Context]: " << report.ops << " ops, "
-              << report.checks << " expectations" << std::endl;
+              << report.checks << " expectations (" << shape->str << ")"
+              << std::endl;
   }
 
   // The skip ledger must match EXACTLY. A fixture that becomes replayable
@@ -624,8 +1137,6 @@ int main() {
             << FIXTURES.size() << " fixtures replayed against Context ("
             << total_ops << " ops, " << total_checks << " expectations), "
             << observed_unsupported.size()
-            << " skipped with unsupported ops named, AsyncContext skipped as a "
-               "stub"
-            << std::endl;
+            << " skipped, AsyncContext skipped as a stub" << std::endl;
   return 0;
 }

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <set>
+#include <type_traits>
 #include <vector>
 
 #include "test_require.hpp"
@@ -602,6 +603,257 @@ TEST(test_dispose_from_inside_flush_survives_id_recycling) {
   // Each replacement runs once on creation; none may be run a second time by a
   // stale queue entry inherited from the id it recycled.
   REQUIRE(fresh_runs == int(n), "replacement effects must run exactly once");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Teardown semantics the conformance corpus does NOT pin (#lzspecedgeindex)
+//
+// The reactive-graph corpus is the primary evidence for disposal, but mutation
+// testing in the sibling bindings found two semantics it leaves green when
+// broken. Both are load-bearing, so each gets a direct test here, and each of
+// these tests was verified to go red under exactly the mutation it names.
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST(test_disposal_dirties_the_surviving_dependent_cone) {
+  // Semantic 1 — the one the corpus DOES pin, kept here as the local statement
+  // of it. Detaching edges without dirtying dependents leaves a live reader
+  // frozen on a cache computed from a node that no longer exists, because the
+  // edge that would have carried the invalidation is the one disposal removed.
+  // This shipped as a real defect in lazily-rs (5db90d2) and lazily-js
+  // (4d20670).
+  Context ctx;
+  auto src = ctx.cell<long long>(1);
+  auto mid = ctx.computed<long long>(
+      [src](Context& c) { return c.get_cell(src) + 1; });
+  auto reader = ctx.computed<long long>(
+      [mid](Context& c) { return c.get(mid) + 10; });
+
+  REQUIRE(ctx.get(reader) == 12, "baseline");
+  ctx.dispose_slot(mid);
+  // `reader` must not still be serving 12 off its cache. It named a node that
+  // is gone, so its next recompute errors — which is only reachable if the
+  // disposal dirtied it.
+  bool threw = false;
+  try {
+    (void)ctx.get(reader);
+  } catch (const DisposedError&) {
+    threw = true;
+  }
+  REQUIRE(threw,
+          "a surviving reader of a disposed node must be dirtied by the "
+          "disposal, not left frozen on its cache");
+}
+
+TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
+  // Semantic 2. Disposal is not a publish. The dirty-marking walk reaches
+  // effects, and those effects must be marked and left alone — running one
+  // mid-teardown re-enters a body that reads the node being disposed, which in
+  // C++ is destruction-order-dependent rather than merely surprising.
+  //
+  // MUTATION CHECK: scheduling the effects that
+  // `invalidate_disposed_dependents` collects (i.e. forwarding them to
+  // `schedule_effect` instead of dropping the list) makes this test fail with
+  // runs == 2, while all nine reactive-graph fixtures stay green.
+  Context ctx;
+  auto src = ctx.cell<long long>(1);
+  auto mid = ctx.computed<long long>(
+      [src](Context& c) { return c.get_cell(src) + 1; });
+
+  int runs = 0;
+  // Reads through `mid`, so disposing `mid` puts this effect in the cone.
+  ctx.effect_void([mid, &runs](Context& c) {
+    try {
+      (void)c.get(mid);
+    } catch (const DisposedError&) {
+    }
+    ++runs;
+  });
+  REQUIRE(runs == 1, "the effect runs once on registration");
+
+  ctx.dispose_slot(mid);
+  REQUIRE(runs == 1,
+          "disposal must not schedule an effect it reaches — teardown is not a "
+          "publish");
+
+  // And the effect is not silently broken: it is dirty, so the next real
+  // publish that reaches it still runs it.
+  auto other = ctx.cell<long long>(0);
+  int other_runs = 0;
+  ctx.effect_void([other, &other_runs](Context& c) {
+    (void)c.get_cell(other);
+    ++other_runs;
+  });
+  ctx.set_cell(other, 1LL);
+  REQUIRE(other_runs == 2, "unrelated publishes still flush normally");
+}
+
+TEST(test_scope_teardown_runs_in_reverse_creation_order) {
+  // Semantic 3. A scope tears down dependents before what they read, so it
+  // never transiently dangles inside itself. Effect cleanups are side effects,
+  // and their order is the only place this is observable — which is exactly why
+  // the corpus cannot catch a forward-order implementation.
+  //
+  // MUTATION CHECK: iterating `owned_` forward in `TeardownScope::end()` makes
+  // this test fail with order == [a, b, c], while all nine reactive-graph
+  // fixtures stay green.
+  Context ctx;
+  auto topic = ctx.cell<long long>(0);
+  std::vector<std::string> order;
+  {
+    TeardownScope scope = ctx.scope();
+    for (const char* name : {"a", "b", "c"}) {
+      std::string id = name;
+      scope.effect([topic, id, &order](Context& c) {
+        (void)c.get_cell(topic);
+        return CleanupFn([id, &order]() { order.push_back(id); });
+      });
+    }
+    REQUIRE(scope.size() == 3, "the scope owns the three effects it created");
+    REQUIRE(order.empty(), "nothing is torn down while the scope is live");
+  }
+  REQUIRE(order.size() == 3, "every scope member's cleanup ran");
+  REQUIRE(order[0] == "c" && order[1] == "b" && order[2] == "a",
+          "scope teardown is reverse creation order");
+}
+
+TEST(test_scope_is_move_only_and_disposes_exactly_once) {
+  // A copyable teardown scope would hold two owned-id lists naming the same
+  // nodes, and the second destructor would dispose ids that are gone — or, once
+  // disposal recycles them, ids that now name unrelated nodes. Moving is what
+  // makes `Context::scope()` returnable by value, and the moved-from scope must
+  // own nothing so exactly one teardown happens.
+  static_assert(!std::is_copy_constructible<TeardownScope>::value,
+                "a copyable teardown scope would double-dispose");
+  static_assert(!std::is_copy_assignable<TeardownScope>::value,
+                "a copyable teardown scope would double-dispose");
+  static_assert(std::is_move_constructible<TeardownScope>::value,
+                "scope() returns by value");
+
+  Context ctx;
+  auto topic = ctx.cell<long long>(0);
+  int cleanups = 0;
+  {
+    TeardownScope outer = ctx.scope();  // moved from the prvalue scope()
+    outer.effect([topic, &cleanups](Context& c) {
+      (void)c.get_cell(topic);
+      return CleanupFn([&cleanups]() { ++cleanups; });
+    });
+    REQUIRE(outer.size() == 1, "the scope owns its effect");
+    TeardownScope moved = std::move(outer);
+    REQUIRE(outer.size() == 0, "a moved-from scope owns nothing");
+    REQUIRE(moved.size() == 1, "the move target owns the node");
+  }
+  REQUIRE(cleanups == 1, "exactly one teardown, from exactly one live scope");
+}
+
+TEST(test_disarm_disposes_nothing_and_leaves_nodes_disposable) {
+  // `disarm` cancels the scope's teardown and touches nothing else: the nodes
+  // keep their values, their edges, and their ability to propagate, and they
+  // revert to plain context ownership — still individually disposable.
+  Context ctx;
+  auto topic = ctx.cell<long long>(1);
+  auto escaped = ctx.computed<long long>([topic](Context& c) {
+    return c.get_cell(topic);
+  });
+  {
+    TeardownScope scope = ctx.scope();
+    auto owned = scope.computed<long long>(
+        [escaped](Context& c) { return c.get(escaped) + 5; });
+    REQUIRE(ctx.get(owned) == 6, "baseline through the scoped node");
+    REQUIRE(scope.size() == 1, "the scope owns it");
+    scope.disarm();
+    REQUIRE(scope.size() == 0, "a disarmed scope owns nothing");
+    // Edges are untouched, so the node still propagates.
+    ctx.set_cell(topic, 4LL);
+    REQUIRE(ctx.get(owned) == 9, "a disarmed scope's node still propagates");
+  }
+  // The scope has ended and disposed nothing.
+  auto survivor = ctx.computed<long long>(
+      [escaped](Context& c) { return c.get(escaped) + 5; });
+  REQUIRE(ctx.get(survivor) == 9, "nothing was torn down");
+  REQUIRE(ctx.dependent_count(topic) >= 1, "the source keeps its dependents");
+}
+
+TEST(test_degree_counts_track_live_edges) {
+  // Degree introspection is counts only — the observable the churn contract is
+  // written against.
+  Context ctx;
+  auto topic = ctx.cell<long long>(0);
+  REQUIRE(ctx.dependent_count(topic) == 0, "a fresh cell has no dependents");
+
+  auto a = ctx.computed<long long>(
+      [topic](Context& c) { return c.get_cell(topic) + 1; });
+  REQUIRE(ctx.dependent_count(topic) == 0,
+          "a lazy slot registers nothing until it is pulled");
+  REQUIRE(ctx.get(a) == 1, "pull it");
+  REQUIRE(ctx.dependent_count(topic) == 1, "now the edge exists");
+  REQUIRE(ctx.dependency_count(a) == 1, "and its forward half too");
+  REQUIRE(ctx.dependency_count(topic) == 0, "cells are pure sources");
+
+  // Disposal detaches BOTH directions.
+  auto b = ctx.computed<long long>([a](Context& c) { return c.get(a) + 1; });
+  REQUIRE(ctx.get(b) == 2, "pull b");
+  REQUIRE(ctx.dependent_count(a) == 1, "b depends on a");
+  ctx.dispose_slot(a);
+  REQUIRE(ctx.dependent_count(topic) == 0, "upstream half detached");
+  REQUIRE(ctx.dependency_count(b) == 0, "downstream half detached");
+  REQUIRE(ctx.dependent_count(a) == 0, "a disposed node reports zero");
+}
+
+TEST(test_dispose_is_idempotent_and_kind_checked) {
+  // Disposing twice is a no-op, and a stale handle whose id has been recycled
+  // onto a node of another kind must not tear that node down.
+  Context ctx;
+  auto sentinel = ctx.cell<long long>(99);
+  ctx.dispose_cell(sentinel);
+  ctx.dispose_cell(sentinel);  // no-op, not an error
+
+  // The successor very likely lands on the recycled id.
+  auto successor = ctx.computed<long long>([](Context&) { return 1LL; });
+  REQUIRE(ctx.get(successor) == 1, "the successor is live");
+  REQUIRE(ctx.dependent_count(successor) == 0, "and inherits no edges");
+  REQUIRE(ctx.dependency_count(successor) == 0, "in either direction");
+
+  // Dispose through the STALE cell handle. If the id was recycled onto the
+  // slot, the kind check is the only thing standing between this call and the
+  // silent destruction of an unrelated node.
+  ctx.dispose_cell(sentinel);
+  REQUIRE(ctx.get(successor) == 1,
+          "a stale cell handle must not tear down a slot that inherited its id");
+}
+
+TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
+  // The throw travels out of a compute, so the tracking stack must unwind
+  // cleanly — otherwise every later read in the context registers its
+  // dependency against a dead node.
+  Context ctx;
+  auto src = ctx.cell<long long>(4);
+  auto derived =
+      ctx.computed<long long>([src](Context& c) { return c.get_cell(src); });
+  auto reader = ctx.computed<long long>(
+      [derived](Context& c) { return c.get(derived) + 1; });
+  REQUIRE(ctx.get(reader) == 5, "baseline");
+
+  ctx.dispose_slot(derived);
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    bool threw = false;
+    try {
+      (void)ctx.get(reader);
+    } catch (const DisposedError&) {
+      threw = true;
+    }
+    REQUIRE(threw, "a reader naming a disposed node stays broken");
+  }
+
+  // The context is still usable and its dependency tracking is not corrupted.
+  auto fresh = ctx.computed<long long>(
+      [src](Context& c) { return c.get_cell(src) * 2; });
+  REQUIRE(ctx.get(fresh) == 8, "a fresh slot computes correctly");
+  REQUIRE(ctx.dependency_count(fresh) == 1,
+          "and registered exactly its own dependency — a stranded tracking "
+          "frame would have mis-registered it");
+  ctx.set_cell(src, 5LL);
+  REQUIRE(ctx.get(fresh) == 10, "and still propagates");
 }
 
 int main() {

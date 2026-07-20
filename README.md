@@ -177,6 +177,64 @@ Values are **lazy by default**. When you need eager push-style semantics, reach
 for `Signal`. Use `Effect` for side effects and `Memo` for an equality-guarded
 derived value.
 
+### Teardown: disposal, scopes, and degree introspection
+
+Handles are copyable ids, not owners, so dropping every handle to a node
+reclaims nothing — the node and its edge on each dependency live as long as the
+`Context`. Under subscribe/unsubscribe churn that is unbounded growth in both
+memory and propagation cost. Tear nodes down explicitly:
+
+```cpp
+ctx.dispose_slot(derived);   // detaches both edge directions, recycles the id
+ctx.dispose_cell(source);
+ctx.dispose_effect(watcher);
+```
+
+Disposal is idempotent and kind-checked: disposing twice is a no-op, and a
+stale handle whose id has since been recycled onto a node of another kind will
+not tear that node down. **Reading a disposed node throws
+`lazily::DisposedError`** — and so does the next recompute of a live reader that
+still names one, rather than silently serving a stale value.
+
+`Context::scope()` returns a `TeardownScope`: an RAII guard that disposes the
+nodes created through it, in reverse creation order, when it ends.
+
+```cpp
+lazily::Context ctx;
+auto topic = ctx.cell<long long>(0);
+{
+  auto conn = ctx.scope();                       // per-connection lifetime
+  auto a = conn.computed<long long>([topic](lazily::Context& c) {
+    return c.get_cell(topic) + 1;
+  });
+  conn.effect([a](lazily::Context& c) {
+    c.get(a);
+    return lazily::CleanupFn([] { /* ... */ });
+  });
+}                                                // both disposed here
+```
+
+`TeardownScope` is **move-only** — a copyable scope would hold two owned-id
+lists naming the same nodes and double-dispose. Call `end()` to tear down before
+the enclosing block closes, or `disarm()` to cancel teardown entirely, which
+leaves the nodes untouched and individually disposable under plain context
+ownership.
+
+Scoping bounds *teardown*, not visibility: a scope's nodes read parent-owned and
+sibling-scope-owned nodes freely, and nodes outside a scope may read into it.
+Ending a scope therefore carries the same hazard as disposing its members one at
+a time — an outside reader that still names a scoped node throws on its next
+recompute.
+
+`dependent_count` / `dependency_count` expose the size of a node's reverse and
+forward edge sets, for any handle kind. Counts only, never the sets themselves,
+so graph shape is assertable without any path to the arena:
+
+```cpp
+assert(ctx.dependent_count(topic) == 8);   // live subscribers, not total created
+assert(ctx.dependency_count(derived) == 1);
+```
+
 ### Keyed reactive collections (`ReactiveMap`)
 
 `ReactiveMap<K, V, H>` is the one keyed primitive: it maps keys to per-entry
