@@ -82,19 +82,15 @@ class Source {
   SlotId id() const { return id_; }
 
   // Read the current converged value, registering a dependency in a computation.
-  T get(Context& ctx) const {
-    return ctx.template get_cell<T>(CellHandle<T>(id_));
-  }
+  // Routes through the unified `Context::get` (`#lzcellkernel`).
+  T get(Context& ctx) const { return ctx.get(*this); }
 
-  std::shared_ptr<T> get_rc(Context& ctx) const {
-    return ctx.template get_cell_rc<T>(CellHandle<T>(id_));
-  }
+  std::shared_ptr<T> get_rc(Context& ctx) const { return ctx.get_rc(*this); }
 
   // Replace the value outright (the keep-latest write). Only a `Source` has
-  // this — `computed.set(...)` does not compile.
-  void set(Context& ctx, T value) const {
-    ctx.template set_cell<T>(CellHandle<T>(id_), std::move(value));
-  }
+  // this — `computed.set(...)` does not compile. Routes through the unified
+  // `Context::set`.
+  void set(Context& ctx, T value) const { ctx.set(*this, std::move(value)); }
 
   // Fold `op` into the current value under policy `M`. For `KeepLatest` this is
   // a replace (`Source ≡ Source<T, KeepLatest>`). Routes through the ==-guarded
@@ -143,12 +139,11 @@ class Computed {
   SlotId id() const { return id_; }
 
   // Read the current value, registering a dependency inside a computation.
-  T get(Context& ctx) const { return ctx.template get<T>(SlotHandle<T>(id_)); }
+  // Routes through the unified `Context::get` (`#lzcellkernel`).
+  T get(Context& ctx) const { return ctx.get(*this); }
 
   // Read the current value as a shared_ptr, avoiding a deep clone.
-  std::shared_ptr<T> get_rc(Context& ctx) const {
-    return ctx.template get_rc<T>(SlotHandle<T>(id_));
-  }
+  std::shared_ptr<T> get_rc(Context& ctx) const { return ctx.get_rc(*this); }
 
   // Transition this computed cell to **eager**: attach a puller `Effect` that
   // re-materializes it after every invalidation. Idempotent (a second `eager`

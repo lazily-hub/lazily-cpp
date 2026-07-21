@@ -465,19 +465,8 @@ struct Effect {
   Effect() = default;
   explicit Effect(SlotId id_) : id(id_) {}
   void dispose(Context& ctx) const;
-  bool is_active(Context& ctx) const;
-};
-
-template <typename T>
-struct SignalHandle {
-  SlotHandle<T> slot;
-  Effect effect;
-  SignalHandle() = default;
-  SignalHandle(SlotHandle<T> s, Effect e) : slot(s), effect(e) {}
-  T get(Context& ctx) const;
-  std::shared_ptr<T> get_rc(Context& ctx) const;
-  void dispose(Context& ctx) const;
-  bool is_active(Context& ctx) const;
+  // Liveness is `ctx.is_effect_active(eff)` — the former `Effect::is_active`
+  // member (and the whole `SignalHandle` type) are retired (`#lzcellkernel`).
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -699,6 +688,37 @@ class ContextImpl {
     }
   }
 
+  // -- Unified cell read/write (`#lzcellkernel`, §3) --
+  //
+  // The canonical v2 read/write surface. `get` reads *any* cell handle — a
+  // `Source` returns its stored value, a `Computed` refreshes then returns —
+  // and `set` writes the one kind that has a write, a `Source`. Dispatch is a
+  // compile-time overload on the handle's static type, not a runtime branch.
+  // These supersede `get_cell`/`get(SlotHandle)`/`set_cell`; because only a
+  // `Source` overload of `set` exists, `ctx.set(computed, v)` is a plain
+  // "no matching overload" compile error (write protection without a base
+  // class, matching lazily-rs's `Write` trait bound).
+  template <typename T, typename M>
+  T get(const Source<T, M>& handle) {
+    return get_cell<T>(CellHandle<T>(handle.id()));
+  }
+  template <typename T>
+  T get(const Computed<T>& handle) {
+    return get_slot<T>(handle.id());
+  }
+  template <typename T, typename M>
+  std::shared_ptr<T> get_rc(const Source<T, M>& handle) {
+    return get_cell_rc<T>(CellHandle<T>(handle.id()));
+  }
+  template <typename T>
+  std::shared_ptr<T> get_rc(const Computed<T>& handle) {
+    return get_rc<T>(SlotHandle<T>(handle.id()));
+  }
+  template <typename T, typename M>
+  void set(const Source<T, M>& handle, T value) {
+    set_cell<T>(CellHandle<T>(handle.id()), std::move(value));
+  }
+
   // -- Batch API --
   template <typename F>
   auto batch(F&& run) {
@@ -891,34 +911,22 @@ class ContextImpl {
   /// Defined out of line below, once `TeardownScopeImpl` is complete.
   TeardownScopeImpl<Traits> scope();
 
-  // -- Signal API --
+  // -- Eager-computed convenience (`#lzcellkernel`, §9.3) --
+  //
+  // The `Signal` *kind* is retired: `signal(f)` is now exactly a guarded
+  // `computed(f)` made eager (`.eager()`), i.e. a `Computed` plus a puller
+  // `Effect`, and returns the eager `Computed<T>`. Read it with `.get` /
+  // `ctx.get`, de-eager it with `.lazy`, inspect it with `.is_eager`. The former
+  // `SignalHandle`/`get_signal`/`dispose_signal`/`is_signal_active` are gone —
+  // eagerness is graph state on the `Computed`, not a separate handle type.
+  // Because the puller is an ordinary scheduled effect, N invalidations in one
+  // batch coalesce into ONE recompute (the `#lzsignaleager` per-write-puller
+  // defect is structurally unwritable).
   template <typename T, typename F>
-  SignalHandle<T> signal(F&& compute) {
-    auto slot_handle = this->memo<T>(std::forward<F>(compute));
-    auto eff = effect_void([slot_handle](ContextImpl& ctx) {
-      ctx.get_rc<T>(slot_handle);
-    });
-    return SignalHandle<T>(slot_handle, eff);
-  }
-
-  template <typename T>
-  T get_signal(const SignalHandle<T>& handle) {
-    return get<T>(handle.slot);
-  }
-
-  template <typename T>
-  std::shared_ptr<T> get_signal_rc(const SignalHandle<T>& handle) {
-    return get_rc<T>(handle.slot);
-  }
-
-  template <typename T>
-  void dispose_signal(const SignalHandle<T>& handle) {
-    dispose_effect(handle.effect);
-  }
-
-  template <typename T>
-  bool is_signal_active(const SignalHandle<T>& handle) {
-    return is_effect_active(handle.effect);
+  Computed<T> signal(F&& compute) {
+    Computed<T> c = computed<T>(std::forward<F>(compute));
+    c.eager(*this);
+    return c;
   }
 
   // -- Cell kernel constructor surface (`#lzcellkernel`, §9.3) --
@@ -1879,30 +1887,6 @@ void CellHandle<T>::clear_dependents(Context& ctx) const {
 
 inline void Effect::dispose(Context& ctx) const {
   ctx.dispose_effect(*this);
-}
-
-inline bool Effect::is_active(Context& ctx) const {
-  return ctx.is_effect_active(*this);
-}
-
-template <typename T>
-T SignalHandle<T>::get(Context& ctx) const {
-  return ctx.get_signal<T>(*this);
-}
-
-template <typename T>
-std::shared_ptr<T> SignalHandle<T>::get_rc(Context& ctx) const {
-  return ctx.get_signal_rc<T>(*this);
-}
-
-template <typename T>
-void SignalHandle<T>::dispose(Context& ctx) const {
-  ctx.dispose_signal<T>(*this);
-}
-
-template <typename T>
-bool SignalHandle<T>::is_active(Context& ctx) const {
-  return ctx.is_signal_active<T>(*this);
 }
 
 }  // namespace lazily

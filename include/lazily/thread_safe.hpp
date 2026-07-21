@@ -1,6 +1,7 @@
 #ifndef LAZILY_THREAD_SAFE_HPP
 #define LAZILY_THREAD_SAFE_HPP
 
+#include <lazily/cell.hpp>
 #include <lazily/context.hpp>
 
 #include <atomic>
@@ -219,8 +220,10 @@ class BasicThreadSafeContext {
     return write(
         [&](Context& c) { return c.template memo<T>(std::forward<F>(compute)); });
   }
+  // Eager-computed convenience — returns the eager `Computed<T>` (the `Signal`
+  // kind is retired, `#lzcellkernel`). De-eager with `.lazy`, read with `.get`.
   template <typename T, typename F>
-  SignalHandle<T> signal(F&& compute) {
+  Computed<T> signal(F&& compute) {
     return write(
         [&](Context& c) { return c.template signal<T>(std::forward<F>(compute)); });
   }
@@ -234,10 +237,6 @@ class BasicThreadSafeContext {
   }
   void dispose_effect(const Effect& handle) {
     write([&](Context& c) { c.dispose_effect(handle); });
-  }
-  template <typename T>
-  void dispose_signal(const SignalHandle<T>& handle) {
-    write([&](Context& c) { c.dispose_signal(handle); });
   }
 
   // -- Read API --
@@ -270,11 +269,6 @@ class BasicThreadSafeContext {
       typename Policy::read_guard g(mutex_);
       return ctx_.get(handle);
     }
-  }
-
-  template <typename T>
-  T get_signal(const SignalHandle<T>& handle) {
-    return get<T>(handle.slot);
   }
 
   template <typename T>

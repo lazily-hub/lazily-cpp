@@ -87,9 +87,9 @@ TEST(test_state_machine_state_is) {
       return std::nullopt;
     });
   auto in_b = m.state_is(ctx, S::B);
-  assert(!ctx.get_signal(in_b));
+  assert(!ctx.get(in_b));
   m.send(ctx, "toggle");
-  assert(ctx.get_signal(in_b));
+  assert(ctx.get(in_b));
 }
 
 // -- Harel state charts: flat cycle --

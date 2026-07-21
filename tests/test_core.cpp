@@ -134,9 +134,9 @@ TEST(test_signal_eager) {
   auto sig = ctx.signal<int>([&](Context& c) {
     return c.get_cell(a) + c.get_cell(b);
   });
-  assert(ctx.get_signal(sig) == 3);
+  assert(ctx.get(sig) == 3);
   ctx.set_cell(a, 10);
-  assert(ctx.get_signal(sig) == 12);
+  assert(ctx.get(sig) == 12);
 }
 
 TEST(test_effect_rerun) {
@@ -229,10 +229,10 @@ TEST(test_signal_dispose) {
   auto sig = ctx.signal<int>([&](Context& c) {
     return c.get_cell(a) * 10;
   });
-  assert(ctx.is_signal_active(sig));
-  assert(ctx.get_signal(sig) == 10);
-  sig.dispose(ctx);
-  assert(!ctx.is_signal_active(sig));
+  assert(sig.is_eager(ctx));
+  assert(ctx.get(sig) == 10);
+  sig.lazy(ctx);
+  assert(!sig.is_eager(ctx));
 }
 
 TEST(test_effect_dispose) {
@@ -244,11 +244,11 @@ TEST(test_effect_dispose) {
     c.get_cell(a);
   });
   assert(run_count == 1);
-  assert(eff.is_active(ctx));
+  assert(ctx.is_effect_active(eff));
   ctx.set_cell(a, 2);
   assert(run_count == 2);
   eff.dispose(ctx);
-  assert(!eff.is_active(ctx));
+  assert(!ctx.is_effect_active(eff));
   ctx.set_cell(a, 3);
   assert(run_count == 2);
 }

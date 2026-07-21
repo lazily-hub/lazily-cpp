@@ -1,6 +1,7 @@
 #ifndef LAZILY_STATE_MACHINE_HPP
 #define LAZILY_STATE_MACHINE_HPP
 
+#include <lazily/cell.hpp>
 #include <lazily/context.hpp>
 
 #include <functional>
@@ -46,7 +47,9 @@ class StateMachine {
     });
   }
 
-  SignalHandle<bool> state_is(Context& ctx, S target) {
+  // An eager `Computed<bool>` that tracks whether the machine is in `target`.
+  // (`signal` is now the eager-computed convenience — `#lzcellkernel`.)
+  Computed<bool> state_is(Context& ctx, S target) {
     auto state_handle = state_;
     return ctx.signal<bool>([state_handle, target](Context& c) {
       return c.get_cell(state_handle) == target;
