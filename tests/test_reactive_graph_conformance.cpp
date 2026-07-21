@@ -86,6 +86,7 @@
 // precisely the defect class this suite exists to catch.
 
 #include <lazily/async_context.hpp>
+#include <lazily/cell.hpp>
 #include <lazily/context.hpp>
 
 #include <cctype>
@@ -129,13 +130,18 @@ const std::vector<std::string> FIXTURES = {
 
 // Ops this runner can execute against the synchronous `Context`. The corpus's
 // full op vocabulary.
+// `drive`/`undrive` are dual-accepted alongside `signal`/`dispose_signal`
+// (`#lzcellkernel`): the corpus is mid-migration from the retired `Signal` to the
+// eager construction `formula().drive()`, so both spellings must replay. No
+// fixture currently emits `drive`/`undrive` — accepting them here means a renamed
+// upstream fixture arrives replayable rather than as an "unsupported op" skip.
 const std::set<std::string> SUPPORTED_OPS = {
     "batch",       "begin_scope",    "cell",
     "churn",       "computed",       "disarm",
     "dispose",     "dispose_fanout", "dispose_signal",
-    "dispose_stale_handle", "effect", "end_scope",
-    "fanout",      "read",           "set_cell",
-    "signal"};
+    "dispose_stale_handle", "drive",  "effect",
+    "end_scope",   "fanout",         "read",
+    "set_cell",    "signal",         "undrive"};
 
 // Fixture shapes this runner can replay.
 const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
@@ -724,6 +730,25 @@ void replay(const std::string& fixture, World& w,
       // which is what clause 4 pins and what the op's name obscures.
       w.ctx.dispose_signal(SignalHandle<long long>(SlotHandle<long long>(ref.id),
                                                    EffectHandle(ref.effect_id)));
+    } else if (kind == "drive") {
+      // The kernel spelling of the eager construction: a guarded `formula`
+      // whose `.drive()` attaches the puller effect (`#lzcellkernel` §9.3.1).
+      // Observationally identical to `signal` — same counting body, same
+      // scheduler-coalesced puller — so clauses 1-3 hold for the same reason.
+      // Bound as a plain slot: reads, degrees, and `dispose` all go through the
+      // backing formula, and disposing it tears the puller down via the driven
+      // side table, so no separate effect id is tracked.
+      const Json* offset = op->find("offset");
+      const std::string id = op_id();
+      FormulaCell<long long> f = w.ctx.formula<long long>(
+          counting_body(w, id, reads_of(w, op), offset ? offset->as_int() : 0));
+      f.drive(w.ctx);
+      bind_node(w, id, Ref(Kind::Slot, f.id()));
+    } else if (kind == "undrive") {
+      // De-eager the formula (dispose its puller, keep the value and edges) —
+      // the kernel counterpart of `dispose_signal`, clause 4.
+      const Ref ref = w.lookup(op_id());
+      w.ctx.undrive_formula(ref.id);
     } else if (kind == "batch") {
       const Json* writes = op->find("writes");
       REQUIRE(writes != nullptr, "batch op has no writes");

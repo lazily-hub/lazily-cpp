@@ -25,6 +25,20 @@ add_executable(test_merge test_merge.cpp)
 target_link_libraries(test_merge PRIVATE lazily)
 add_test(NAME merge COMMAND test_merge)
 
+# The Cell kernel (`#lzcellkernel`): SourceCell/FormulaCell over Cell<T, K>.
+add_executable(test_cell_kernel test_cell_kernel.cpp)
+target_link_libraries(test_cell_kernel PRIVATE lazily)
+add_test(NAME cell_kernel COMMAND test_cell_kernel)
+
+# Compile-fail proof: `formula.set(...)` must NOT compile. Built on demand and
+# asserted to FAIL — a successful build fails the test (write protection lost).
+add_executable(compile_fail_formula_set EXCLUDE_FROM_ALL compile_fail_formula_set.cpp)
+target_link_libraries(compile_fail_formula_set PRIVATE lazily)
+add_test(NAME formula_set_is_a_compile_error
+  COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+          --target compile_fail_formula_set --config $<CONFIG>)
+set_tests_properties(formula_set_is_a_compile_error PROPERTIES WILL_FAIL TRUE)
+
 add_executable(test_relay test_relay.cpp)
 target_link_libraries(test_relay PRIVATE lazily)
 add_test(NAME relay COMMAND test_relay)

@@ -26,6 +26,17 @@ class ContextImpl;
 template <typename Traits = RcTraits>
 class TeardownScopeImpl;
 
+// The Cell kernel genus and its kind markers (defined in cell.hpp). Forward
+// declared here so `Context`'s constructor surface (`source`/`formula`) can name
+// the kinded return types; the return types are dependent on the member
+// template's own `T`, so an incomplete declaration is sufficient at this point.
+struct KeepLatest;  // defined in merge.hpp
+template <typename M>
+struct Source;
+struct Formula;
+template <typename T, typename K>
+class Cell;
+
 /// Default Context — uses non-atomic RcPtr (≈ Rust Rc).
 using Context = ContextImpl<RcTraits>;
 
@@ -506,6 +517,10 @@ class ContextImpl {
     bool dirty;
     bool force_recompute;
     bool in_progress;
+    // "Am I driven?" (#lzcellkernel §9.3.3). Lands in the existing padded bool
+    // region — the node does not grow. The driving effect's id lives in the
+    // `driven_by_` side table, not on the node, so a lazy formula costs nothing.
+    bool driven;
 
     SlotNode()
         :
@@ -514,7 +529,8 @@ class ContextImpl {
 #endif
         dirty(false),
         force_recompute(false),
-        in_progress(false) {}
+        in_progress(false),
+        driven(false) {}
   };
 
   struct CellNode {
@@ -911,6 +927,82 @@ class ContextImpl {
     return is_effect_active(handle.effect);
   }
 
+  // -- Cell kernel constructor surface (`#lzcellkernel`, §9.3) --
+  //
+  // `source`/`formula`/`.drive()` replace `cell`/`merge_cell` and
+  // `computed`/`memo`/`slot`/`signal`. The old names remain as thin wrappers
+  // (this file, above) for the internal engine and downstream families; these
+  // return the kinded genus handles from cell.hpp.
+
+  /// Create a `SourceCell<T>` (a plain keep-latest input cell) holding `value`.
+  /// The default-policy form of `source`; use `source_with<M>` for a folding
+  /// policy. Subsumes the former `cell(v)`.
+  template <typename T>
+  Cell<T, Source<KeepLatest>> source(T value) {
+    return Cell<T, Source<KeepLatest>>(cell<T>(std::move(value)).id);
+  }
+
+  /// Create a `SourceCell<T, M>` whose writes fold under policy `M`
+  /// (`source_with<Sum>(v)` is the former `merge_cell<Sum>(v)`). `M` cannot be
+  /// defaulted on a function template, so this is a distinct name from `source`.
+  template <typename M, typename T>
+  Cell<T, Source<M>> source_with(T value) {
+    return Cell<T, Source<M>>(cell<T>(std::move(value)).id);
+  }
+
+  /// Create a **guarded** `FormulaCell<T>` computed from upstream. Guarded by
+  /// default (§9.3) — equal recomputes do not propagate — subsuming the former
+  /// `computed`/`memo`/`slot`. Lazy until `.drive()`.
+  template <typename T, typename F>
+  Cell<T, Formula> formula(F&& compute) {
+    return Cell<T, Formula>(memo<T>(std::forward<F>(compute)).id);
+  }
+
+  // -- Driven-formula engine (`#lzcellkernel`, §9.3.1/§9.3.3/§9.3.4) --
+  //
+  // Eagerness is a driven `FormulaCell`, not a `Signal` kind: `drive` attaches a
+  // puller `Effect` that re-materializes the formula on invalidation. Because
+  // the puller is an ordinary scheduled effect, N invalidations in a batch
+  // coalesce into ONE recompute — the `#lzsignaleager` per-write-puller defect
+  // cannot be constructed. Drivenness is split like the `EdgeIndex` precedent: a
+  // `driven` bit on the node (free, makes `drive` idempotent with no lookup) and
+  // the puller's id in the `driven_by_` side table (one entry per driven formula).
+
+  /// Ensure the formula named by `id` is driven. Idempotent — a second call is a
+  /// no-op. Ignores ids that name no slot node.
+  template <typename T>
+  void drive_formula(SlotId id) {
+    {
+      auto* slot = get_slot_node(id);
+      if (!slot) return;       // not a formula (or disposed): ignore
+      if (slot->driven) return;  // bit alone makes drive idempotent, no lookup
+    }
+    // Attach the puller. `effect_void` may reallocate `nodes_`, so set the bit
+    // AFTER, re-fetching the node.
+    auto slot_handle = SlotHandle<T>(id);
+    EffectHandle eff = effect_void(
+        [slot_handle](ContextImpl& ctx) { ctx.template get_rc<T>(slot_handle); });
+    if (auto* slot = get_slot_node(id)) slot->driven = true;
+    driven_by_[id.value] = eff.id.value;
+  }
+
+  /// Stop driving the formula named by `id`: dispose its puller, clear the bit,
+  /// and remove its `driven_by_` entry. No-op if not driven.
+  void undrive_formula(SlotId id) {
+    auto it = driven_by_.find(id.value);
+    if (it == driven_by_.end()) return;
+    EffectHandle eff(SlotId(it->second));
+    driven_by_.erase(it);
+    if (auto* slot = get_slot_node(id)) slot->driven = false;
+    dispose_effect(eff);
+  }
+
+  /// Whether the formula named by `id` currently has an active puller.
+  bool is_driven(SlotId id) {
+    auto* slot = get_slot_node(id);
+    return slot && slot->driven;
+  }
+
   // -- Clearing --
   template <typename T>
   bool is_set(const SlotHandle<T>& handle) {
@@ -963,6 +1055,12 @@ class ContextImpl {
   std::vector<Node> nodes_;
   uint64_t next_id_ = 0;
   std::vector<uint64_t> free_ids_;
+  // Driven-formula side table (`#lzcellkernel` §9.3.3): a driven formula's slot
+  // id -> its puller effect's id. One entry per DRIVEN formula, zero per lazy
+  // one. Owner-keyed, so it MUST be cleared on formula disposal/undrive (done in
+  // `dispose_slot_id`/`undrive_formula`) or a recycled id would alias the
+  // disposed formula's driver.
+  std::unordered_map<uint64_t, uint64_t> driven_by_;
   PendingQueue pending_effects_;
   // Mark bitset over the node id space (mirrors BatchSet below): a set bit
   // means the effect node is already queued in pending_effects_. Cheaper than
@@ -1049,6 +1147,7 @@ class ContextImpl {
   void dispose_slot_id(SlotId id) {
     EdgeSet deps;
     EdgeSet dependents;
+    std::optional<SlotId> driver;
     {
       auto idx = node_index(id);
       if (!idx || *idx >= nodes_.size()) return;
@@ -1058,7 +1157,19 @@ class ContextImpl {
       if (!slot) return;
       deps = std::move(slot->dependencies);
       dependents = std::move(slot->dependents);
+      // Disposing a driven formula tears down its puller first, so no poisoned
+      // effect is stranded, and clears the owner-keyed `driven_by_` entry so a
+      // recycled id never aliases this formula's driver (`#lzcellkernel` §9.3.4).
+      if (slot->driven) {
+        auto it = driven_by_.find(id.value);
+        if (it != driven_by_.end()) {
+          driver = SlotId(it->second);
+          driven_by_.erase(it);
+        }
+        slot->driven = false;
+      }
     }
+    if (driver) dispose_effect(EffectHandle(*driver));
     // Detach both directions before the node goes away.
     for (auto dep_id : deps) remove_dependent_edge(dep_id, id);
     for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);

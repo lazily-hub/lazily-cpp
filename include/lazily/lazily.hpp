@@ -3,6 +3,7 @@
 
 #include <lazily/async_context.hpp>
 #include <lazily/async_reactive_family.hpp>
+#include <lazily/cell.hpp>
 #include <lazily/codec.hpp>
 #include <lazily/collections.hpp>
 #include <lazily/command.hpp>

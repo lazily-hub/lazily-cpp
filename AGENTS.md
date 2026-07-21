@@ -1,8 +1,45 @@
 # lazily-cpp
 
-C++ port of the lazily reactive-signals family — Slots, Cells, and Signals with
-automatic dependency tracking, plus the full lazily-spec wire protocol, CRDT
-collection types, the lossless tree CRDT, and the command/RPC message plane.
+C++ port of the lazily reactive family, built on the **Cell kernel**
+(`#lzcellkernel`): one genus `Cell<T, K>` with two kinds — `SourceCell<T, M>`
+(written from outside, folds under merge policy `M`) and `FormulaCell<T>`
+(computed from upstream, guarded by default) — plus value-less `Effect` sinks
+outside the hierarchy. Ships the full lazily-spec wire protocol, CRDT collection
+types, the lossless tree CRDT, and the command/RPC message plane.
+
+## Reactive kernel (`#lzcellkernel`)
+
+The public reactive surface is `include/lazily/cell.hpp`:
+
+- **Genus & kinds.** `Cell<T, Source<M>>` and `Cell<T, Formula>`, aliased
+  `SourceCell<T, M = KeepLatest>` and `FormulaCell<T>`. `Cell ≡
+  SourceCell<KeepLatest>`.
+- **Constructors on `Context`.** `source(v)` (keep-latest input),
+  `source_with<M>(v)` (folding input, formerly `merge_cell<M>`), `formula(f)`
+  (guarded, formerly `computed`/`memo`/`slot`). Reads: `get`. Writes:
+  `set`/`merge`.
+- **Write protection is a compile error, not a runtime gate (§3/§4).** `set` and
+  `merge` exist ONLY on the `Cell<T, Source<M>>` partial specialization, so
+  `formula.set(...)` fails to compile ("no member named 'set'"). Locked by
+  `has_set<>` `static_assert`s in `tests/test_cell_kernel.cpp` and the WILL_FAIL
+  build `tests/compile_fail_formula_set.cpp`.
+- **Eager = a driven formula, not a `Signal` kind (§9.3).** `formula(f).drive()`
+  attaches a puller `Effect`; drivenness is a `driven` bit on the node plus a
+  `driven_by_` side table in `Context`, cleared on `undrive`/dispose. Because the
+  puller is an ordinary scheduled effect, batched invalidations coalesce into one
+  recompute — the `#lzsignaleager` per-write-puller defect is structurally
+  unwritable.
+- **`Slot` is the STORAGE sense only (§5.0).** `SlotId`, `SlotNode`, the arena
+  free-list, and the wire `SlotValue` are unchanged — a slot is the position that
+  holds a node of any kind. Only the reactive-VALUE sense of "slot" became
+  `FormulaCell`.
+
+Compatibility: the internal handle types `CellHandle<T>` / `SlotHandle<T>` /
+`EffectHandle` and the old `Context` constructors (`cell`/`computed`/`memo`/
+`slot`/`signal`, and the `MergeCell<T, Policy>` class in `merge.hpp`) are kept as
+the lower-level engine surface the CRDT/relay/coordination families build on;
+they are NOT the recommended public vocabulary. `AsyncContext` remains a stub
+with no dependency graph and was not migrated.
 
 ## Commit & Push
 
@@ -15,7 +52,7 @@ repo's existing style; push to the current branch on `origin`. This standing
 rule overrides the harness default of "commit only when explicitly asked" for
 this repo.
 
-<!-- tsift:code-navigation v=0.1.74 -->
+<!-- tsift:code-navigation v=0.1.77 -->
 ## Code Navigation
 
 Keep this block self-contained for Codex/OpenCode prompt reuse. If this repository also ships current `.claude/skills/tsift/SKILL.md` or `runbooks/code-navigation.md`, use those deeper runbooks for command detail instead of expanding this block.
