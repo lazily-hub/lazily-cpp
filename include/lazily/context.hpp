@@ -26,16 +26,15 @@ class ContextImpl;
 template <typename Traits = RcTraits>
 class TeardownScopeImpl;
 
-// The Cell kernel genus and its kind markers (defined in cell.hpp). Forward
-// declared here so `Context`'s constructor surface (`source`/`formula`) can name
-// the kinded return types; the return types are dependent on the member
-// template's own `T`, so an incomplete declaration is sufficient at this point.
+// The Cell kernel handles (defined in cell.hpp). Forward declared here so
+// `Context`'s constructor surface (`source`/`computed`) can name the return
+// types; they are dependent on the member template's own `T`, so an incomplete
+// declaration is sufficient at this point.
 struct KeepLatest;  // defined in merge.hpp
-template <typename M>
-struct Source;
-struct Formula;
-template <typename T, typename K>
-class Cell;
+template <typename T, typename M>
+class Source;
+template <typename T>
+class Computed;
 
 /// Default Context — uses non-atomic RcPtr (≈ Rust Rc).
 using Context = ContextImpl<RcTraits>;
@@ -461,10 +460,10 @@ struct CellHandle {
   bool operator==(const CellHandle<T>& o) const { return id == o.id; }
 };
 
-struct EffectHandle {
+struct Effect {
   SlotId id;
-  EffectHandle() = default;
-  explicit EffectHandle(SlotId id_) : id(id_) {}
+  Effect() = default;
+  explicit Effect(SlotId id_) : id(id_) {}
   void dispose(Context& ctx) const;
   bool is_active(Context& ctx) const;
 };
@@ -472,9 +471,9 @@ struct EffectHandle {
 template <typename T>
 struct SignalHandle {
   SlotHandle<T> slot;
-  EffectHandle effect;
+  Effect effect;
   SignalHandle() = default;
-  SignalHandle(SlotHandle<T> s, EffectHandle e) : slot(s), effect(e) {}
+  SignalHandle(SlotHandle<T> s, Effect e) : slot(s), effect(e) {}
   T get(Context& ctx) const;
   std::shared_ptr<T> get_rc(Context& ctx) const;
   void dispose(Context& ctx) const;
@@ -517,10 +516,10 @@ class ContextImpl {
     bool dirty;
     bool force_recompute;
     bool in_progress;
-    // "Am I driven?" (#lzcellkernel §9.3.3). Lands in the existing padded bool
-    // region — the node does not grow. The driving effect's id lives in the
-    // `driven_by_` side table, not on the node, so a lazy formula costs nothing.
-    bool driven;
+    // "Am I eager?" (#lzcellkernel §9.3.3). Lands in the existing padded bool
+    // region — the node does not grow. The pulling effect's id lives in the
+    // `eager_by_` side table, not on the node, so a lazy computed costs nothing.
+    bool eager;
 
     SlotNode()
         :
@@ -530,7 +529,7 @@ class ContextImpl {
         dirty(false),
         force_recompute(false),
         in_progress(false),
-        driven(false) {}
+        eager(false) {}
   };
 
   struct CellNode {
@@ -584,11 +583,6 @@ class ContextImpl {
   template <typename T, typename F>
   SlotHandle<T> slot(F&& compute) {
     return slot_with_equals<T>(std::forward<F>(compute), nullptr);
-  }
-
-  template <typename T, typename F>
-  SlotHandle<T> computed(F&& compute) {
-    return slot<T>(std::forward<F>(compute));
   }
 
   template <typename T, typename F>
@@ -720,7 +714,7 @@ class ContextImpl {
 
   // -- Effect API --
   template <typename F>
-  EffectHandle effect(F&& run) {
+  Effect effect(F&& run) {
     auto id = alloc_id();
     EffectNode node;
     auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
@@ -732,11 +726,11 @@ class ContextImpl {
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
     flush_effects();
-    return EffectHandle(id);
+    return Effect(id);
   }
 
   template <typename F>
-  EffectHandle effect_void(F&& run) {
+  Effect effect_void(F&& run) {
     auto id = alloc_id();
     EffectNode node;
     auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
@@ -749,10 +743,10 @@ class ContextImpl {
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
     flush_effects();
-    return EffectHandle(id);
+    return Effect(id);
   }
 
-  void dispose_effect(const EffectHandle& handle) {
+  void dispose_effect(const Effect& handle) {
     EdgeSet old_deps;
     CleanupFn cleanup;
     {
@@ -777,7 +771,7 @@ class ContextImpl {
     if (cleanup) cleanup();
   }
 
-  bool is_effect_active(const EffectHandle& handle) {
+  bool is_effect_active(const Effect& handle) {
     auto* node = get_node(handle.id);
     return node && std::holds_alternative<EffectNode>(*node);
   }
@@ -832,7 +826,7 @@ class ContextImpl {
     } else if (std::holds_alternative<CellNode>(*node)) {
       dispose_cell_id(id);
     } else if (std::holds_alternative<EffectNode>(*node)) {
-      dispose_effect(EffectHandle(id));
+      dispose_effect(Effect(id));
     }
   }
 
@@ -867,7 +861,7 @@ class ContextImpl {
     return dependent_count_id(handle.id);
   }
   /// Always 0: effects are pure sinks, so nothing can read one.
-  size_t dependent_count(const EffectHandle& handle) const {
+  size_t dependent_count(const Effect& handle) const {
     return dependent_count_id(handle.id);
   }
 
@@ -888,7 +882,7 @@ class ContextImpl {
   size_t dependency_count(const CellHandle<T>& handle) const {
     return dependency_count_id(handle.id);
   }
-  size_t dependency_count(const EffectHandle& handle) const {
+  size_t dependency_count(const Effect& handle) const {
     return dependency_count_id(handle.id);
   }
 
@@ -929,78 +923,80 @@ class ContextImpl {
 
   // -- Cell kernel constructor surface (`#lzcellkernel`, §9.3) --
   //
-  // `source`/`formula`/`.drive()` replace `cell`/`merge_cell` and
-  // `computed`/`memo`/`slot`/`signal`. The old names remain as thin wrappers
-  // (this file, above) for the internal engine and downstream families; these
-  // return the kinded genus handles from cell.hpp.
+  // `source`/`computed`/`.eager()` replace `cell`/`merge_cell` and
+  // `memo`/`slot`/`signal`. The engine names (`slot`/`memo`, this file above)
+  // remain as the internal substrate for downstream families; these return the
+  // two concrete handles from cell.hpp.
 
-  /// Create a `SourceCell<T>` (a plain keep-latest input cell) holding `value`.
-  /// The default-policy form of `source`; use `source_with<M>` for a folding
+  /// Create a `Source<T>` (a plain keep-latest input cell) holding `value`. The
+  /// default-policy form of `source`; use `source_with<M>` for a folding
   /// policy. Subsumes the former `cell(v)`.
   template <typename T>
-  Cell<T, Source<KeepLatest>> source(T value) {
-    return Cell<T, Source<KeepLatest>>(cell<T>(std::move(value)).id);
+  Source<T, KeepLatest> source(T value) {
+    return Source<T, KeepLatest>(cell<T>(std::move(value)).id);
   }
 
-  /// Create a `SourceCell<T, M>` whose writes fold under policy `M`
+  /// Create a `Source<T, M>` whose writes fold under policy `M`
   /// (`source_with<Sum>(v)` is the former `merge_cell<Sum>(v)`). `M` cannot be
   /// defaulted on a function template, so this is a distinct name from `source`.
   template <typename M, typename T>
-  Cell<T, Source<M>> source_with(T value) {
-    return Cell<T, Source<M>>(cell<T>(std::move(value)).id);
+  Source<T, M> source_with(T value) {
+    return Source<T, M>(cell<T>(std::move(value)).id);
   }
 
-  /// Create a **guarded** `FormulaCell<T>` computed from upstream. Guarded by
-  /// default (§9.3) — equal recomputes do not propagate — subsuming the former
-  /// `computed`/`memo`/`slot`. Lazy until `.drive()`.
+  /// Create a **guarded** `Computed<T>` computed from upstream. Guarded by
+  /// default (§9.3, DECIDED 2026-07-21) — an equal recompute does not
+  /// propagate — folding in the former `memo`; there is no unguarded mode.
+  /// Lazy until `.eager()`.
   template <typename T, typename F>
-  Cell<T, Formula> formula(F&& compute) {
-    return Cell<T, Formula>(memo<T>(std::forward<F>(compute)).id);
+  Computed<T> computed(F&& compute) {
+    return Computed<T>(memo<T>(std::forward<F>(compute)).id);
   }
 
-  // -- Driven-formula engine (`#lzcellkernel`, §9.3.1/§9.3.3/§9.3.4) --
+  // -- Eager-computed engine (`#lzcellkernel`, §9.3.1/§9.3.3/§9.3.4) --
   //
-  // Eagerness is a driven `FormulaCell`, not a `Signal` kind: `drive` attaches a
-  // puller `Effect` that re-materializes the formula on invalidation. Because
-  // the puller is an ordinary scheduled effect, N invalidations in a batch
-  // coalesce into ONE recompute — the `#lzsignaleager` per-write-puller defect
-  // cannot be constructed. Drivenness is split like the `EdgeIndex` precedent: a
-  // `driven` bit on the node (free, makes `drive` idempotent with no lookup) and
-  // the puller's id in the `driven_by_` side table (one entry per driven formula).
+  // Eagerness is an eager `Computed`, not a `Signal` kind: `make_eager` attaches
+  // a puller `Effect` that re-materializes the computed cell on invalidation.
+  // Because the puller is an ordinary scheduled effect, N invalidations in a
+  // batch coalesce into ONE recompute — the `#lzsignaleager` per-write-puller
+  // defect cannot be constructed. Eagerness is split like the `EdgeIndex`
+  // precedent: an `eager` bit on the node (free, makes the transition idempotent
+  // with no lookup) and the puller's id in the `eager_by_` side table (one entry
+  // per eager computed).
 
-  /// Ensure the formula named by `id` is driven. Idempotent — a second call is a
-  /// no-op. Ignores ids that name no slot node.
+  /// Ensure the computed cell named by `id` is eager. Idempotent — a second
+  /// call is a no-op. Ignores ids that name no slot node.
   template <typename T>
-  void drive_formula(SlotId id) {
+  void make_eager(SlotId id) {
     {
       auto* slot = get_slot_node(id);
-      if (!slot) return;       // not a formula (or disposed): ignore
-      if (slot->driven) return;  // bit alone makes drive idempotent, no lookup
+      if (!slot) return;       // not a computed cell (or disposed): ignore
+      if (slot->eager) return;  // bit alone makes the transition idempotent
     }
     // Attach the puller. `effect_void` may reallocate `nodes_`, so set the bit
     // AFTER, re-fetching the node.
     auto slot_handle = SlotHandle<T>(id);
-    EffectHandle eff = effect_void(
+    Effect eff = effect_void(
         [slot_handle](ContextImpl& ctx) { ctx.template get_rc<T>(slot_handle); });
-    if (auto* slot = get_slot_node(id)) slot->driven = true;
-    driven_by_[id.value] = eff.id.value;
+    if (auto* slot = get_slot_node(id)) slot->eager = true;
+    eager_by_[id.value] = eff.id.value;
   }
 
-  /// Stop driving the formula named by `id`: dispose its puller, clear the bit,
-  /// and remove its `driven_by_` entry. No-op if not driven.
-  void undrive_formula(SlotId id) {
-    auto it = driven_by_.find(id.value);
-    if (it == driven_by_.end()) return;
-    EffectHandle eff(SlotId(it->second));
-    driven_by_.erase(it);
-    if (auto* slot = get_slot_node(id)) slot->driven = false;
+  /// Make the computed cell named by `id` lazy: dispose its puller, clear the
+  /// bit, and remove its `eager_by_` entry. No-op if not eager.
+  void make_lazy(SlotId id) {
+    auto it = eager_by_.find(id.value);
+    if (it == eager_by_.end()) return;
+    Effect eff(SlotId(it->second));
+    eager_by_.erase(it);
+    if (auto* slot = get_slot_node(id)) slot->eager = false;
     dispose_effect(eff);
   }
 
-  /// Whether the formula named by `id` currently has an active puller.
-  bool is_driven(SlotId id) {
+  /// Whether the computed cell named by `id` currently has an active puller.
+  bool is_eager(SlotId id) {
     auto* slot = get_slot_node(id);
-    return slot && slot->driven;
+    return slot && slot->eager;
   }
 
   // -- Clearing --
@@ -1055,12 +1051,12 @@ class ContextImpl {
   std::vector<Node> nodes_;
   uint64_t next_id_ = 0;
   std::vector<uint64_t> free_ids_;
-  // Driven-formula side table (`#lzcellkernel` §9.3.3): a driven formula's slot
-  // id -> its puller effect's id. One entry per DRIVEN formula, zero per lazy
-  // one. Owner-keyed, so it MUST be cleared on formula disposal/undrive (done in
-  // `dispose_slot_id`/`undrive_formula`) or a recycled id would alias the
-  // disposed formula's driver.
-  std::unordered_map<uint64_t, uint64_t> driven_by_;
+  // Eager-computed side table (`#lzcellkernel` §9.3.3): an eager computed cell's
+  // slot id -> its puller effect's id. One entry per EAGER computed, zero per
+  // lazy one. Owner-keyed, so it MUST be cleared on disposal / `make_lazy` (done
+  // in `dispose_slot_id`/`make_lazy`) or a recycled id would alias the disposed
+  // computed cell's puller.
+  std::unordered_map<uint64_t, uint64_t> eager_by_;
   PendingQueue pending_effects_;
   // Mark bitset over the node id space (mirrors BatchSet below): a set bit
   // means the effect node is already queued in pending_effects_. Cheaper than
@@ -1147,7 +1143,7 @@ class ContextImpl {
   void dispose_slot_id(SlotId id) {
     EdgeSet deps;
     EdgeSet dependents;
-    std::optional<SlotId> driver;
+    std::optional<SlotId> puller;
     {
       auto idx = node_index(id);
       if (!idx || *idx >= nodes_.size()) return;
@@ -1157,19 +1153,19 @@ class ContextImpl {
       if (!slot) return;
       deps = std::move(slot->dependencies);
       dependents = std::move(slot->dependents);
-      // Disposing a driven formula tears down its puller first, so no poisoned
-      // effect is stranded, and clears the owner-keyed `driven_by_` entry so a
-      // recycled id never aliases this formula's driver (`#lzcellkernel` §9.3.4).
-      if (slot->driven) {
-        auto it = driven_by_.find(id.value);
-        if (it != driven_by_.end()) {
-          driver = SlotId(it->second);
-          driven_by_.erase(it);
+      // Disposing an eager computed cell tears down its puller first, so no
+      // poisoned effect is stranded, and clears the owner-keyed `eager_by_`
+      // entry so a recycled id never aliases its puller (`#lzcellkernel` §9.3.4).
+      if (slot->eager) {
+        auto it = eager_by_.find(id.value);
+        if (it != eager_by_.end()) {
+          puller = SlotId(it->second);
+          eager_by_.erase(it);
         }
-        slot->driven = false;
+        slot->eager = false;
       }
     }
-    if (driver) dispose_effect(EffectHandle(*driver));
+    if (puller) dispose_effect(Effect(*puller));
     // Detach both directions before the node goes away.
     for (auto dep_id : deps) remove_dependent_edge(dep_id, id);
     for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);
@@ -1762,10 +1758,11 @@ class TeardownScopeImpl {
 
   // ── Node creation. Identical to the context's, plus ownership. ──
 
+  /// Create a **guarded** `Computed<T>` (`#lzcellkernel`) owned by this scope.
   template <typename T, typename F>
-  SlotHandle<T> computed(F&& compute) {
+  Computed<T> computed(F&& compute) {
     auto handle = ctx_->template computed<T>(std::forward<F>(compute));
-    owned_.push_back(handle.id);
+    owned_.push_back(handle.id());
     return handle;
   }
 
@@ -1791,14 +1788,14 @@ class TeardownScopeImpl {
   }
 
   template <typename F>
-  EffectHandle effect(F&& run) {
+  Effect effect(F&& run) {
     auto handle = ctx_->effect(std::forward<F>(run));
     owned_.push_back(handle.id);
     return handle;
   }
 
   template <typename F>
-  EffectHandle effect_void(F&& run) {
+  Effect effect_void(F&& run) {
     auto handle = ctx_->effect_void(std::forward<F>(run));
     owned_.push_back(handle.id);
     return handle;
@@ -1880,11 +1877,11 @@ void CellHandle<T>::clear_dependents(Context& ctx) const {
   ctx.clear_cell_dependents(id);
 }
 
-inline void EffectHandle::dispose(Context& ctx) const {
+inline void Effect::dispose(Context& ctx) const {
   ctx.dispose_effect(*this);
 }
 
-inline bool EffectHandle::is_active(Context& ctx) const {
+inline bool Effect::is_active(Context& ctx) const {
   return ctx.is_effect_active(*this);
 }
 

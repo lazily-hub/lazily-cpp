@@ -68,7 +68,7 @@ TEST(test_state_machine_reactive) {
     [](const int& s, const std::string&) -> std::optional<int> {
       return s + 1;
     });
-  auto doubled = ctx.computed<int>([&](Context& c) {
+  auto doubled = ctx.memo<int>([&](Context& c) {
     return c.get_cell(m.state_handle()) * 2;
   });
   assert(ctx.get(doubled) == 0);

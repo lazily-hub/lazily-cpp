@@ -1,10 +1,10 @@
-// The Cell kernel (`#lzcellkernel`) — `SourceCell` / `FormulaCell` over the
-// genus `Cell<T, K>`.
+// The Cell kernel (`#lzcellkernel`) — the two concrete handles `Source<T, M>`
+// and `Computed<T>`.
 //
-// Covers the constructor surface (`source`/`source_with`/`formula`), reads,
-// source-only writes (`set`/`merge`), the driven-formula eager construction
-// (`formula().drive()` — idempotent, side-table teardown), and the COMPILE-TIME
-// write protection: `formula.set(...)` must not compile. That last property is
+// Covers the constructor surface (`source`/`source_with`/`computed`), reads,
+// source-only writes (`set`/`merge`), the eager-computed construction
+// (`computed().eager()` — idempotent, side-table teardown), and the COMPILE-TIME
+// write protection: `computed.set(...)` must not compile. That last property is
 // proved two ways — a `has_set<>` detector `static_assert` here (runs in this
 // TU), and `tests/compile_fail_formula_set.cpp`, a WILL_FAIL build.
 
@@ -36,7 +36,7 @@ static int test_passed = 0;
 // ── Compile-time write protection (§3/§4) ──────────────────────────────────
 //
 // Detection idiom: `has_set<C>` is true iff `c.set(ctx, v)` is well-formed. A
-// `SourceCell` has `set`; a `FormulaCell` does not, so `formula.set(...)` is a
+// `Source` has `set`; a `Computed` does not, so `computed.set(...)` is a
 // compile error — no shared base, no runtime gate.
 
 template <typename C, typename = void>
@@ -51,32 +51,28 @@ template <typename C>
 struct has_merge<C, std::void_t<decltype(std::declval<C&>().merge(
                         std::declval<Context&>(), 0LL))>> : std::true_type {};
 
-static_assert(has_set<SourceCell<long long>>::value,
-              "a SourceCell must be settable");
-static_assert(has_merge<SourceCell<long long>>::value,
-              "a SourceCell must be mergeable");
-static_assert(has_set<SourceCell<long long, Sum>>::value,
-              "a folding SourceCell must be settable");
-static_assert(!has_set<FormulaCell<long long>>::value,
-              "a FormulaCell must NOT be settable — formula.set(...) must be a "
+static_assert(has_set<Source<long long>>::value,
+              "a Source must be settable");
+static_assert(has_merge<Source<long long>>::value,
+              "a Source must be mergeable");
+static_assert(has_set<Source<long long, Sum>>::value,
+              "a folding Source must be settable");
+static_assert(!has_set<Computed<long long>>::value,
+              "a Computed must NOT be settable — computed.set(...) must be a "
               "compile error");
-static_assert(!has_merge<FormulaCell<long long>>::value,
-              "a FormulaCell must NOT be mergeable");
+static_assert(!has_merge<Computed<long long>>::value,
+              "a Computed must NOT be mergeable");
 
-// The two aliases are the two kinds of the one genus.
-static_assert(std::is_same<SourceCell<long long>,
-                           Cell<long long, Source<KeepLatest>>>::value,
-              "SourceCell<T> == Cell<T, Source<KeepLatest>> — Cell ≡ "
-              "SourceCell<KeepLatest>");
-static_assert(std::is_same<FormulaCell<long long>,
-                           Cell<long long, Formula>>::value,
-              "FormulaCell<T> == Cell<T, Formula>");
+// The default policy of `Source` is `KeepLatest` (`Source ≡ Source<KeepLatest>`).
+static_assert(std::is_same<Source<long long>,
+                           Source<long long, KeepLatest>>::value,
+              "Source<T> == Source<T, KeepLatest>");
 
 // ── Runtime behaviour ──────────────────────────────────────────────────────
 
 TEST(test_source_read_write) {
   Context ctx;
-  SourceCell<long long> n = ctx.source<long long>(1);
+  Source<long long> n = ctx.source<long long>(1);
   REQUIRE(n.get(ctx) == 1, "source reads its initial value");
   n.set(ctx, 2);
   REQUIRE(n.get(ctx) == 2, "source reads the value it was set to");
@@ -84,10 +80,10 @@ TEST(test_source_read_write) {
 
 TEST(test_formula_reads_upstream_guarded) {
   Context ctx;
-  SourceCell<long long> n = ctx.source<long long>(2);
+  Source<long long> n = ctx.source<long long>(2);
   int computes = 0;
-  FormulaCell<long long> doubled =
-      ctx.formula<long long>([n, &computes](Context& c) {
+  Computed<long long> doubled =
+      ctx.computed<long long>([n, &computes](Context& c) {
         ++computes;
         return n.get(c) * 2;
       });
@@ -110,7 +106,7 @@ TEST(test_formula_reads_upstream_guarded) {
 TEST(test_source_with_policy_merge) {
   Context ctx;
   // A folding source cell: Sum accumulates writes.
-  SourceCell<long long, Sum> acc = ctx.source_with<Sum, long long>(10);
+  Source<long long, Sum> acc = ctx.source_with<Sum, long long>(10);
   REQUIRE(acc.get(ctx) == 10, "folding source reads its initial value");
   acc.merge(ctx, 5);
   REQUIRE(acc.get(ctx) == 15, "merge folds under Sum");
@@ -122,22 +118,22 @@ TEST(test_source_with_policy_merge) {
 
 TEST(test_drive_is_eager_and_idempotent) {
   Context ctx;
-  SourceCell<long long> n = ctx.source<long long>(1);
+  Source<long long> n = ctx.source<long long>(1);
   int computes = 0;
-  FormulaCell<long long> f = ctx.formula<long long>([n, &computes](Context& c) {
+  Computed<long long> f = ctx.computed<long long>([n, &computes](Context& c) {
     ++computes;
     return n.get(c) + 100;
   });
 
-  REQUIRE(!f.is_driven(ctx), "a fresh formula is lazy");
-  FormulaCell<long long> g = f.drive(ctx);
-  REQUIRE(f.is_driven(ctx), "drive makes it eager");
+  REQUIRE(!f.is_eager(ctx), "a fresh formula is lazy");
+  Computed<long long> g = f.eager(ctx);
+  REQUIRE(f.is_eager(ctx), "drive makes it eager");
   REQUIRE(g == f, "drive returns the SAME handle, mutated (not a driver)");
   const int after_drive = computes;
 
   // Idempotent — a second drive attaches no second puller.
-  f.drive(ctx);
-  REQUIRE(f.is_driven(ctx), "still driven");
+  f.eager(ctx);
+  REQUIRE(f.is_eager(ctx), "still driven");
 
   // Eager: a source change re-materializes the formula WITHOUT a read.
   n.set(ctx, 2);
@@ -146,8 +142,8 @@ TEST(test_drive_is_eager_and_idempotent) {
   REQUIRE(f.get(ctx) == 102, "and holds the fresh value");
 
   // Undrive reverts to lazy; the value stays readable.
-  f.undrive(ctx);
-  REQUIRE(!f.is_driven(ctx), "undrive de-eagers");
+  f.lazy(ctx);
+  REQUIRE(!f.is_eager(ctx), "undrive de-eagers");
   REQUIRE(f.get(ctx) == 102, "value survives undrive");
 }
 
@@ -155,13 +151,13 @@ TEST(test_drive_coalesces_in_a_batch) {
   // Clause 3 of signal eagerness, now via the kernel: N invalidations inside one
   // batch coalesce into ONE recompute because the puller is a scheduled effect.
   Context ctx;
-  SourceCell<long long> n = ctx.source<long long>(0);
+  Source<long long> n = ctx.source<long long>(0);
   int computes = 0;
-  FormulaCell<long long> f = ctx.formula<long long>([n, &computes](Context& c) {
+  Computed<long long> f = ctx.computed<long long>([n, &computes](Context& c) {
     ++computes;
     return n.get(c);
   });
-  f.drive(ctx);
+  f.eager(ctx);
   const int before = computes;
   ctx.batch([&](Context& c) {
     n.set(c, 1);
@@ -178,11 +174,11 @@ TEST(test_dispose_driven_formula_tears_down_puller) {
   // effect, and the owner-keyed side table entry is cleared so a recycled id
   // never inherits the driver.
   Context ctx;
-  SourceCell<long long> n = ctx.source<long long>(1);
-  FormulaCell<long long> f =
-      ctx.formula<long long>([n](Context& c) { return n.get(c); });
-  f.drive(ctx);
-  REQUIRE(f.is_driven(ctx), "driven before dispose");
+  Source<long long> n = ctx.source<long long>(1);
+  Computed<long long> f =
+      ctx.computed<long long>([n](Context& c) { return n.get(c); });
+  f.eager(ctx);
+  REQUIRE(f.is_eager(ctx), "driven before dispose");
   f.dispose(ctx);
   // Reading a disposed formula throws; the puller no longer runs. A surviving
   // write must not resurrect anything.

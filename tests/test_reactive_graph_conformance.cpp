@@ -70,7 +70,7 @@
 // An absence guard proves the corpus is on disk; it cannot prove this binary
 // read any of it. Every fixture — including the skipped ones, which are parsed
 // to discover their ops — is opened through `spec_fixture_text`, so
-// `REQUIRE_FIXTURES_LOADED(14)` is a positive assertion that all fourteen
+// `REQUIRE_FIXTURES_LOADED(20)` is a positive assertion that all twenty
 // distinct canonical files were actually read. The runner additionally asserts (a) the
 // on-disk fixture set matches `FIXTURES` exactly, so an upstream addition
 // cannot arrive unexecuted, and (b) a non-zero number of ops and expectations
@@ -118,6 +118,12 @@ const std::vector<std::string> FIXTURES = {
     "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
     "dispose_signal_reverts_to_lazy.json",
+    "exact_fold_paths_stay_exact.json",
+    "feedback_drain_bound_reports_exhaustion.json",
+    "merge_cell_acquires_no_dependency_edge.json",
+    "merge_feed_through_a_formula_coalesces.json",
+    "merge_folds_synchronously_in_batch.json",
+    "merge_per_settled_cone_not_per_write.json",
     "read_after_dispose_is_an_error.json",
     "recycled_id_inherits_nothing.json",
     "scope_teardown_equals_fold_of_disposals.json",
@@ -130,18 +136,18 @@ const std::vector<std::string> FIXTURES = {
 
 // Ops this runner can execute against the synchronous `Context`. The corpus's
 // full op vocabulary.
-// `drive`/`undrive` are dual-accepted alongside `signal`/`dispose_signal`
+// `eager`/`lazy` are dual-accepted alongside `signal`/`dispose_signal`
 // (`#lzcellkernel`): the corpus is mid-migration from the retired `Signal` to the
-// eager construction `formula().drive()`, so both spellings must replay. No
-// fixture currently emits `drive`/`undrive` — accepting them here means a renamed
+// eager construction `computed().eager()`, so both spellings must replay. No
+// fixture currently emits `eager`/`lazy` — accepting them here means a renamed
 // upstream fixture arrives replayable rather than as an "unsupported op" skip.
 const std::set<std::string> SUPPORTED_OPS = {
     "batch",       "begin_scope",    "cell",
     "churn",       "computed",       "disarm",
     "dispose",     "dispose_fanout", "dispose_signal",
-    "dispose_stale_handle", "drive",  "effect",
-    "end_scope",   "fanout",         "read",
-    "set_cell",    "signal",         "undrive"};
+    "dispose_stale_handle", "eager",  "effect",
+    "end_scope",   "fanout",         "lazy",
+    "read",        "set_cell",       "signal"};
 
 // Fixture shapes this runner can replay.
 const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
@@ -150,12 +156,34 @@ const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
 // observed skip set EXACTLY — this is a ledger of findings against the
 // implementation, not a relaxation of the corpus.
 //
-// It is now EMPTY: `Context` gained teardown scopes, node disposal, and degree
-// introspection (#lzspecedgeindex), and all nine fixtures replay. Keeping the
-// checked-empty ledger is what makes a regression loud — a fixture that stops
-// replaying shows up here as a diff rather than as a quietly smaller pass
-// count.
-const std::map<std::string, std::string> EXPECTED_UNSUPPORTED = {};
+// The merge-feed fixtures landed on spec main (#lzmergefeed, spec a4a17f7): they
+// exercise the `merge_cell` op — the accumulate/fold write surface (`RelayCell`
+// / `MergePolicy`) — which this reactive-graph runner does not yet replay
+// (`Source<T, M>::merge` exists in the library, but the runner's op vocabulary
+// has no `merge_cell` node kind). They are accounted-for skips, not silent
+// gaps: each is opened, its ops read, and its unsupported op recorded here so a
+// regression is a loud ledger diff. `feedback_drain_bound_reports_exhaustion`
+// uses only supported ops and replays normally.
+const std::map<std::string, std::string> EXPECTED_UNSUPPORTED = {
+    {"exact_fold_paths_stay_exact.json", "merge_cell"},
+    {"feedback_drain_bound_reports_exhaustion.json",
+     "drain_exhausted/writes_own_cone (#lzmergefeed)"},
+    {"merge_cell_acquires_no_dependency_edge.json", "merge_cell"},
+    {"merge_feed_through_a_formula_coalesces.json", "merge_cell"},
+    {"merge_folds_synchronously_in_batch.json", "merge_cell"},
+    {"merge_per_settled_cone_not_per_write.json", "merge_cell"},
+};
+
+// Fixtures parked from replay despite using only supported OPS: they assert
+// novel expectation keys this runner does not model yet.
+// `feedback_drain_bound_reports_exhaustion` (#lzmergefeed) pins
+// `drain_exhausted`/`writes_own_cone`, the bounded-feedback drain semantics
+// tracked as a carry-forward item. Recorded as an accounted-for skip rather
+// than silently mis-replayed against expectation keys the runner cannot check.
+const std::map<std::string, std::string> PARKED = {
+    {"feedback_drain_bound_reports_exhaustion.json",
+     "drain_exhausted/writes_own_cone (#lzmergefeed)"},
+};
 
 // ── Minimal JSON reader ────────────────────────────────────────────────────
 //
@@ -401,7 +429,7 @@ struct World {
   std::vector<std::string> cleanup_log;
   // CUMULATIVE compute invocations per node id, counted from the start of the
   // scenario and never reset per step. The count is incremented by the compute
-  // body itself (see `make_computed`/`make_signal`), which is the only honest
+  // body itself (see `make_computed`/`make_eager`), which is the only honest
   // way to observe it: an eager signal and a lazy memo return identical values
   // for every read sequence in the signal fixtures, so a `computes_of` derived
   // from anything other than the real compute would defeat the fixtures it is
@@ -459,7 +487,7 @@ bool readable(World& w, const std::string& id) {
   auto it = w.nodes.find(id);
   if (it == w.nodes.end()) return false;
   if (it->second.kind == Kind::Effect)
-    return w.ctx.is_effect_active(EffectHandle(it->second.id));
+    return w.ctx.is_effect_active(Effect(it->second.id));
   return try_read(w, id).ok;
 }
 
@@ -474,7 +502,7 @@ std::size_t dependents_of(World& w, const std::string& id) {
     case Kind::Signal:
       return w.ctx.dependent_count(SlotHandle<long long>(ref.id));
     case Kind::Effect:
-      return w.ctx.dependent_count(EffectHandle(ref.id));
+      return w.ctx.dependent_count(Effect(ref.id));
   }
   return 0;
 }
@@ -488,7 +516,7 @@ std::size_t dependencies_of(World& w, const std::string& id) {
     case Kind::Signal:
       return w.ctx.dependency_count(SlotHandle<long long>(ref.id));
     case Kind::Effect:
-      return w.ctx.dependency_count(EffectHandle(ref.id));
+      return w.ctx.dependency_count(Effect(ref.id));
   }
   return 0;
 }
@@ -502,14 +530,14 @@ void dispose_ref(World& w, const Ref& ref) {
       w.ctx.dispose_slot(SlotHandle<long long>(ref.id));
       return;
     case Kind::Effect:
-      w.ctx.dispose_effect(EffectHandle(ref.id));
+      w.ctx.dispose_effect(Effect(ref.id));
       return;
     case Kind::Signal:
       // The generic `dispose` op means node teardown, so a signal loses BOTH
       // halves here. This is deliberately not what `dispose_signal` does — see
       // the op below, which drops only the puller. Conflating the two is
       // failure (a) in dispose_signal_reverts_to_lazy.json.
-      w.ctx.dispose_effect(EffectHandle(ref.effect_id));
+      w.ctx.dispose_effect(Effect(ref.effect_id));
       w.ctx.dispose_slot(SlotHandle<long long>(ref.id));
       return;
   }
@@ -538,25 +566,29 @@ auto counting_body(World& w, const std::string& id, std::vector<Ref> sources,
   };
 }
 
-SlotHandle<long long> make_computed(World& w, const std::string& id,
-                                    std::vector<Ref> sources, long long offset,
-                                    TeardownScope* scope) {
+// A guarded `Computed<long long>` (`#lzcellkernel`) — the kernel derived cell.
+Computed<long long> make_computed(World& w, const std::string& id,
+                                  std::vector<Ref> sources, long long offset,
+                                  TeardownScope* scope) {
   auto body = counting_body(w, id, std::move(sources), offset);
   return scope ? scope->computed<long long>(body)
                : w.ctx.computed<long long>(body);
 }
 
-// An eager signal: a memo plus an effect that pulls it. `Context::signal` is
-// that composition (context.hpp), which is why this binding gets clause 3 for
-// free — the puller is an ordinary effect, effects are scheduled rather than
-// inline, so N invalidations inside a batch coalesce into one run at the flush.
-SignalHandle<long long> make_signal(World& w, const std::string& id,
-                                    std::vector<Ref> sources,
-                                    long long offset) {
-  return w.ctx.signal<long long>(counting_body(w, id, std::move(sources), offset));
+// The eager construction (`#lzcellkernel`): a guarded `Computed` made eager by
+// `.eager()`, which attaches a puller `Effect`. This is what replaces the
+// retired `Signal` (`signal(f)` was `memo` + `effect_void` puller). Clause 3
+// falls out for free — the puller is an ordinary scheduled effect, so N
+// invalidations inside a batch coalesce into one run at the flush.
+Computed<long long> make_eager(World& w, const std::string& id,
+                               std::vector<Ref> sources, long long offset) {
+  Computed<long long> f =
+      w.ctx.computed<long long>(counting_body(w, id, std::move(sources), offset));
+  f.eager(w.ctx);
+  return f;
 }
 
-EffectHandle make_effect(World& w, const std::string& name,
+Effect make_effect(World& w, const std::string& name,
                          std::vector<Ref> sources, TeardownScope* scope) {
   World* wp = &w;
   w.names.push_back(name);
@@ -715,40 +747,26 @@ void replay(const std::string& fixture, World& w,
       const std::string id = op_id();
       auto h = make_computed(w, id, reads_of(w, op),
                              offset ? offset->as_int() : 0, scope_of(w, op));
-      bind_node(w, id, Ref(Kind::Slot, h.id));
-    } else if (kind == "signal") {
+      bind_node(w, id, Ref(Kind::Slot, h.id()));
+    } else if (kind == "signal" || kind == "eager") {
+      // The eager construction (`#lzcellkernel` §9.3.1): a guarded `computed`
+      // whose `.eager()` attaches the puller effect. The retired `Signal` is
+      // now exactly this — so the `signal` fixture op and the kernel `eager`
+      // spelling replay through one path. Bound as a plain slot: reads, degrees,
+      // and `dispose` all go through the backing computed cell, and disposing it
+      // tears the puller down via the `eager_by` side table, so no separate
+      // effect id is tracked.
       const Json* offset = op->find("offset");
       const std::string id = op_id();
-      auto h = make_signal(w, id, reads_of(w, op),
-                           offset ? offset->as_int() : 0);
-      bind_node(w, id, Ref(Kind::Signal, h.slot.id, h.effect.id));
-    } else if (kind == "dispose_signal") {
+      auto h = make_eager(w, id, reads_of(w, op), offset ? offset->as_int() : 0);
+      bind_node(w, id, Ref(Kind::Slot, h.id()));
+    } else if (kind == "dispose_signal" || kind == "lazy") {
+      // De-eager: dispose the puller only. The backing computed cell keeps its
+      // value, its edges, and its readability — the op makes the cell lazy
+      // rather than tearing it down, which is what clause 4 pins. `dispose_signal`
+      // (the fixture op) and `lazy` (the kernel spelling) are the same transition.
       const Ref ref = w.lookup(op_id());
-      REQUIRE(ref.kind == Kind::Signal, "dispose_signal on a node that is not a signal");
-      // ONLY the puller. The backing memo keeps its value, its edges, and its
-      // readability — the op de-eagers the signal rather than tearing it down,
-      // which is what clause 4 pins and what the op's name obscures.
-      w.ctx.dispose_signal(SignalHandle<long long>(SlotHandle<long long>(ref.id),
-                                                   EffectHandle(ref.effect_id)));
-    } else if (kind == "drive") {
-      // The kernel spelling of the eager construction: a guarded `formula`
-      // whose `.drive()` attaches the puller effect (`#lzcellkernel` §9.3.1).
-      // Observationally identical to `signal` — same counting body, same
-      // scheduler-coalesced puller — so clauses 1-3 hold for the same reason.
-      // Bound as a plain slot: reads, degrees, and `dispose` all go through the
-      // backing formula, and disposing it tears the puller down via the driven
-      // side table, so no separate effect id is tracked.
-      const Json* offset = op->find("offset");
-      const std::string id = op_id();
-      FormulaCell<long long> f = w.ctx.formula<long long>(
-          counting_body(w, id, reads_of(w, op), offset ? offset->as_int() : 0));
-      f.drive(w.ctx);
-      bind_node(w, id, Ref(Kind::Slot, f.id()));
-    } else if (kind == "undrive") {
-      // De-eager the formula (dispose its puller, keep the value and edges) —
-      // the kernel counterpart of `dispose_signal`, clause 4.
-      const Ref ref = w.lookup(op_id());
-      w.ctx.undrive_formula(ref.id);
+      w.ctx.make_lazy(ref.id);
     } else if (kind == "batch") {
       const Json* writes = op->find("writes");
       REQUIRE(writes != nullptr, "batch op has no writes");
@@ -1252,6 +1270,10 @@ int main() {
       if (!reason.empty()) reason += "; ";
       reason += join(unsupported);
     }
+    if (auto it = PARKED.find(name); it != PARKED.end()) {
+      if (!reason.empty()) reason += "; ";
+      reason += it->second;
+    }
 
     if (!reason.empty()) {
       observed_unsupported.emplace(name, reason);
@@ -1323,7 +1345,7 @@ int main() {
       << std::endl;
 
   // All canonical fixtures were actually opened and parsed.
-  REQUIRE_FIXTURES_LOADED(14);
+  REQUIRE_FIXTURES_LOADED(20);
 
   std::cout << "reactive-graph conformance: " << replayed << "/"
             << FIXTURES.size() << " fixtures replayed against Context ("

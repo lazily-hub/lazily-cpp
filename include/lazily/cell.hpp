@@ -1,47 +1,55 @@
-// The Cell kernel (`#lzcellkernel`) — `SourceCell` / `FormulaCell` over a single
-// genus `Cell<T, K>`.
+// The Cell kernel (`#lzcellkernel`) — the two concrete handle templates
+// `Source<T, M>` and `Computed<T>`.
 //
-// See `tasks/software/lazily-cell-kernel-design.md` (§1/§3/§4/§9.3). One handle
-// type with a **kind** type parameter `K` is the public reactive surface,
-// replacing the four-handle vocabulary (`CellHandle` / `SlotHandle` /
-// `SignalHandle` / `MergeCell`) with two named aliases over one genus:
+// See `tasks/software/lazily-cell-kernel-design.md`. **`Cell` is a conceptual
+// word, not a type**: a *cell* is a value-bearing reactive node, and the two
+// kinds of cell are named by the two handle structs a caller holds:
 //
-//   Cell<T, K>                    genus — a node with a readable value
-//   ├─ SourceCell<T, M>           written from outside; folds under policy M
-//   └─ FormulaCell<T>             computed from upstream (guarded by default)
+//   Source<T, M>      handle to a source cell — written from outside; folds under policy M
+//   Computed<T>       handle to a computed cell — computed from upstream (guarded)
 //
-//   Effect                        no value; a sink — outside the hierarchy
+//   Effect            no value; a sink — outside the hierarchy
 //
-// Both aliases answer the same question — *where does a node's value come from*
-// — so the pair is exhaustive: `SourceCell` from outside, `FormulaCell` from
-// upstream. `EffectHandle` stays outside the hierarchy (a sink, no value).
+// Both answer the same question — *where does a node's value come from* — so
+// the pair is exhaustive: `Source` from outside, `Computed` from upstream.
+// `Effect` stays outside the hierarchy (a sink, no value). There is **no
+// `Cell<T, K>` genus struct**: the former genus dissolves into these two
+// concrete templates, and the former `Source<M>` / `Formula` *kind markers*
+// are gone — `M` is now `Source`'s own policy parameter.
 //
 // ## Write protection without a base class (§3/§4)
 //
-// C++ restricts writes by **partial specialization**, the trick §4 lists for
-// cpp. Reads (`get`) live on both specializations; writes (`set`/`merge`) live
-// **only** on `Cell<T, Source<M>>`. `Cell<T, Formula>` is a distinct
-// specialization with no `set`/`merge` member, so `formula.set(...)` is a plain
-// "no member named 'set'" compile error — no runtime gate, no shared base. The
-// merge policy `M` lives inside the `Source<M>` marker, exactly where writes
-// exist. (`tests/test_cell_kernel.cpp` locks this with a `has_set<>` detector
-// and `tests/compile_fail_formula_set.cpp` is a WILL_FAIL build.)
+// C++ restricts writes by giving each kind its own concrete type. Reads (`get`)
+// live on both handles; writes (`set`/`merge`) live **only** on `Source<T, M>`.
+// `Computed<T>` is a distinct template with no `set`/`merge` member, so
+// `computed.set(...)` is a plain "no member named 'set'" compile error — no
+// runtime gate, no shared base. The merge policy `M` lives on `Source<T, M>`,
+// exactly where writes exist. (`tests/test_cell_kernel.cpp` locks this with a
+// `has_set<>` detector `static_assert` and `tests/compile_fail_formula_set.cpp`
+// is a WILL_FAIL build.)
 //
-// ## The eager construction is a driven formula, not a kind (§9.3)
+// ## The eager construction is an eager computed, not a kind (§9.3)
 //
-// `Signal` is retired: eagerness is `formula(f).drive()` — a `FormulaCell` plus
-// a puller `Effect`, with drivenness stored as graph state (a `driven` bit on
-// the node plus a `driven_by` side table in the `Context`, cleared on
-// dispose/undrive). Because the puller is an ordinary scheduled effect, N
+// `Signal` is retired: eagerness is `computed(f).eager()` — a `Computed` plus a
+// puller `Effect`, with eagerness stored as graph state (an `eager` bit on the
+// node plus an `eager_by` side table in the `Context`, cleared on
+// dispose/`.lazy()`). Because the puller is an ordinary scheduled effect, N
 // invalidations in a batch coalesce into one recompute, which makes the
 // `#lzsignaleager` per-write-puller defect structurally unwritable.
+//
+// ## Guarded by default (§9.3, DECIDED 2026-07-21)
+//
+// Every cell is guarded, always — there is no unguarded mode. A `Source`
+// suppresses an equal write (`==` store-guard); a `Computed` suppresses an
+// equal recompute (matching TC39 `Signal.Computed`). The former `memo`
+// constructor is gone — `computed` now *is* the guarded form. `T` must have
+// `operator==` on every cell.
 //
 // ## `Slot` is unchanged as the STORAGE sense (§5.0)
 //
 // The kernel keeps the arena vocabulary: `SlotId`, `SlotNode`, the free-list,
 // and the wire `SlotValue` all stay — a slot is the position that holds a node
-// of *any* kind. Only the reactive-VALUE sense of "slot" is renamed to
-// `FormulaCell`.
+// of *any* kind. Only the reactive-VALUE sense of "slot" is named `Computed`.
 
 #ifndef LAZILY_CELL_HPP
 #define LAZILY_CELL_HPP
@@ -54,36 +62,82 @@
 
 namespace lazily {
 
-// ── Kind markers ────────────────────────────────────────────────────────────
+// ── Source — the source-cell handle ─────────────────────────────────────────
 
-// Kind marker for a **source** cell — a node written from outside, folding
-// accumulated writes under merge policy `M`. Carries the policy so writes exist
-// exactly where the policy does (`set`/`merge` on `Cell<T, Source<M>>`).
-template <typename M>
-struct Source {};
+// A cell **written from outside**, folding writes under policy `M` (default
+// `KeepLatest`, last-writer-wins). `Source<T>` is a plain input cell;
+// `Source<T, Sum>` folds additively; etc. Reads with `get`; writes with
+// `set`/`merge` — the only kind that has them. Guarded: an equal write is a
+// no-op that fires no cascade.
+template <typename T, typename M = KeepLatest>
+class Source {
+ public:
+  using value_type = T;
+  using policy = M;
 
-// Kind marker for a **formula** cell — a node computed from upstream. A driven
-// formula (`formula().drive()`) is still this kind; drivenness is graph state,
-// not a distinct type.
-struct Formula {};
+  Source() = default;
+  explicit Source(SlotId id) : id_(id) {}
 
-// ── The genus ───────────────────────────────────────────────────────────────
+  // The underlying storage-slot id (STORAGE sense of "slot", §5.0).
+  SlotId id() const { return id_; }
 
-// Primary template — intentionally undefined. Only the two kind specializations
-// (`Source<M>` and `Formula`) exist; bindings do not add new kinds.
-template <typename T, typename K>
-class Cell;
+  // Read the current converged value, registering a dependency in a computation.
+  T get(Context& ctx) const {
+    return ctx.template get_cell<T>(CellHandle<T>(id_));
+  }
+
+  std::shared_ptr<T> get_rc(Context& ctx) const {
+    return ctx.template get_cell_rc<T>(CellHandle<T>(id_));
+  }
+
+  // Replace the value outright (the keep-latest write). Only a `Source` has
+  // this — `computed.set(...)` does not compile.
+  void set(Context& ctx, T value) const {
+    ctx.template set_cell<T>(CellHandle<T>(id_), std::move(value));
+  }
+
+  // Fold `op` into the current value under policy `M`. For `KeepLatest` this is
+  // a replace (`Source ≡ Source<T, KeepLatest>`). Routes through the ==-guarded
+  // `set_cell`, so an idempotent policy's no-op merge fires no cascade.
+  void merge(Context& ctx, T op) const {
+    T old = ctx.template peek_cell<T>(CellHandle<T>(id_)).value();
+    ctx.template set_cell<T>(CellHandle<T>(id_),
+                            M::template merge<T>(old, std::move(op)));
+  }
+
+  // The policy-erased keep-latest view of this cell, for wiring derived readers
+  // that want a plain handle. Same underlying node.
+  Source<T, KeepLatest> as_keep_latest() const {
+    return Source<T, KeepLatest>(id_);
+  }
+
+  // Clear all dependent computed cells without changing this cell's value.
+  void clear_dependents(Context& ctx) const {
+    ctx.clear_cell_dependents(id_);
+  }
+
+  // Tear this source down (detaches dependents, recycles the id). Kind-checked.
+  void dispose(Context& ctx) const { ctx.dispose_cell(CellHandle<T>(id_)); }
+
+  bool operator==(const Source& o) const { return id_ == o.id_; }
+  bool operator!=(const Source& o) const { return !(*this == o); }
+
+ private:
+  SlotId id_{};
+};
+
+// ── Computed — the computed-cell handle ─────────────────────────────────────
 
 // A cell **computed from upstream**. Lazy and guarded by default; reads with
-// `get`, and `drive()` makes it eager (a driven formula). Has no `set`/`merge`
-// — writing a formula does not compile.
+// `get`, and `.eager()` makes it eager (an eager computed cell). Has no
+// `set`/`merge` — writing a computed cell does not compile.
 template <typename T>
-class Cell<T, Formula> {
+class Computed {
  public:
   using value_type = T;
 
-  Cell() = default;
-  explicit Cell(SlotId id) : id_(id) {}
+  Computed() = default;
+  explicit Computed(SlotId id) : id_(id) {}
 
   // The underlying storage-slot id (STORAGE sense of "slot", §5.0).
   SlotId id() const { return id_; }
@@ -96,22 +150,22 @@ class Cell<T, Formula> {
     return ctx.template get_rc<T>(SlotHandle<T>(id_));
   }
 
-  // **Drive** this formula: make it eager by attaching a puller `Effect` that
-  // re-materializes it after every invalidation. Idempotent (a second `drive`
+  // Transition this computed cell to **eager**: attach a puller `Effect` that
+  // re-materializes it after every invalidation. Idempotent (a second `eager`
   // is a no-op) and returns the **same** handle (mutated graph state), so the
-  // caller keeps reading the formula it already holds — this is not builder
-  // style. Retires the former `Signal`.
-  Cell drive(Context& ctx) const {
-    ctx.template drive_formula<T>(id_);
+  // caller keeps reading the computed cell it already holds — not builder
+  // style. This is the eager construction that retires the former `Signal`.
+  Computed eager(Context& ctx) const {
+    ctx.template make_eager<T>(id_);
     return *this;
   }
 
-  // Reverse of `drive`: stop eager recomputation and dispose the puller. The
-  // value stays readable and reverts to lazy. No-op if not driven.
-  void undrive(Context& ctx) const { ctx.undrive_formula(id_); }
+  // Reverse of `eager`: stop eager recomputation and dispose the puller. The
+  // value stays readable and reverts to lazy. No-op if not eager.
+  void lazy(Context& ctx) const { ctx.make_lazy(id_); }
 
-  // Whether this formula currently has an active puller.
-  bool is_driven(Context& ctx) const { return ctx.is_driven(id_); }
+  // Whether this computed cell currently has an active puller (is eager).
+  bool is_eager(Context& ctx) const { return ctx.is_eager(id_); }
 
   // Clear the cached value and dependents; recomputes on next read.
   void clear(Context& ctx) const {
@@ -119,87 +173,16 @@ class Cell<T, Formula> {
     ctx.flush_effects_after_invalidation();
   }
 
-  // Tear this formula down (detaches edges, tears down its puller if driven,
-  // recycles the id). Kind-checked: a stale/recycled id is a no-op.
+  // Tear this computed cell down (detaches edges, tears down its puller if
+  // eager, recycles the id). Kind-checked: a stale/recycled id is a no-op.
   void dispose(Context& ctx) const { ctx.dispose_slot(SlotHandle<T>(id_)); }
 
-  bool operator==(const Cell& o) const { return id_ == o.id_; }
-  bool operator!=(const Cell& o) const { return !(*this == o); }
+  bool operator==(const Computed& o) const { return id_ == o.id_; }
+  bool operator!=(const Computed& o) const { return !(*this == o); }
 
  private:
   SlotId id_{};
 };
-
-// A cell **written from outside**, folding writes under policy `M` (default
-// `KeepLatest`, last-writer-wins). `SourceCell<T>` is a plain input cell;
-// `SourceCell<T, Sum>` folds additively; etc. Reads with `get`; writes with
-// `set`/`merge` — the only kind that has them.
-template <typename T, typename M>
-class Cell<T, Source<M>> {
- public:
-  using value_type = T;
-  using policy = M;
-
-  Cell() = default;
-  explicit Cell(SlotId id) : id_(id) {}
-
-  SlotId id() const { return id_; }
-
-  // Read the current converged value, registering a dependency in a computation.
-  T get(Context& ctx) const {
-    return ctx.template get_cell<T>(CellHandle<T>(id_));
-  }
-
-  std::shared_ptr<T> get_rc(Context& ctx) const {
-    return ctx.template get_cell_rc<T>(CellHandle<T>(id_));
-  }
-
-  // Replace the value outright (the keep-latest write). Only a `SourceCell` has
-  // this — `formula.set(...)` does not compile.
-  void set(Context& ctx, T value) const {
-    ctx.template set_cell<T>(CellHandle<T>(id_), std::move(value));
-  }
-
-  // Fold `op` into the current value under policy `M`. For `KeepLatest` this is
-  // a replace (`Cell ≡ SourceCell<KeepLatest>`). Routes through the ==-guarded
-  // `set_cell`, so an idempotent policy's no-op merge fires no cascade.
-  void merge(Context& ctx, T op) const {
-    T old = ctx.template peek_cell<T>(CellHandle<T>(id_)).value();
-    ctx.template set_cell<T>(CellHandle<T>(id_),
-                            M::template merge<T>(old, std::move(op)));
-  }
-
-  // The policy-erased keep-latest view of this cell, for wiring derived readers
-  // that want a plain handle. Same underlying node. (Compatibility shim for the
-  // former `MergeCell::cell()`.)
-  Cell<T, Source<KeepLatest>> as_keep_latest() const {
-    return Cell<T, Source<KeepLatest>>(id_);
-  }
-
-  // Clear all dependent formulas without changing this cell's value.
-  void clear_dependents(Context& ctx) const {
-    ctx.clear_cell_dependents(id_);
-  }
-
-  // Tear this source down (detaches dependents, recycles the id). Kind-checked.
-  void dispose(Context& ctx) const { ctx.dispose_cell(CellHandle<T>(id_)); }
-
-  bool operator==(const Cell& o) const { return id_ == o.id_; }
-  bool operator!=(const Cell& o) const { return !(*this == o); }
-
- private:
-  SlotId id_{};
-};
-
-// ── Aliases ─────────────────────────────────────────────────────────────────
-
-// A cell written from outside, folding under policy `M` (default `KeepLatest`).
-template <typename T, typename M = KeepLatest>
-using SourceCell = Cell<T, Source<M>>;
-
-// A cell computed from upstream (guarded, lazy by default; `.drive()` for eager).
-template <typename T>
-using FormulaCell = Cell<T, Formula>;
 
 }  // namespace lazily
 

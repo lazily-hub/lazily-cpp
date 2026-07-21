@@ -118,13 +118,13 @@ class RelayCell {
     auto pending = pending_;
     auto head = head_;
     auto high_water = policy_.high_water;
-    depth_ = ctx.computed<std::uint64_t>(
+    depth_ = ctx.memo<std::uint64_t>(
         [pending](Context& c) { return c.get_cell(pending); });
     auto depth = depth_;
-    is_full_ = ctx.computed<bool>([depth, high_water](Context& c) {
+    is_full_ = ctx.memo<bool>([depth, high_water](Context& c) {
       return c.get(depth) >= c.get_cell(high_water);
     });
-    is_empty_ = ctx.computed<bool>(
+    is_empty_ = ctx.memo<bool>(
         [head](Context& c) { return !c.get_cell(head).has_value(); });
   }
 

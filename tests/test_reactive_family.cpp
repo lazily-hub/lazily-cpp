@@ -76,7 +76,7 @@ TEST(test_membership_reactive_value_not) {
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
-  auto count = ctx.computed<int>([&](Context& c) { return (int)map.len(c); });
+  auto count = ctx.memo<int>([&](Context& c) { return (int)map.len(c); });
   assert(ctx.get(count) == 2);
 
   ctx.set_cell(a, 100);
@@ -146,12 +146,12 @@ TEST(test_pure_move_spares_membership) {
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
 
-  auto order_reader = ctx.computed<size_t>([&](Context& c) {
+  auto order_reader = ctx.memo<size_t>([&](Context& c) {
     return map.keys(c).size();
   });
-  auto count = ctx.computed<int>([&](Context& c) { return (int)map.len(c); });
+  auto count = ctx.memo<int>([&](Context& c) { return (int)map.len(c); });
   auto has_b =
-      ctx.computed<bool>([&](Context& c) { return map.contains_key(c, "b"); });
+      ctx.memo<bool>([&](Context& c) { return map.contains_key(c, "b"); });
   ctx.get(order_reader);
   ctx.get(count);
   ctx.get(has_b);

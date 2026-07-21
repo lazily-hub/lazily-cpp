@@ -32,7 +32,7 @@ class StateMachine {
 
   CellHandle<S> state_handle() const { return state_; }
 
-  EffectHandle on_transition(Context& ctx,
+  Effect on_transition(Context& ctx,
                               std::function<void(const S&, const S&)> handler) {
     auto state_handle = state_;
     auto prev = std::make_shared<std::optional<S>>();

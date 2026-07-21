@@ -225,14 +225,14 @@ class BasicThreadSafeContext {
         [&](Context& c) { return c.template signal<T>(std::forward<F>(compute)); });
   }
   template <typename F>
-  EffectHandle effect(F&& run) {
+  Effect effect(F&& run) {
     return write([&](Context& c) { return c.effect(std::forward<F>(run)); });
   }
   template <typename F>
-  EffectHandle effect_void(F&& run) {
+  Effect effect_void(F&& run) {
     return write([&](Context& c) { return c.effect_void(std::forward<F>(run)); });
   }
-  void dispose_effect(const EffectHandle& handle) {
+  void dispose_effect(const Effect& handle) {
     write([&](Context& c) { c.dispose_effect(handle); });
   }
   template <typename T>
@@ -315,7 +315,7 @@ class BasicThreadSafeContext {
   bool is_batching() {
     return read([&](Context& c) { return c.is_batching(); });
   }
-  bool is_effect_active(const EffectHandle& handle) {
+  bool is_effect_active(const Effect& handle) {
     return read([&](Context& c) { return c.is_effect_active(handle); });
   }
 

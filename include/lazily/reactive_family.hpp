@@ -96,7 +96,7 @@ struct MapHandleTraits<SlotHandle<V>> {
   // stored as the slot's recomputation.
   template <typename Compute>
   static SlotHandle<V> materialize(Context& ctx, Compute&& compute) {
-    return ctx.template computed<V>(std::forward<Compute>(compute));
+    return ctx.template slot<V>(std::forward<Compute>(compute));
   }
 
   static V observe(const SlotHandle<V>& h, Context& ctx) { return ctx.get(h); }

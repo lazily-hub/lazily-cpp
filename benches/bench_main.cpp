@@ -73,7 +73,7 @@ void print_results() {
 void bench_cached_reads() {
   Context ctx;
   auto c = ctx.cell(42);
-  auto s = ctx.computed<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
+  auto s = ctx.slot<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
   ctx.get(s);  // prime cache
 
   bench("cached_reads", "context", 1000000, [&]() {
@@ -95,7 +95,7 @@ void bench_cold_first_get() {
   bench("cold_first_get", "context", 100000, [&]() {
     Context ctx;
     auto c = ctx.cell(42);
-    auto s = ctx.computed<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
+    auto s = ctx.slot<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
     (void)ctx.get(s);
   });
 
@@ -114,7 +114,7 @@ void bench_fan_out() {
     auto src = ctx.cell(1);
     std::vector<SlotHandle<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.computed<int>([&, i](Context& c) {
+      slots.push_back(ctx.slot<int>([&, i](Context& c) {
         return c.get_cell(src) + i;
       }));
     }
@@ -158,7 +158,7 @@ void bench_set_cell_invalidation() {
     auto src = ctx.cell(0);
     std::vector<SlotHandle<int>> slots;
     for (int i = 0; i < 512; ++i) {
-      slots.push_back(ctx.computed<int>([&, i](Context& c) {
+      slots.push_back(ctx.slot<int>([&, i](Context& c) {
         return c.get_cell(src) + i;
       }));
     }
@@ -176,7 +176,7 @@ void bench_set_cell_invalidation() {
     auto src = ctx.cell(0);
     std::vector<SlotHandle<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.computed<int>([&, i](Context& c) {
+      slots.push_back(ctx.slot<int>([&, i](Context& c) {
         return c.get_cell(src) + i;
       }));
     }
@@ -196,7 +196,7 @@ void bench_set_cell_invalidation() {
     std::vector<SlotHandle<int>> slots;
     for (int i = 0; i < n; ++i) {
       cells.push_back(ctx.cell(i));
-      slots.push_back(ctx.computed<int>([&, i](Context& c) {
+      slots.push_back(ctx.slot<int>([&, i](Context& c) {
         return c.get_cell(cells[i]) + 1;
       }));
     }
@@ -217,7 +217,7 @@ void bench_memo_equality() {
   auto m = ctx.memo<int>([&](Context& c) {
     return c.get_cell(src) / 2;  // 2/2=1, 3/2=1 (unchanged)
   });
-  auto downstream = ctx.computed<int>([&](Context& c) {
+  auto downstream = ctx.slot<int>([&](Context& c) {
     return c.get(m) + 1;
   });
   (void)ctx.get(downstream);
@@ -275,7 +275,7 @@ void bench_batch_storms() {
   Context ctx;
   std::vector<CellHandle<int>> cells;
   for (int i = 0; i < 64; ++i) cells.push_back(ctx.cell(i));
-  auto sum = ctx.computed<int>([&](Context& c) {
+  auto sum = ctx.slot<int>([&](Context& c) {
     int s = 0;
     for (auto& cell : cells) s += c.get_cell(cell);
     return s;
@@ -554,7 +554,7 @@ void bench_effect_alloc() {
       auto src = ctx.cell(0);
       int sink_a = 0;
       int sink_b = 0;
-      std::vector<EffectHandle> effects;
+      std::vector<Effect> effects;
       effects.reserve(static_cast<size_t>(n));
       for (int i = 0; i < n; ++i) {
         effects.push_back(ctx.effect([&, i](Context& c) -> CleanupFn {
@@ -652,13 +652,13 @@ void bench_scale() {
       for (long long i = 0; i < n; ++i) inputs.push_back(ctx.cell(static_cast<int>(i)));
       for (long long i = 0; i < n; ++i) {
         if (i == 0) {
-          formulas.push_back(ctx.computed<int>([&](Context& c) {
+          formulas.push_back(ctx.slot<int>([&](Context& c) {
             return c.get_cell(inputs[0]);
           }));
         } else {
           auto prev = inputs[i - 1];
           auto cur = inputs[i];
-          formulas.push_back(ctx.computed<int>([prev, cur](Context& c) {
+          formulas.push_back(ctx.slot<int>([prev, cur](Context& c) {
             return c.get_cell(cur) + c.get_cell(prev);
           }));
         }

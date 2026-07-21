@@ -1,45 +1,50 @@
 # lazily-cpp
 
 C++ port of the lazily reactive family, built on the **Cell kernel**
-(`#lzcellkernel`): one genus `Cell<T, K>` with two kinds — `SourceCell<T, M>`
-(written from outside, folds under merge policy `M`) and `FormulaCell<T>`
-(computed from upstream, guarded by default) — plus value-less `Effect` sinks
-outside the hierarchy. Ships the full lazily-spec wire protocol, CRDT collection
-types, the lossless tree CRDT, and the command/RPC message plane.
+(`#lzcellkernel`): two concrete handles — `Source<T, M>` (written from outside,
+folds under merge policy `M`) and `Computed<T>` (computed from upstream, guarded
+by default) — plus value-less `Effect` sinks outside the hierarchy. `Cell` is a
+*concept* (a value-bearing node), not a type. Ships the full lazily-spec wire
+protocol, CRDT collection types, the lossless tree CRDT, and the command/RPC
+message plane.
 
-## Reactive kernel (`#lzcellkernel`)
+## Reactive kernel (`#lzcellkernel`, v2)
 
 The public reactive surface is `include/lazily/cell.hpp`:
 
-- **Genus & kinds.** `Cell<T, Source<M>>` and `Cell<T, Formula>`, aliased
-  `SourceCell<T, M = KeepLatest>` and `FormulaCell<T>`. `Cell ≡
-  SourceCell<KeepLatest>`.
+- **Two concrete handles.** `Source<T, M = KeepLatest>` and `Computed<T>` — no
+  `Cell<T, K>` genus, no `Source<M>`/`Formula` kind markers. `M` is `Source`'s
+  own policy param; `Source ≡ Source<KeepLatest>`.
 - **Constructors on `Context`.** `source(v)` (keep-latest input),
-  `source_with<M>(v)` (folding input, formerly `merge_cell<M>`), `formula(f)`
-  (guarded, formerly `computed`/`memo`/`slot`). Reads: `get`. Writes:
-  `set`/`merge`.
+  `source_with<M>(v)` (folding input, formerly `merge_cell<M>`), `computed(f)`
+  (guarded; renamed from `formula`, folds in the former `memo`). Reads: `get`.
+  Writes: `set`/`merge`.
+- **Guarded by default, always (§9.3, DECIDED 2026-07-21).** Every cell is
+  guarded — no unguarded mode. `Source` suppresses an equal write; `Computed`
+  suppresses an equal recompute (TC39 `Signal.Computed`). The `memo` constructor
+  is removed (folded into `computed`).
 - **Write protection is a compile error, not a runtime gate (§3/§4).** `set` and
-  `merge` exist ONLY on the `Cell<T, Source<M>>` partial specialization, so
-  `formula.set(...)` fails to compile ("no member named 'set'"). Locked by
-  `has_set<>` `static_assert`s in `tests/test_cell_kernel.cpp` and the WILL_FAIL
-  build `tests/compile_fail_formula_set.cpp`.
-- **Eager = a driven formula, not a `Signal` kind (§9.3).** `formula(f).drive()`
-  attaches a puller `Effect`; drivenness is a `driven` bit on the node plus a
-  `driven_by_` side table in `Context`, cleared on `undrive`/dispose. Because the
-  puller is an ordinary scheduled effect, batched invalidations coalesce into one
-  recompute — the `#lzsignaleager` per-write-puller defect is structurally
-  unwritable.
+  `merge` exist ONLY on `Source<T, M>`, so `computed.set(...)` fails to compile
+  ("no member named 'set'"). Locked by `has_set<>` `static_assert`s in
+  `tests/test_cell_kernel.cpp` and the WILL_FAIL build
+  `tests/compile_fail_formula_set.cpp`.
+- **Eager = an eager `Computed`, not a `Signal` kind (§9.3).**
+  `computed(f).eager()` attaches a puller `Effect`; eagerness is an `eager` bit
+  on the node plus an `eager_by_` side table in `Context`, cleared on
+  `.lazy()`/dispose (`is_eager()` queries it). Because the puller is an ordinary
+  scheduled effect, batched invalidations coalesce into one recompute — the
+  `#lzsignaleager` per-write-puller defect is structurally unwritable.
 - **`Slot` is the STORAGE sense only (§5.0).** `SlotId`, `SlotNode`, the arena
   free-list, and the wire `SlotValue` are unchanged — a slot is the position that
   holds a node of any kind. Only the reactive-VALUE sense of "slot" became
-  `FormulaCell`.
+  `Computed`.
 
-Compatibility: the internal handle types `CellHandle<T>` / `SlotHandle<T>` /
-`EffectHandle` and the old `Context` constructors (`cell`/`computed`/`memo`/
-`slot`/`signal`, and the `MergeCell<T, Policy>` class in `merge.hpp`) are kept as
-the lower-level engine surface the CRDT/relay/coordination families build on;
-they are NOT the recommended public vocabulary. `AsyncContext` remains a stub
-with no dependency graph and was not migrated.
+Engine substrate (kept, not the public vocabulary): the internal handle types
+`CellHandle<T>` / `SlotHandle<T>` / `Effect`, and the engine constructors
+`cell`/`slot` (unguarded) / `memo` (guarded) / `signal`, plus the
+`MergeCell<T, Policy>` class in `merge.hpp`, remain as the lower-level surface the
+CRDT/relay/coordination families build on. `AsyncContext` remains a stub with no
+dependency graph and was not migrated (it carries the vocab only).
 
 ## Commit & Push
 

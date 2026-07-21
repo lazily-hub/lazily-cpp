@@ -1,10 +1,10 @@
 # lazily (C++)
 
-Lazy reactive primitives for C++17 — the **Cell kernel**: one genus `Cell<T, K>`
-with `SourceCell` / `FormulaCell` kinds and automatic dependency tracking and
-cache invalidation, plus the full [`lazily-spec`][spec] wire protocol, CRDT
-collection types, keyed cell collections, Harel state charts, and the
-distributed CRDT plane.
+Lazy reactive primitives for C++17 — the **Cell kernel**: two concrete handles
+`Source<T, M>` / `Computed<T>` and automatic dependency tracking and cache
+invalidation, plus the full [`lazily-spec`][spec] wire protocol, CRDT collection
+types, keyed cell collections, Harel state charts, and the distributed CRDT
+plane.
 
 A C++ port of the lazily reactive family ([`lazily-rs`][rs], [`lazily-py`][py],
 [`lazily-kt`][kt], [`lazily-js`][js], [`lazily-dart`][dart], [`lazily-zig`][zig],
@@ -15,41 +15,47 @@ built on `std::thread`, `std::recursive_mutex`, and `std::future`.
 
 ## Overview
 
-`lazily` is built on the **Cell kernel** (`#lzcellkernel`): one node genus
-`Cell<T, K>` over two value kinds, plus a value-less sink.
+`lazily` is built on the **Cell kernel** (`#lzcellkernel`): two concrete value
+handles, plus a value-less sink. `Cell` is a *concept* (a value-bearing reactive
+node) — there is no `Cell<T, K>` handle type.
 
 - **Context** — owns all reactive state and manages the dependency graph
-- **`SourceCell<T, M>`** (`Cell<T, Source<M>>`) — a node written from outside via
-  `set`/`merge`, folding accumulated writes under merge policy `M` (default
-  `KeepLatest`). `Cell ≡ SourceCell<KeepLatest>`.
-- **`FormulaCell<T>`** (`Cell<T, Formula>`) — a value computed from upstream that
-  automatically tracks dependencies. Guarded by default (equal recomputes do not
-  propagate) and lazy until driven.
+- **`Source<T, M>`** — a node written from outside via `set`/`merge`, folding
+  accumulated writes under merge policy `M` (default `KeepLatest`).
+  `Source ≡ Source<KeepLatest>`.
+- **`Computed<T>`** — a value computed from upstream that automatically tracks
+  dependencies. **Guarded by default** (an equal recompute does not propagate,
+  matching TC39 `Signal.Computed`) and lazy until made eager.
 - **Effect** — a value-less side-effect callback that reruns after tracked
-  dependencies invalidate. It sits *outside* the `Cell` hierarchy — nothing can
+  dependencies invalidate. It sits *outside* the cell hierarchy — nothing can
   read it.
 
 Values are **lazy by default**: dependents are marked dirty on invalidation but
 only recomputed when accessed. When you need eager push-style semantics —
-recompute immediately, observe `v1 -> v2` with no unset window — **drive** the
-formula: `ctx.formula(f).drive()` attaches a puller effect. Eagerness is graph
-state (a driven bit + side table), not a distinct `Signal` type, and `.drive()`
-is idempotent and returns the same handle.
+recompute immediately, observe `v1 -> v2` with no unset window — make the
+computed cell **eager**: `ctx.computed(f).eager()` attaches a puller effect.
+Eagerness is graph state (an `eager` bit + side table), not a distinct `Signal`
+type; `.eager()` is idempotent and returns the same handle, and `.lazy()`
+reverts it.
+
+Every cell is **guarded, always** — there is no unguarded mode. A `Source`
+suppresses an equal write; a `Computed` suppresses an equal recompute. The
+former `memo` constructor is gone (folded into the guarded `computed`).
 
 Writes are **compile-restricted to source cells**: `set`/`merge` live only on
-`Cell<T, Source<M>>`, so `formula.set(...)` does not compile — write protection
-with no runtime gate and no shared base class (a partial specialization; see
+`Source<T, M>`, so `computed.set(...)` does not compile — write protection with
+no runtime gate and no shared base class (distinct handle types; see
 § *Write protection*). Multiple updates can be grouped with `ctx.batch(...)` so
 invalidation and effect reruns happen once after the outermost batch exits.
 
 > **`Slot` is the storage sense only.** `SlotId`, `SlotNode`, the arena
 > free-list, and the wire `SlotValue` name the *position that holds a node* of
 > any kind — they are unchanged. Only the former reactive-VALUE sense of "slot"
-> became `FormulaCell`. The lower-level handle types `CellHandle<T>` /
-> `SlotHandle<T>` / `EffectHandle` and constructors (`cell`/`computed`/`memo`/
-> `slot`/`signal`, `MergeCell`) remain as the internal engine surface the CRDT,
-> relay, and coordination families build on, but the kernel above is the
-> recommended public vocabulary.
+> became `Computed`. The lower-level handle types `CellHandle<T>` /
+> `SlotHandle<T>` / `Effect` and the engine constructors (`cell`/`slot`/`memo`/
+> `signal`, `MergeCell`) remain as the internal engine surface the CRDT, relay,
+> and coordination families build on, but the kernel above is the recommended
+> public vocabulary.
 
 ## Feature Set
 
@@ -61,7 +67,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 <!-- coverage-table:start -->
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
-| Reactive graph — kernel `Cell<T, K>` (`SourceCell` / `FormulaCell` / `Effect`) + driven `FormulaCell` (`formula().drive()`) / guarded formulas / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive graph — two cell kinds (nodes `SourceCell` / `ComputedCell`; handles `Source<T, M>` / `Computed<T>`) + `Effect` sink + eager `Computed` (`computed().eager()`) / all cells guarded / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -76,7 +82,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Broadcast topic (`TopicCell`) — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Competing-consumer work queue (`WorkQueueCell`) — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Merge algebra + `SourceCell<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ SourceCell<KeepLatest>`, read-genus/write-`Source<M>` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Merge algebra + `Source<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ Source<KeepLatest>`, read-any-cell/write-`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -178,36 +184,37 @@ journal whose persisted cursor folds with `max`, including across stale handles.
 #include <lazily/lazily.hpp>
 
 lazily::Context ctx;
-auto a = ctx.source(2);                 // SourceCell<int>
+auto a = ctx.source(2);                 // Source<int>
 auto b = ctx.source(3);
-auto sum = ctx.formula<int>([=](lazily::Context& c) {
-  return a.get(c) + b.get(c);           // FormulaCell<int>, guarded
+auto sum = ctx.computed<int>([=](lazily::Context& c) {
+  return a.get(c) + b.get(c);           // Computed<int>, guarded
 });
 
 assert(sum.get(ctx) == 5);
 a.set(ctx, 10);
 assert(sum.get(ctx) == 13);
 
-// Eager: drive the formula to recompute on every invalidation.
-auto eager = ctx.formula<int>([=](lazily::Context& c) {
+// Eager: make the computed cell recompute on every invalidation.
+auto eager = ctx.computed<int>([=](lazily::Context& c) {
   return a.get(c) + b.get(c);
-}).drive(ctx);
-// eager.set(...)  // would NOT compile — writing a formula is a compile error.
+}).eager(ctx);
+// eager.set(...)  // would NOT compile — writing a computed cell is an error.
 ```
 
 ### The reactive kernel
 
-- **`SourceCell<T, M>`** — a value written from outside via `set`/`merge`,
-  folding under merge policy `M` (default `KeepLatest`). Invalidates dependent
-  formulas when it changes.
-- **`FormulaCell<T>`** — a value computed from upstream that tracks its
-  dependencies and recomputes when read after an upstream change. Guarded by
-  default; `.drive()` makes it eager (a driven formula, retiring `Signal`).
-- **Effect** — a value-less side-effect sink outside the `Cell` hierarchy.
+- **`Source<T, M>`** — a value written from outside via `set`/`merge`, folding
+  under merge policy `M` (default `KeepLatest`). Guarded: an equal write is a
+  no-op. Invalidates dependent computed cells when it changes.
+- **`Computed<T>`** — a value computed from upstream that tracks its
+  dependencies and recomputes when read after an upstream change. **Guarded by
+  default** (an equal recompute does not propagate); `.eager()` makes it eager,
+  `.lazy()` reverts it — retiring `Signal`.
+- **Effect** — a value-less side-effect sink outside the cell hierarchy.
 
 Values are **lazy by default**. When you need eager push-style semantics,
-`.drive()` the formula. Writes are compile-restricted to source cells:
-`formula.set(...)` does not build.
+`.eager()` the computed cell. Writes are compile-restricted to source cells:
+`computed.set(...)` does not build.
 
 ### Teardown: disposal, scopes, and degree introspection
 
@@ -376,18 +383,18 @@ assert(work.ack(ctx, "worker-a", delivery.delivery_id));
 - **Context owns all nodes** in a `std::vector<std::optional<Node>>` indexed by
   `SlotId` (uint64_t) — cache-friendly, allocation-light, no hash probes on the
   read path.
-- **Lightweight Copy handles** — the public genus `Cell<T, K>` (`SourceCell<T,
-  M>` / `FormulaCell<T>`) and the internal engine handles (`SlotHandle<T>`,
-  `CellHandle<T>`, `EffectHandle`) are all just `SlotId`s — every value lives in
-  the Context.
-- **Write protection by partial specialization** — `set`/`merge` are declared
-  only on `Cell<T, Source<M>>`, so `formula.set(...)` fails to compile with no
-  runtime check and no base class. Proved by `tests/test_cell_kernel.cpp`
-  (`has_set<>` `static_assert`) and the WILL_FAIL build
+- **Lightweight Copy handles** — the public kernel handles `Source<T, M>` /
+  `Computed<T>` and the internal engine handles (`SlotHandle<T>`,
+  `CellHandle<T>`, `Effect`) are all just `SlotId`s — every value lives in the
+  Context.
+- **Write protection by distinct types** — `set`/`merge` are declared only on
+  `Source<T, M>`, so `computed.set(...)` fails to compile with no runtime check
+  and no base class. Proved by `tests/test_cell_kernel.cpp` (`has_set<>`
+  `static_assert`) and the WILL_FAIL build
   `tests/compile_fail_formula_set.cpp`.
-- **Eagerness is graph state** — a driven `FormulaCell` (`formula().drive()`)
-  carries a `driven` bit on its node plus a `driven_by_` side table in the
-  Context (puller effect id), cleared on `undrive`/dispose. No `Signal` type.
+- **Eagerness is graph state** — an eager `Computed` (`computed().eager()`)
+  carries an `eager` bit on its node plus an `eager_by_` side table in the
+  Context (puller effect id), cleared on `.lazy()`/dispose. No `Signal` type.
 - **Type erasure** via `std::shared_ptr<void>` + `std::type_index` — the
   Context stores heterogeneous node types in a single `std::variant`.
 - **SmallFn** — small-buffer-optimized type-erased callable (replaces
@@ -437,8 +444,8 @@ target_link_libraries(your_target PRIVATE lazily)
 
 | Header | Module |
 |--------|--------|
-| `cell.hpp` | The Cell kernel — genus `Cell<T, K>`, `SourceCell` / `FormulaCell` aliases, `Source<M>` / `Formula` kind markers (`#lzcellkernel`) |
-| `context.hpp` | Reactive graph engine (Context, `source`/`formula`/`.drive()`, driven side table, Effect, batch; internal Slot/Cell nodes + handles) |
+| `cell.hpp` | The Cell kernel — the two concrete handles `Source<T, M>` / `Computed<T>` (guarded), `.eager()`/`.lazy()` transitions (`#lzcellkernel`) |
+| `context.hpp` | Reactive graph engine (Context, `source`/`computed`/`.eager()`, eager side table, Effect, batch; internal Slot/Cell nodes + handles) |
 | `small_fn.hpp` | SmallFn — small-buffer-optimized type-erased callable |
 | `small_any.hpp` | SmallAny — small-buffer type-erased value (inline value storage, optimization B) |
 | `small_vec.hpp` | SmallVec — inline edge storage (0–2 elements inline, heap fallback) |
