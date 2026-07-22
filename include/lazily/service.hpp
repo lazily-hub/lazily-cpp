@@ -8,7 +8,7 @@
 // instance is also a host of services": `HealthCell` / `ReadinessCell` /
 // `DiscoveryCell` / `ServiceRegistry`, each a pure compute **core** (an
 // aggregation / keyed map / durable log) split from a reactive **cell**
-// projecting the composed view onto a `CellHandle` so a reader invalidates only
+// projecting the composed view onto a `Source` so a reader invalidates only
 // when the projection changes. Cross-language conformance fixtures live in
 // `lazily-spec/conformance/service/{health,readiness,discovery,service_registry}.json`.
 
@@ -19,6 +19,7 @@
 #include <vector>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
@@ -64,7 +65,7 @@ class HealthCore {
 // Reactive health: projects the aggregate onto a `Cell` for `/health`.
 class HealthCell {
  public:
-  explicit HealthCell(Context& ctx) : health_(ctx.cell(Health::Healthy)) {}
+  explicit HealthCell(Context& ctx) : health_(ctx.source(Health::Healthy)) {}
 
   void set(Context& ctx, std::string name, bool up, bool critical) {
     core_.set(std::move(name), up, critical);
@@ -72,13 +73,13 @@ class HealthCell {
   }
 
   Health health() const { return core_.health(); }
-  CellHandle<Health> health_cell() const { return health_; }
+  Source<Health> health_cell() const { return health_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(health_, core_.health()); }
+  void refresh(Context& ctx) { ctx.set(health_, core_.health()); }
 
   HealthCore core_;
-  CellHandle<Health> health_;
+  Source<Health> health_;
 };
 
 // ===========================================================================
@@ -108,7 +109,7 @@ class ReadinessCore {
 // Reactive readiness: projects `ready` onto a `Cell` for `/ready`.
 class ReadinessCell {
  public:
-  explicit ReadinessCell(Context& ctx) : ready_(ctx.cell(true)) {}
+  explicit ReadinessCell(Context& ctx) : ready_(ctx.source(true)) {}
 
   void set(Context& ctx, std::string name, bool ready) {
     core_.set(std::move(name), ready);
@@ -116,13 +117,13 @@ class ReadinessCell {
   }
 
   bool ready() const { return core_.ready(); }
-  CellHandle<bool> ready_cell() const { return ready_; }
+  Source<bool> ready_cell() const { return ready_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(ready_, core_.ready()); }
+  void refresh(Context& ctx) { ctx.set(ready_, core_.ready()); }
 
   ReadinessCore core_;
-  CellHandle<bool> ready_;
+  Source<bool> ready_;
 };
 
 // ===========================================================================
@@ -177,7 +178,7 @@ template <typename P>
 class DiscoveryCell {
  public:
   explicit DiscoveryCell(Context& ctx)
-      : discovery_(ctx.cell(std::map<std::string, std::string>{})) {}
+      : discovery_(ctx.source(std::map<std::string, std::string>{})) {}
 
   void register_(Context& ctx, std::string service, std::string endpoint,
                  P peer) {
@@ -200,18 +201,18 @@ class DiscoveryCell {
   }
 
   std::map<std::string, std::string> discovery(Context& ctx) const {
-    return ctx.get_cell(discovery_);
+    return ctx.get(discovery_);
   }
 
-  CellHandle<std::map<std::string, std::string>> discovery_cell() const {
+  Source<std::map<std::string, std::string>> discovery_cell() const {
     return discovery_;
   }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(discovery_, core_.discovery()); }
+  void refresh(Context& ctx) { ctx.set(discovery_, core_.discovery()); }
 
   DiscoveryCore<P> core_;
-  CellHandle<std::map<std::string, std::string>> discovery_;
+  Source<std::map<std::string, std::string>> discovery_;
 };
 
 // ===========================================================================
@@ -283,7 +284,7 @@ class ServiceRegistryCore {
 class ServiceRegistry {
  public:
   explicit ServiceRegistry(Context& ctx)
-      : projection_(ctx.cell(std::map<std::string, std::string>{})) {}
+      : projection_(ctx.source(std::map<std::string, std::string>{})) {}
 
   void register_(Context& ctx, std::string service, std::string endpoint) {
     core_.register_(std::move(service), std::move(endpoint));
@@ -301,18 +302,18 @@ class ServiceRegistry {
   }
 
   std::map<std::string, std::string> projection(Context& ctx) const {
-    return ctx.get_cell(projection_);
+    return ctx.get(projection_);
   }
 
-  CellHandle<std::map<std::string, std::string>> projection_cell() const {
+  Source<std::map<std::string, std::string>> projection_cell() const {
     return projection_;
   }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(projection_, core_.projection()); }
+  void refresh(Context& ctx) { ctx.set(projection_, core_.projection()); }
 
   ServiceRegistryCore core_;
-  CellHandle<std::map<std::string, std::string>> projection_;
+  Source<std::map<std::string, std::string>> projection_;
 };
 
 }  // namespace lazily

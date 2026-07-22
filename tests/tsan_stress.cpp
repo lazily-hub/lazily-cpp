@@ -54,8 +54,8 @@ void test_scalable_lock_mx() {
 // ScalableThreadSafeContext end-to-end under TSan: concurrent get_cell/set_cell.
 void test_scalable_context() {
   ScalableThreadSafeContext ctx;
-  auto c = ctx.cell(7);
-  auto s = ctx.slot<int>([&](Context& cc) { return cc.get_cell(c) * 3; });
+  auto c = ctx.source(7);
+  auto s = ctx.slot<int>([&](Context& cc) { return cc.get(c) * 3; });
   (void)ctx.get(s);
 
   std::atomic<bool> stop{false};
@@ -65,11 +65,11 @@ void test_scalable_context() {
     threads.emplace_back([&, t]() {
       if (t % 4 == 0) {
         // writers
-        for (int i = 0; i < 20000; ++i) ctx.set_cell(c, 7 + (i % 100));
+        for (int i = 0; i < 20000; ++i) ctx.set(c, 7 + (i % 100));
       } else {
         // readers
         while (!stop.load(std::memory_order_relaxed)) {
-          int v = ctx.get_cell(c);          // must be a published value
+          int v = ctx.get(c);          // must be a published value
           if (v < 7 || v > 106) ++bad;      // sanity range
         }
       }

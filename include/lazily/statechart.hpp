@@ -2,6 +2,7 @@
 #define LAZILY_STATECHART_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 #include <algorithm>
 #include <map>
@@ -459,13 +460,13 @@ class StateChart {
     Config enter;
     std::vector<std::string> actions;
     enter_subtree(def_, def_.root, enter, actions);
-    config_ = ctx.cell(std::move(enter));
+    config_ = ctx.source(std::move(enter));
     last_actions_ = std::move(actions);
   }
 
   std::vector<std::string> last_actions() const { return last_actions_; }
 
-  Config configuration(Context& ctx) { return ctx.get_cell(config_); }
+  Config configuration(Context& ctx) { return ctx.get(config_); }
 
   std::vector<std::string> active_leaves(Context& ctx) {
     auto config = configuration(ctx);
@@ -492,14 +493,14 @@ class StateChart {
     auto& [new_config, actions] = *result;
     last_actions_ = std::move(actions);
     if (new_config != config) {
-      ctx.set_cell(config_, std::move(new_config));
+      ctx.set(config_, std::move(new_config));
     }
     return true;
   }
 
  private:
   ChartDef def_;
-  CellHandle<Config> config_;
+  Source<Config> config_;
   HistoryMap history_;
   std::vector<std::string> last_actions_;
 };

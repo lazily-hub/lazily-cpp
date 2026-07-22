@@ -23,6 +23,7 @@
 #define LAZILY_RELAY_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -85,17 +86,17 @@ enum class IngressOutcome {
 /// operator or an adaptive controller retunes it live and dependent relays react.
 /// Hysteresis (`high_water` ≠ `low_water`) prevents flapping.
 struct BackpressurePolicy {
-  CellHandle<BoundDim> dimension;
-  CellHandle<std::uint64_t> high_water;
-  CellHandle<std::uint64_t> low_water;
-  CellHandle<Overflow> overflow;
+  Source<BoundDim> dimension;
+  Source<std::uint64_t> high_water;
+  Source<std::uint64_t> low_water;
+  Source<Overflow> overflow;
 
   BackpressurePolicy(Context& ctx, BoundDim dimension_, std::uint64_t high_water_,
                      std::uint64_t low_water_, Overflow overflow_)
-      : dimension(ctx.cell(dimension_)),
-        high_water(ctx.cell(high_water_)),
-        low_water(ctx.cell(low_water_)),
-        overflow(ctx.cell(overflow_)) {}
+      : dimension(ctx.source(dimension_)),
+        high_water(ctx.source(high_water_)),
+        low_water(ctx.source(low_water_)),
+        overflow(ctx.source(overflow_)) {}
 };
 
 /// The algebra-typed conflating relay (Phase 2, in-proc core). The hot head is a
@@ -110,36 +111,36 @@ class RelayCell {
   /// `Policy::conflates`. Throws `RelayConfigException` otherwise.
   RelayCell(Context& ctx, BackpressurePolicy policy)
       : ctx_(&ctx), policy_(policy) {
-    if (ctx.get_cell(policy_.overflow) == Overflow::Conflate && !Policy::conflates) {
+    if (ctx.get(policy_.overflow) == Overflow::Conflate && !Policy::conflates) {
       throw RelayConfigException(RelayConfigError::ConflateNotBounding);
     }
-    head_ = ctx.cell(std::optional<T>{});
-    pending_ = ctx.cell<std::uint64_t>(0);
+    head_ = ctx.source(std::optional<T>{});
+    pending_ = ctx.source<std::uint64_t>(0);
     auto pending = pending_;
     auto head = head_;
     auto high_water = policy_.high_water;
-    depth_ = ctx.memo<std::uint64_t>(
-        [pending](Context& c) { return c.get_cell(pending); });
+    depth_ = ctx.computed<std::uint64_t>(
+        [pending](Context& c) { return c.get(pending); });
     auto depth = depth_;
-    is_full_ = ctx.memo<bool>([depth, high_water](Context& c) {
-      return c.get(depth) >= c.get_cell(high_water);
+    is_full_ = ctx.computed<bool>([depth, high_water](Context& c) {
+      return c.get(depth) >= c.get(high_water);
     });
-    is_empty_ = ctx.memo<bool>(
-        [head](Context& c) { return !c.get_cell(head).has_value(); });
+    is_empty_ = ctx.computed<bool>(
+        [head](Context& c) { return !c.get(head).has_value(); });
   }
 
   /// Whether the current overflow choice is legal for `Policy` — a runtime guard
   /// mirroring the constructor's check (the overflow cell is reactive).
   bool overflow_is_legal() const {
-    return ctx_->get_cell(policy_.overflow) != Overflow::Conflate || Policy::conflates;
+    return ctx_->get(policy_.overflow) != Overflow::Conflate || Policy::conflates;
   }
 
   /// Demand-driven reader handle: current window depth (`Count`).
-  SlotHandle<std::uint64_t> depth() const { return depth_; }
+  Computed<std::uint64_t> depth() const { return depth_; }
   /// Demand-driven reader handle: window is at/over `high_water`.
-  SlotHandle<bool> is_full() const { return is_full_; }
+  Computed<bool> is_full() const { return is_full_; }
   /// Demand-driven reader handle: window is empty (nothing to drain).
-  SlotHandle<bool> is_empty() const { return is_empty_; }
+  Computed<bool> is_empty() const { return is_empty_; }
 
   /// Convenience: read the current depth value.
   std::uint64_t depth_value() const { return ctx_->get(depth_); }
@@ -151,18 +152,18 @@ class RelayCell {
   /// Ingest one op. Applies the reactive overflow policy when the window is at
   /// `high_water`; otherwise merges the op into the hot head under `Policy`.
   IngressOutcome ingress(T op) {
-    bool was_empty = ctx_->get_cell(pending_) == 0;
+    bool was_empty = ctx_->get(pending_) == 0;
 
     if (read_full()) {
-      switch (ctx_->get_cell(policy_.overflow)) {
+      switch (ctx_->get(policy_.overflow)) {
         case Overflow::Block:
           return IngressOutcome::Blocked;
         case Overflow::DropNewest:
           return IngressOutcome::Dropped;
         case Overflow::DropOldest:
           // Discard the accumulated window, restart from this op.
-          ctx_->set_cell(head_, std::optional<T>(std::move(op)));
-          ctx_->set_cell<std::uint64_t>(pending_, 1);
+          ctx_->set(head_, std::optional<T>(std::move(op)));
+          ctx_->set<std::uint64_t>(pending_, 1);
           return IngressOutcome::Dropped;
         // Conflate keeps merging (the coalescence is the bound); Spill is Phase 3
         // and, until wired, degrades to Conflate for a bounding policy. Both fall
@@ -174,7 +175,7 @@ class RelayCell {
     }
 
     merge_into_head(std::move(op));
-    ctx_->set_cell<std::uint64_t>(pending_, ctx_->get_cell(pending_) + 1);
+    ctx_->set<std::uint64_t>(pending_, ctx_->get(pending_) + 1);
     return was_empty ? IngressOutcome::Accepted : IngressOutcome::Conflated;
   }
 
@@ -182,37 +183,37 @@ class RelayCell {
   /// Returns `std::nullopt` for an empty window. `relay_converges` guarantees the
   /// egress fold equals the flat fold of every ingested op, for any drain schedule.
   std::optional<T> drain() {
-    auto cur = ctx_->get_cell(head_);
+    auto cur = ctx_->get(head_);
     if (cur.has_value()) {
-      ctx_->set_cell(head_, std::optional<T>{});
-      ctx_->set_cell<std::uint64_t>(pending_, 0);
+      ctx_->set(head_, std::optional<T>{});
+      ctx_->set<std::uint64_t>(pending_, 0);
     }
     return cur;
   }
 
   /// Peek the current coalesced window without draining.
-  std::optional<T> peek() const { return ctx_->get_cell(head_); }
+  std::optional<T> peek() const { return ctx_->get(head_); }
 
  private:
   bool read_full() const {
-    return ctx_->get_cell(pending_) >= ctx_->get_cell(policy_.high_water);
+    return ctx_->get(pending_) >= ctx_->get(policy_.high_water);
   }
 
   void merge_into_head(T op) {
-    auto cur = ctx_->get_cell(head_);
+    auto cur = ctx_->get(head_);
     T next = cur.has_value()
                  ? Policy::template merge<T>(cur.value(), std::move(op))
                  : std::move(op);
-    ctx_->set_cell(head_, std::optional<T>(std::move(next)));
+    ctx_->set(head_, std::optional<T>(std::move(next)));
   }
 
   Context* ctx_;
   BackpressurePolicy policy_;
-  CellHandle<std::optional<T>> head_;
-  CellHandle<std::uint64_t> pending_;
-  SlotHandle<std::uint64_t> depth_;
-  SlotHandle<bool> is_full_;
-  SlotHandle<bool> is_empty_;
+  Source<std::optional<T>> head_;
+  Source<std::uint64_t> pending_;
+  Computed<std::uint64_t> depth_;
+  Computed<bool> is_full_;
+  Computed<bool> is_empty_;
 };
 
 // -- Phase 3: SpillStore -----------------------------------------------------
@@ -412,7 +413,7 @@ class Outbox {
   std::optional<T> drain() { return relay_.drain(); }
 
   /// The producer-facing backpressure signal (window at/over the watermark).
-  SlotHandle<bool> is_full() const { return relay_.is_full(); }
+  Computed<bool> is_full() const { return relay_.is_full(); }
 
   /// Access the underlying relay (for wiring extra egress stages).
   RelayCell<T, Policy>& relay() { return relay_; }

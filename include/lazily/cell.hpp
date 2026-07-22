@@ -69,7 +69,9 @@ namespace lazily {
 // `Source<T, Sum>` folds additively; etc. Reads with `get`; writes with
 // `set`/`merge` — the only kind that has them. Guarded: an equal write is a
 // no-op that fires no cascade.
-template <typename T, typename M = KeepLatest>
+// The default `M = KeepLatest` is declared on the forward declaration in
+// context.hpp (a default template argument may be given only once).
+template <typename T, typename M>
 class Source {
  public:
   using value_type = T;
@@ -94,11 +96,10 @@ class Source {
 
   // Fold `op` into the current value under policy `M`. For `KeepLatest` this is
   // a replace (`Source ≡ Source<T, KeepLatest>`). Routes through the ==-guarded
-  // `set_cell`, so an idempotent policy's no-op merge fires no cascade.
+  // unified `set`, so an idempotent policy's no-op merge fires no cascade.
   void merge(Context& ctx, T op) const {
-    T old = ctx.template peek_cell<T>(CellHandle<T>(id_)).value();
-    ctx.template set_cell<T>(CellHandle<T>(id_),
-                            M::template merge<T>(old, std::move(op)));
+    T old = ctx.peek_cell(*this).value();
+    ctx.set(*this, M::template merge<T>(old, std::move(op)));
   }
 
   // The policy-erased keep-latest view of this cell, for wiring derived readers
@@ -113,7 +114,7 @@ class Source {
   }
 
   // Tear this source down (detaches dependents, recycles the id). Kind-checked.
-  void dispose(Context& ctx) const { ctx.dispose_cell(CellHandle<T>(id_)); }
+  void dispose(Context& ctx) const { ctx.dispose_cell(*this); }
 
   bool operator==(const Source& o) const { return id_ == o.id_; }
   bool operator!=(const Source& o) const { return !(*this == o); }
@@ -170,7 +171,7 @@ class Computed {
 
   // Tear this computed cell down (detaches edges, tears down its puller if
   // eager, recycles the id). Kind-checked: a stale/recycled id is a no-op.
-  void dispose(Context& ctx) const { ctx.dispose_slot(SlotHandle<T>(id_)); }
+  void dispose(Context& ctx) const { ctx.dispose_slot(*this); }
 
   bool operator==(const Computed& o) const { return id_ == o.id_; }
   bool operator!=(const Computed& o) const { return !(*this == o); }

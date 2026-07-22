@@ -5,7 +5,7 @@
 // thread-safe flavor).
 //
 // The `Send + Sync` analog of `ReactiveMap`: keys `K` map to per-entry reactive
-// nodes (`CellHandle<V>` input cells / `SlotHandle<V>` derived slots) allocated
+// nodes (`Source<V>` input cells / `Computed<V>` derived slots) allocated
 // on a `ThreadSafeContext`. Where `ReactiveMap` keeps its present-set in a bare
 // `shared_ptr` and is meant for a single thread, this map guards that state
 // behind a `std::mutex`, so it can be captured by compute/effect closures and
@@ -25,6 +25,7 @@
 // `lazily-rs/src/thread_safe_reactive_family.rs`.
 
 #include <cstddef>
+#include <lazily/cell.hpp>
 #include <functional>
 #include <initializer_list>
 #include <memory>
@@ -38,45 +39,45 @@
 
 namespace lazily {
 
-// Traits abstracting over the two thread-safe map handle kinds — `CellHandle<V>`
-// (input cells) and `SlotHandle<V>` (derived slots). The `Send + Sync` analog of
+// Traits abstracting over the two thread-safe map handle kinds — `Source<V>`
+// (input cells) and `Computed<V>` (derived slots). The `Send + Sync` analog of
 // `MapHandleTraits`; only these two specializations exist. Materialization and
 // observation run against a `ThreadSafeContext`.
 template <typename H>
 struct ThreadSafeMapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
-struct ThreadSafeMapHandleTraits<CellHandle<V>> {
+struct ThreadSafeMapHandleTraits<Source<V>> {
   static constexpr EntryKind kind = EntryKind::Cell;
 
   // An input has no derivation: materialize by setting its value directly.
   template <typename K>
-  static CellHandle<V> materialize(ThreadSafeContext& ctx, const K& key,
+  static Source<V> materialize(ThreadSafeContext& ctx, const K& key,
                                    const std::function<V(const K&)>& factory) {
     return ctx.template cell<V>(factory(key));
   }
 
-  static V observe(const CellHandle<V>& h, ThreadSafeContext& ctx) {
-    return ctx.get_cell(h);
+  static V observe(const Source<V>& h, ThreadSafeContext& ctx) {
+    return ctx.get(h);
   }
 };
 
 template <typename V>
-struct ThreadSafeMapHandleTraits<SlotHandle<V>> {
+struct ThreadSafeMapHandleTraits<Computed<V>> {
   static constexpr EntryKind kind = EntryKind::Slot;
 
   // A derived node: the same node an eager pre-mint would allocate. The factory
   // is captured as the slot's recomputation; it runs on first read, off the map
   // lock.
   template <typename K>
-  static SlotHandle<V> materialize(ThreadSafeContext& ctx, const K& key,
+  static Computed<V> materialize(ThreadSafeContext& ctx, const K& key,
                                    const std::function<V(const K&)>& factory) {
     K k = key;
     return ctx.template computed<V>(
         [factory, k](Context&) -> V { return factory(k); });
   }
 
-  static V observe(const SlotHandle<V>& h, ThreadSafeContext& ctx) {
+  static V observe(const Computed<V>& h, ThreadSafeContext& ctx) {
     return ctx.get(h);
   }
 };
@@ -90,7 +91,7 @@ struct ThreadSafeReactiveMapInner {
 };
 
 // The thread-safe keyed reactive collection (`#reactivemap`) generic over the
-// entry handle kind `H` (`CellHandle<V>` for input cells, `SlotHandle<V>` for
+// entry handle kind `H` (`Source<V>` for input cells, `Computed<V>` for
 // derived slots).
 //
 // Cheap to copy (a `shared_ptr` to shared inner state) so it can be captured by
@@ -191,19 +192,19 @@ class ThreadSafeReactiveMap {
 };
 
 // A thread-safe **input-cell** map: every entry is an always-materialized
-// `CellHandle<V>`. Adds cell-only `set`. The `Send + Sync` analog of `CellMap`.
+// `Source<V>`. Adds cell-only `set`. The `Send + Sync` analog of `CellMap`.
 template <typename K, typename V>
 class ThreadSafeCellMap
-    : public ThreadSafeReactiveMap<K, V, CellHandle<V>> {
+    : public ThreadSafeReactiveMap<K, V, Source<V>> {
  public:
-  using Base = ThreadSafeReactiveMap<K, V, CellHandle<V>>;
+  using Base = ThreadSafeReactiveMap<K, V, Source<V>>;
   using Base::Base;
 
   // Set the value at `key`, inserting a new input cell if absent. Cell-only.
   void set(ThreadSafeContext& ctx, const K& key, V value) {
     auto h = this->handle(key);
     if (h) {
-      ctx.set_cell(*h, std::move(value));
+      ctx.set(*h, std::move(value));
       return;
     }
     this->get_or_insert_handle(ctx, key,
@@ -211,13 +212,13 @@ class ThreadSafeCellMap
   }
 };
 
-// A thread-safe **derived-slot** map: entries are `SlotHandle<V>` minted lazily
+// A thread-safe **derived-slot** map: entries are `Computed<V>` minted lazily
 // on access or eagerly via `materialize_all`.
 template <typename K, typename V>
 class ThreadSafeSlotMap
-    : public ThreadSafeReactiveMap<K, V, SlotHandle<V>> {
+    : public ThreadSafeReactiveMap<K, V, Computed<V>> {
  public:
-  using Base = ThreadSafeReactiveMap<K, V, SlotHandle<V>>;
+  using Base = ThreadSafeReactiveMap<K, V, Computed<V>>;
   using Base::Base;
 
   // **Eager materialization**: pre-mint a derived slot for every key in `keys`.

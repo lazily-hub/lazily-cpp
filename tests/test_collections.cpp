@@ -27,8 +27,8 @@ TEST(test_cellmap_entry_caches) {
   CellMap<std::string, int> map(ctx);
   auto a1 = map.entry(ctx, "a", 1);
   auto a2 = map.entry(ctx, "a", 999);
-  assert(a1.id == a2.id);
-  assert(ctx.get_cell(a1) == 1);
+  assert(a1.id() == a2.id());
+  assert(ctx.get(a1) == 1);
   assert(map.len_untracked() == 1);
 }
 
@@ -38,12 +38,12 @@ TEST(test_cellmap_membership_reactive) {
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
-  auto count = ctx.memo<int>([&](Context& c) {
+  auto count = ctx.computed<int>([&](Context& c) {
     return (int)map.len(c);
   });
   assert(ctx.get(count) == 2);
 
-  ctx.set_cell(a, 100);
+  ctx.set(a, 100);
   assert(ctx.is_set(count) && "membership reader stayed cached on value change");
 
   map.entry(ctx, "c", 3);
@@ -59,15 +59,15 @@ TEST(test_cellmap_per_entry_independent) {
   auto a = map.entry(ctx, "a", 1);
   auto b = map.entry(ctx, "b", 2);
 
-  auto view_a = ctx.memo<int>([&](Context& c) {
+  auto view_a = ctx.computed<int>([&](Context& c) {
     return map.get(c, "a").value_or(0) * 10;
   });
   assert(ctx.get(view_a) == 10);
 
-  ctx.set_cell(b, 222);
+  ctx.set(b, 222);
   assert(ctx.is_set(view_a) && "sibling change must not invalidate");
 
-  ctx.set_cell(a, 5);
+  ctx.set(a, 5);
   assert(ctx.get(view_a) == 50);
 }
 
@@ -83,7 +83,7 @@ TEST(test_cellmap_move_preserves_identity) {
   assert(keys.size() == 3 && keys[0] == "c" && keys[1] == "a" && keys[2] == "b");
 
   auto a_handle = map.handle("a");
-  assert(a_handle && a_handle->id == a.id);
+  assert(a_handle && a_handle->id() == a.id());
 }
 
 TEST(test_cellmap_pure_move_spares_membership) {
@@ -93,10 +93,10 @@ TEST(test_cellmap_pure_move_spares_membership) {
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
 
-  auto count = ctx.memo<int>([&](Context& c) {
+  auto count = ctx.computed<int>([&](Context& c) {
     return (int)map.len(c);
   });
-  auto has_b = ctx.memo<bool>([&](Context& c) {
+  auto has_b = ctx.computed<bool>([&](Context& c) {
     return map.contains_key(c, "b");
   });
   ctx.get(count);
@@ -202,7 +202,7 @@ TEST(test_reconcile_apply_to_map) {
 
   auto a_handle = map.handle("a").value();
 
-  auto a_view = ctx.memo<int>([&](Context& c) {
+  auto a_view = ctx.computed<int>([&](Context& c) {
     return map.get(c, "a").value_or(0) * 100;
   });
   assert(ctx.get(a_view) == 100);
@@ -212,7 +212,7 @@ TEST(test_reconcile_apply_to_map) {
   assert(keys.size() == 3 && keys[0] == "a" && keys[1] == "c" && keys[2] == "b");
 
   assert(ctx.is_set(a_view) && "stable entry not invalidated by sibling reorder");
-  assert(map.handle("a").value().id == a_handle.id && "identity preserved");
+  assert(map.handle("a").value().id() == a_handle.id() && "identity preserved");
 }
 
 TEST(test_reconcile_apply_to_tree) {

@@ -42,8 +42,8 @@ TEST(test_entry_caches_one_cell_per_key) {
   CellMap<std::string, int> map(ctx);
   auto a1 = map.entry(ctx, "a", 1);
   auto a2 = map.entry(ctx, "a", 999);
-  assert(a1.id == a2.id);
-  assert(ctx.get_cell(a1) == 1);
+  assert(a1.id() == a2.id());
+  assert(ctx.get(a1) == 1);
   assert(map.len_untracked() == 1);
 }
 
@@ -76,10 +76,10 @@ TEST(test_membership_reactive_value_not) {
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
-  auto count = ctx.memo<int>([&](Context& c) { return (int)map.len(c); });
+  auto count = ctx.computed<int>([&](Context& c) { return (int)map.len(c); });
   assert(ctx.get(count) == 2);
 
-  ctx.set_cell(a, 100);
+  ctx.set(a, 100);
   assert(ctx.is_set(count) && "membership reader stayed cached");
   assert(ctx.get(count) == 2);
 
@@ -133,7 +133,7 @@ TEST(test_move_to_reorders_and_keeps_identity) {
 
   assert(map.move_to(ctx, "c", 0));
   assert((map.keys(ctx) == std::vector<std::string>{"c", "a", "b"}));
-  assert(map.handle("a")->id == a.id);
+  assert(map.handle("a")->id() == a.id());
   assert(map.get(ctx, "a") == std::optional<int>(1));
 
   assert(!map.move_to(ctx, "z", 0));
@@ -146,12 +146,12 @@ TEST(test_pure_move_spares_membership) {
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
 
-  auto order_reader = ctx.memo<size_t>([&](Context& c) {
+  auto order_reader = ctx.computed<size_t>([&](Context& c) {
     return map.keys(c).size();
   });
-  auto count = ctx.memo<int>([&](Context& c) { return (int)map.len(c); });
+  auto count = ctx.computed<int>([&](Context& c) { return (int)map.len(c); });
   auto has_b =
-      ctx.memo<bool>([&](Context& c) { return map.contains_key(c, "b"); });
+      ctx.computed<bool>([&](Context& c) { return map.contains_key(c, "b"); });
   ctx.get(order_reader);
   ctx.get(count);
   ctx.get(has_b);

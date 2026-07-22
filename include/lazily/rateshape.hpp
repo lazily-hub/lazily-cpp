@@ -12,7 +12,7 @@
 //
 // Each operator is a pure compute **core** — the emit/drop decision over plain
 // state — split from a thin reactive **cell** that projects the emitted value
-// onto a `CellHandle<std::optional<T>>` so a dropped/held input never
+// onto a `Source<std::optional<T>>` so a dropped/held input never
 // invalidates dependents. Time is a monotone logical clock (as in `#lztime`).
 //
 // See `lazily-spec/conformance/rateshape/*.json`.
@@ -21,18 +21,19 @@
 #include <optional>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
 // The reactive-cell projection shared by every operator: publish the last
-// emitted value onto a `CellHandle<std::optional<T>>`. A dropped/held input
+// emitted value onto a `Source<std::optional<T>>`. A dropped/held input
 // (empty `emitted`) never touches the cell, so dependents survive. `set_cell`
 // dedups, so an emit that repeats the current value is a no-op invalidation.
 template <typename T>
 inline void rateshape_set_output(Context& ctx,
-                                 const CellHandle<std::optional<T>>& cell,
+                                 const Source<std::optional<T>>& cell,
                                  const std::optional<T>& emitted) {
-  if (emitted) ctx.set_cell(cell, std::optional<T>(*emitted));
+  if (emitted) ctx.set(cell, std::optional<T>(*emitted));
 }
 
 // ── Debounce ────────────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ template <typename T>
 class DebounceCell {
  public:
   DebounceCell(Context& ctx, uint64_t quiet)
-      : core_(quiet), output_(ctx.cell(std::optional<T>{})) {}
+      : core_(quiet), output_(ctx.source(std::optional<T>{})) {}
 
   void input(Context&, uint64_t now, T v) { core_.input(now, std::move(v)); }
 
@@ -85,11 +86,11 @@ class DebounceCell {
   }
 
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   DebounceCore<T> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 // ── Throttle ──────────────────────────────────────────────────────────────
@@ -148,7 +149,7 @@ template <typename T>
 class ThrottleCell {
  public:
   ThrottleCell(Context& ctx, ThrottleEdge edge, uint64_t window)
-      : core_(edge, window), output_(ctx.cell(std::optional<T>{})) {}
+      : core_(edge, window), output_(ctx.source(std::optional<T>{})) {}
 
   std::optional<T> input(Context& ctx, uint64_t now, T v) {
     auto emitted = core_.input(now, std::move(v));
@@ -163,11 +164,11 @@ class ThrottleCell {
   }
 
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   ThrottleCore<T> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 // ── Sample ──────────────────────────────────────────────────────────────────
@@ -234,7 +235,7 @@ template <typename T>
 class SampleCell {
  public:
   SampleCell(Context& ctx, SampleMode mode)
-      : core_(mode), output_(ctx.cell(std::optional<T>{})) {}
+      : core_(mode), output_(ctx.source(std::optional<T>{})) {}
 
   std::optional<T> input(Context& ctx, T v) {
     auto emitted = core_.input(std::move(v));
@@ -249,11 +250,11 @@ class SampleCell {
   }
 
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   SampleCore<T> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 // ── Probabilistic sample ────────────────────────────────────────────────────
@@ -310,7 +311,7 @@ class ProbabilisticSampleCell {
  public:
   ProbabilisticSampleCell(Context& ctx, double rate, R rng)
       : core_(rate), rng_(std::move(rng)),
-        output_(ctx.cell(std::optional<T>{})) {}
+        output_(ctx.source(std::optional<T>{})) {}
 
   // Sample an input using the owned RNG.
   std::optional<T> input(Context& ctx, T v) {
@@ -321,19 +322,19 @@ class ProbabilisticSampleCell {
   // Sample an input against an explicit `draw` (deterministic / conformance).
   std::optional<T> input_with_draw(Context& ctx, T v, double draw) {
     if (core_.decide(draw)) {
-      ctx.set_cell(output_, std::optional<T>(v));
+      ctx.set(output_, std::optional<T>(v));
       return std::optional<T>(std::move(v));
     }
     return std::nullopt;
   }
 
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   ProbabilisticSampleCore core_;
   R rng_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 }  // namespace lazily

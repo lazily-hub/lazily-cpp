@@ -193,13 +193,26 @@ class BasicThreadSafeContext {
   Context& context() { return ctx_; }
 
   // -- Mutating API (exclusive) --
+  //
+  // Mirrors the collapsed core surface (`#lzcellkernel`): `source`/`computed`/
+  // `slot` constructors, unified `get`/`set`, deprecated `cell`/`get_cell`/
+  // `set_cell` aliases; `memo` is deleted.
   template <typename T>
-  CellHandle<T> cell(T value) {
-    return write([&](Context& c) { return c.cell(std::move(value)); });
+  Source<T> source(T value) {
+    return write([&](Context& c) { return c.source(std::move(value)); });
   }
   template <typename T>
-  void set_cell(const CellHandle<T>& handle, T value) {
-    write([&](Context& c) { c.set_cell(handle, std::move(value)); });
+  [[deprecated("use ThreadSafeContext::source (#lzcellkernel)")]]
+  Source<T> cell(T value) { return source<T>(std::move(value)); }
+
+  template <typename T, typename M>
+  void set(const Source<T, M>& handle, T value) {
+    write([&](Context& c) { c.set(handle, std::move(value)); });
+  }
+  template <typename T, typename M>
+  [[deprecated("use ThreadSafeContext::set (#lzcellkernel)")]]
+  void set_cell(const Source<T, M>& handle, T value) {
+    set(handle, std::move(value));
   }
   template <typename F>
   auto batch(F&& fn) {
@@ -207,18 +220,14 @@ class BasicThreadSafeContext {
   }
 
   template <typename T, typename F>
-  SlotHandle<T> slot(F&& compute) {
+  Computed<T> slot(F&& compute) {
     return write(
         [&](Context& c) { return c.template slot<T>(std::forward<F>(compute)); });
   }
   template <typename T, typename F>
-  SlotHandle<T> computed(F&& compute) {
-    return slot<T>(std::forward<F>(compute));
-  }
-  template <typename T, typename F>
-  SlotHandle<T> memo(F&& compute) {
+  Computed<T> computed(F&& compute) {
     return write(
-        [&](Context& c) { return c.template memo<T>(std::forward<F>(compute)); });
+        [&](Context& c) { return c.template computed<T>(std::forward<F>(compute)); });
   }
   // Eager-computed convenience — returns the eager `Computed<T>` (the `Signal`
   // kind is retired, `#lzcellkernel`). De-eager with `.lazy`, read with `.get`.
@@ -240,22 +249,25 @@ class BasicThreadSafeContext {
   }
 
   // -- Read API --
-  template <typename T>
-  T get_cell(const CellHandle<T>& handle) {
-    if (am_writer()) return ctx_.get_cell(handle);
+  template <typename T, typename M>
+  T get(const Source<T, M>& handle) {
+    if (am_writer()) return ctx_.get(handle);
     if constexpr (Policy::kSharedReads) {
       typename Policy::read_guard g(mutex_);
-      auto v = ctx_.peek_cell<T>(handle);
-      assert(v && "get_cell on non-cell");
+      auto v = ctx_.peek_cell(handle);
+      assert(v && "get on non-cell");
       return std::move(*v);
     } else {
       typename Policy::read_guard g(mutex_);
-      return ctx_.get_cell(handle);
+      return ctx_.get(handle);
     }
   }
+  template <typename T, typename M>
+  [[deprecated("use ThreadSafeContext::get (#lzcellkernel)")]]
+  T get_cell(const Source<T, M>& handle) { return get(handle); }
 
   template <typename T>
-  T get(const SlotHandle<T>& handle) {
+  T get(const Computed<T>& handle) {
     if (am_writer()) return ctx_.get(handle);
     if constexpr (Policy::kSharedReads) {
       {
@@ -271,12 +283,12 @@ class BasicThreadSafeContext {
     }
   }
 
-  template <typename T>
-  std::shared_ptr<T> get_cell_rc(const CellHandle<T>& handle) {
+  template <typename T, typename M>
+  std::shared_ptr<T> get_cell_rc(const Source<T, M>& handle) {
     if (am_writer()) return ctx_.get_cell_rc(handle);
     if constexpr (Policy::kSharedReads) {
       typename Policy::read_guard g(mutex_);
-      auto v = ctx_.peek_cell<T>(handle);
+      auto v = ctx_.peek_cell(handle);
       assert(v && "get_cell_rc on non-cell");
       return std::make_shared<T>(std::move(*v));
     } else {
@@ -286,7 +298,7 @@ class BasicThreadSafeContext {
   }
 
   template <typename T>
-  std::shared_ptr<T> get_rc(const SlotHandle<T>& handle) {
+  std::shared_ptr<T> get_rc(const Computed<T>& handle) {
     if (am_writer()) return ctx_.get_rc(handle);
     if constexpr (Policy::kSharedReads) {
       {
@@ -303,7 +315,7 @@ class BasicThreadSafeContext {
   }
 
   template <typename T>
-  bool is_set(const SlotHandle<T>& handle) {
+  bool is_set(const Computed<T>& handle) {
     return read([&](Context& c) { return c.is_set(handle); });
   }
   bool is_batching() {

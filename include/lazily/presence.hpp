@@ -9,7 +9,7 @@
 // persist (live cursors, typing indicators, presence). Each primitive is a pure
 // compute **core** (a keyed map / single value + TTL over a monotone logical
 // clock) split from a reactive **cell** projecting the live view onto a
-// `CellHandle` (invalidates only on a live-view change).
+// `Source` (invalidates only on a live-view change).
 //
 // The ephemeral plane is distinct from the durable plane: the `Ephemeral`
 // marker tags values that MUST NOT be persisted, and a durable sink is generic
@@ -27,6 +27,7 @@
 #include <utility>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
@@ -110,7 +111,7 @@ class EphemeralCell {
   using plane_marker = Ephemeral;
 
   explicit EphemeralCell(Context& ctx)
-      : value_(ctx.cell(std::optional<T>{})) {}
+      : value_(ctx.source(std::optional<T>{})) {}
 
   void set(Context& ctx, T value, uint64_t now, uint64_t ttl) {
     core_.set(std::move(value), now, ttl);
@@ -124,13 +125,13 @@ class EphemeralCell {
 
   std::optional<T> value(Context& ctx) { return value_.get(ctx); }
 
-  CellHandle<std::optional<T>> value_cell() const { return value_; }
+  Source<std::optional<T>> value_cell() const { return value_; }
 
  private:
   void refresh(Context& ctx) { value_.set(ctx, core_.value()); }
 
   EphemeralCore<T> core_;
-  CellHandle<std::optional<T>> value_;
+  Source<std::optional<T>> value_;
 };
 
 // ===========================================================================
@@ -192,7 +193,7 @@ class PresenceCell {
   using plane_marker = Ephemeral;
 
   PresenceCell(Context& ctx, uint64_t ttl)
-      : present_(ctx.cell(std::map<K, V>{})), ttl_(ttl) {}
+      : present_(ctx.source(std::map<K, V>{})), ttl_(ttl) {}
 
   /// Heartbeat a peer's presence (expiring at `now + ttl`).
   void heartbeat(Context& ctx, K peer, V value, uint64_t now) {
@@ -213,7 +214,7 @@ class PresenceCell {
 
   std::map<K, V> present(Context& ctx) { return present_.get(ctx); }
 
-  CellHandle<std::map<K, V>> present_cell() const { return present_; }
+  Source<std::map<K, V>> present_cell() const { return present_; }
 
  private:
   void refresh(Context& ctx, uint64_t now) {
@@ -221,7 +222,7 @@ class PresenceCell {
   }
 
   EphemeralMapCore<K, V> core_;
-  CellHandle<std::map<K, V>> present_;
+  Source<std::map<K, V>> present_;
   uint64_t ttl_;
 };
 
@@ -233,7 +234,7 @@ class AwarenessCell {
   using plane_marker = Ephemeral;
 
   AwarenessCell(Context& ctx, uint64_t ttl)
-      : present_(ctx.cell(std::map<K, V>{})), ttl_(ttl) {}
+      : present_(ctx.source(std::map<K, V>{})), ttl_(ttl) {}
 
   /// Set a peer's awareness value (last-writer wins, no merge).
   void set(Context& ctx, K peer, V value, uint64_t now) {
@@ -252,7 +253,7 @@ class AwarenessCell {
 
   std::map<K, V> present(Context& ctx) { return present_.get(ctx); }
 
-  CellHandle<std::map<K, V>> present_cell() const { return present_; }
+  Source<std::map<K, V>> present_cell() const { return present_; }
 
  private:
   void refresh(Context& ctx, uint64_t now) {
@@ -260,7 +261,7 @@ class AwarenessCell {
   }
 
   EphemeralMapCore<K, V> core_;
-  CellHandle<std::map<K, V>> present_;
+  Source<std::map<K, V>> present_;
   uint64_t ttl_;
 };
 

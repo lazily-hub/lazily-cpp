@@ -29,6 +29,7 @@
 #include <vector>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
@@ -297,7 +298,7 @@ class MembershipCell {
   using Event = PeerChangeEvent<P>;
 
   MembershipCell(Context& ctx, MembershipConfig config)
-      : core_(config), peer_set_(ctx.cell(std::set<P>{})) {}
+      : core_(config), peer_set_(ctx.source(std::set<P>{})) {}
 
   std::vector<Event> join(Context& ctx, P peer, uint64_t now) {
     auto events = core_.join(std::move(peer), now);
@@ -324,28 +325,28 @@ class MembershipCell {
   }
 
   // The reactive alive peer set (`PeerSet`).
-  std::set<P> peer_set(Context& ctx) { return ctx.get_cell(peer_set_); }
+  std::set<P> peer_set(Context& ctx) { return ctx.get(peer_set_); }
 
   // The backing `PeerSet` cell, for direct subscription.
-  CellHandle<std::set<P>> peer_set_cell() const { return peer_set_; }
+  Source<std::set<P>> peer_set() const { return peer_set_; }
 
   std::optional<PeerState> state(const P& peer) const { return core_.state(peer); }
 
  private:
   MembershipCore<P> core_;
-  CellHandle<std::set<P>> peer_set_;
+  Source<std::set<P>> peer_set_;
 
   void refresh(Context& ctx) {
     // set_cell dedups (std::set has operator!=), so the PeerSet reader only
     // invalidates when the alive set actually changes.
-    ctx.set_cell(peer_set_, core_.alive_set());
+    ctx.set(peer_set_, core_.alive_set());
   }
 };
 
 // The derived reactive alive-peer set — a `Cell<std::set<P>>` handle exposed by
 // `MembershipCell::peer_set_cell`.
 template <typename P>
-using PeerSet = CellHandle<std::set<P>>;
+using PeerSet = Source<std::set<P>>;
 
 }  // namespace lazily
 

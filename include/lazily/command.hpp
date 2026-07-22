@@ -2,6 +2,7 @@
 #define LAZILY_COMMAND_HPP
 
 #include <lazily/ipc.hpp>
+#include <lazily/cell.hpp>
 #include <lazily/receipt.hpp>
 #include <lazily/types.hpp>
 
@@ -538,25 +539,25 @@ inline std::vector<BenchmarkResult> run_benchmark_suite(int iterations) {
   std::vector<BenchmarkResult> results;
   results.push_back(benchmark("Cell read/write", [&]() {
     Context ctx;
-    auto c = ctx.cell(42);
-    ctx.set_cell(c, 100);
-    (void)ctx.get_cell(c);
+    auto c = ctx.source(42);
+    ctx.set(c, 100);
+    (void)ctx.get(c);
   }, iterations));
   results.push_back(benchmark("Slot recompute", [&]() {
     Context ctx;
-    auto a = ctx.cell(1);
-    auto b = ctx.cell(2);
-    auto s = ctx.memo<int>([&](Context& c) {
-      return c.get_cell(a) + c.get_cell(b);
+    auto a = ctx.source(1);
+    auto b = ctx.source(2);
+    auto s = ctx.computed<int>([&](Context& c) {
+      return c.get(a) + c.get(b);
     });
     (void)ctx.get(s);
   }, iterations));
   results.push_back(benchmark("batch coalesce (10 cells)", [&]() {
     Context ctx;
-    std::vector<CellHandle<int>> cells;
-    for (int i = 0; i < 10; ++i) cells.push_back(ctx.cell(i));
+    std::vector<Source<int>> cells;
+    for (int i = 0; i < 10; ++i) cells.push_back(ctx.source(i));
     ctx.batch([&](Context& c) {
-      for (int i = 0; i < 10; ++i) c.set_cell(cells[i], i + 100);
+      for (int i = 0; i < 10; ++i) c.set(cells[i], i + 100);
     });
   }, iterations));
   return results;

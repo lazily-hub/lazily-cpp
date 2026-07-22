@@ -11,13 +11,13 @@
 // # One primitive, two specializations
 //
 // There is a single keyed primitive, generic over the entry's **handle kind**
-// `H` (the `MapHandleTraits` trait, implemented for `CellHandle<V>` input cells
-// and `SlotHandle<V>` derived slots):
+// `H` (the `MapHandleTraits` trait, implemented for `Source<V>` input cells
+// and `Computed<V>` derived slots):
 //
-//   - `CellMap<K, V>` = `ReactiveMap<K, V, CellHandle<V>>` — **input-cell**
+//   - `CellMap<K, V>` = `ReactiveMap<K, V, Source<V>>` — **input-cell**
 //     entries. Adds cell-only `set` and eager value-minting (`entry` /
 //     `entry_with`).
-//   - `SlotMap<K, V>` = `ReactiveMap<K, V, SlotHandle<V>>` — **derived-slot**
+//   - `SlotMap<K, V>` = `ReactiveMap<K, V, Computed<V>>` — **derived-slot**
 //     entries. `get_or_insert_with` mints a slot on first access (**lazy
 //     materialization**); a slot's value is derived, so `SlotMap` has **no
 //     `set`**. Eager materialization is a pre-mint loop over the keyset
@@ -48,60 +48,61 @@
 #include <vector>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
 // Which kind of reactive node a `ReactiveMap` entry is — the handle-kind axis the
 // map abstracts over. Mirrors `EntryKind` in lazily-formal.
 enum class EntryKind {
-  // An **input** cell (`CellHandle`) — always materialized on `get`.
+  // An **input** cell (`Source`) — always materialized on `get`.
   Cell,
-  // A **derived** slot (`SlotHandle`) — materialized eagerly (pre-mint) or lazily
+  // A **derived** slot (`Computed`) — materialized eagerly (pre-mint) or lazily
   // on first read.
   Slot,
 };
 
-// Traits abstracting over the two map handle kinds — `CellHandle<V>` (input
-// cells) and `SlotHandle<V>` (derived slots). Mirrors the sealed `MapHandle`
+// Traits abstracting over the two map handle kinds — `Source<V>` (input
+// cells) and `Computed<V>` (derived slots). Mirrors the sealed `MapHandle`
 // trait in the Rust reference. Only these two specializations exist; bindings do
 // not add new kinds.
 template <typename H>
 struct MapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
-struct MapHandleTraits<CellHandle<V>> {
+struct MapHandleTraits<Source<V>> {
   static constexpr EntryKind kind = EntryKind::Cell;
 
   // An input has no derivation: materialize by setting its value directly.
   template <typename Compute>
-  static CellHandle<V> materialize(Context& ctx, Compute&& compute) {
+  static Source<V> materialize(Context& ctx, Compute&& compute) {
     return ctx.template cell<V>(compute(ctx));
   }
 
-  static V observe(const CellHandle<V>& h, Context& ctx) {
-    return ctx.get_cell(h);
+  static V observe(const Source<V>& h, Context& ctx) {
+    return ctx.get(h);
   }
 
   // Detach the entry's node on removal — clear its cached value and dependents.
-  static void clear_dependents(const CellHandle<V>& h, Context& ctx) {
+  static void clear_dependents(const Source<V>& h, Context& ctx) {
     h.clear_dependents(ctx);
   }
 };
 
 template <typename V>
-struct MapHandleTraits<SlotHandle<V>> {
+struct MapHandleTraits<Computed<V>> {
   static constexpr EntryKind kind = EntryKind::Slot;
 
   // A derived node: the same node an eager pre-mint would allocate. `compute` is
   // stored as the slot's recomputation.
   template <typename Compute>
-  static SlotHandle<V> materialize(Context& ctx, Compute&& compute) {
+  static Computed<V> materialize(Context& ctx, Compute&& compute) {
     return ctx.template slot<V>(std::forward<Compute>(compute));
   }
 
-  static V observe(const SlotHandle<V>& h, Context& ctx) { return ctx.get(h); }
+  static V observe(const Computed<V>& h, Context& ctx) { return ctx.get(h); }
 
-  static void clear_dependents(const SlotHandle<V>& h, Context& ctx) {
+  static void clear_dependents(const Computed<V>& h, Context& ctx) {
     h.clear(ctx);
   }
 };
@@ -113,11 +114,11 @@ struct ReactiveMapInner {
   // Insertion-ordered authoritative key list (snapshot returned by `keys`).
   std::vector<K> order;
   // Reactive *set-membership* signal, bumped only when the set of keys changes.
-  CellHandle<uint64_t> membership;
+  Source<uint64_t> membership;
   // Untracked mirror of the membership version.
   uint64_t version;
   // Reactive *order* signal, bumped on add/remove and on move/reorder.
-  CellHandle<uint64_t> order_signal;
+  Source<uint64_t> order_signal;
   // Untracked mirror of the order version.
   uint64_t order_version;
 };
@@ -139,9 +140,9 @@ class ReactiveMap {
   // Create an empty collection bound to `ctx`.
   explicit ReactiveMap(Context& ctx)
       : inner_(std::make_shared<ReactiveMapInner<K, H>>()) {
-    inner_->membership = ctx.cell(uint64_t(0));
+    inner_->membership = ctx.source(uint64_t(0));
     inner_->version = 0;
-    inner_->order_signal = ctx.cell(uint64_t(0));
+    inner_->order_signal = ctx.source(uint64_t(0));
     inner_->order_version = 0;
   }
 
@@ -194,7 +195,7 @@ class ReactiveMap {
   // to order changes (add/remove and move/reorder), not to per-entry value
   // changes.
   std::vector<K> keys(Context& ctx) {
-    (void)ctx.get_cell(inner_->order_signal);
+    (void)ctx.get(inner_->order_signal);
     return inner_->order;
   }
 
@@ -256,7 +257,7 @@ class ReactiveMap {
 
   // Reactive entry count. Subscribes the caller to membership changes only.
   size_t len(Context& ctx) {
-    (void)ctx.get_cell(inner_->membership);
+    (void)ctx.get(inner_->membership);
     return inner_->order.size();
   }
 
@@ -266,7 +267,7 @@ class ReactiveMap {
   // Reactive membership test for `key`. Subscribes the caller to membership
   // changes (add/remove of any key), not to value changes.
   bool contains_key(Context& ctx, const K& key) {
-    (void)ctx.get_cell(inner_->membership);
+    (void)ctx.get(inner_->membership);
     return inner_->entries.count(key) > 0;
   }
 
@@ -297,32 +298,32 @@ class ReactiveMap {
   // Bump the *order* signal (invalidates `keys` readers).
   void bump_order(Context& ctx) {
     inner_->order_version++;
-    ctx.set_cell(inner_->order_signal, inner_->order_version);
+    ctx.set(inner_->order_signal, inner_->order_version);
   }
 
   // Bump set-membership (invalidates `len`/`contains_key` readers). Always paired
   // with an order bump because add/remove change order too.
   void bump_membership(Context& ctx) {
     inner_->version++;
-    ctx.set_cell(inner_->membership, inner_->version);
+    ctx.set(inner_->membership, inner_->version);
     bump_order(ctx);
   }
 };
 
-// A keyed **input-cell** collection: every entry is a settable `CellHandle<V>`.
+// A keyed **input-cell** collection: every entry is a settable `Source<V>`.
 //
 // The `CellMap` specialization of `ReactiveMap` adds cell-only `set` and eager
 // value-minting (`entry` / `entry_with`) on top of the shared reactive keyed
 // surface.
 template <typename K, typename V>
-class CellMap : public ReactiveMap<K, V, CellHandle<V>> {
+class CellMap : public ReactiveMap<K, V, Source<V>> {
  public:
-  using Base = ReactiveMap<K, V, CellHandle<V>>;
+  using Base = ReactiveMap<K, V, Source<V>>;
   using Base::Base;
 
   // Return the value cell for `key`, minting it with `default_fn` on first
   // access. Adding a new key bumps reactive membership; re-fetching does not.
-  CellHandle<V> entry_with(Context& ctx, const K& key,
+  Source<V> entry_with(Context& ctx, const K& key,
                            std::function<V()> default_fn) {
     auto h = this->handle(key);
     if (h) return *h;
@@ -332,7 +333,7 @@ class CellMap : public ReactiveMap<K, V, CellHandle<V>> {
 
   // Return the value cell for `key`, minting it with `default_val` on first
   // access. Convenience wrapper over `entry_with`.
-  CellHandle<V> entry(Context& ctx, const K& key, V default_val) {
+  Source<V> entry(Context& ctx, const K& key, V default_val) {
     return entry_with(ctx, key, [default_val]() { return default_val; });
   }
 
@@ -341,7 +342,7 @@ class CellMap : public ReactiveMap<K, V, CellHandle<V>> {
   void set(Context& ctx, const K& key, V value) {
     auto h = this->handle(key);
     if (h) {
-      ctx.set_cell(*h, std::move(value));
+      ctx.set(*h, std::move(value));
       return;
     }
     entry_with(ctx, key, [value]() { return value; });
@@ -352,14 +353,14 @@ class CellMap : public ReactiveMap<K, V, CellHandle<V>> {
   void reconcile(Context& ctx, const std::vector<std::pair<K, V>>& new_seq);
 };
 
-// A keyed **derived-slot** collection: every entry is a `SlotHandle<V>` whose
+// A keyed **derived-slot** collection: every entry is a `Computed<V>` whose
 // value is derived. `get_or_insert_with` mints a slot on first access (lazy
 // materialization); `materialize_all` pre-mints the keyset (eager). A slot's
 // value is derived, so `SlotMap` has **no `set`**.
 template <typename K, typename V>
-class SlotMap : public ReactiveMap<K, V, SlotHandle<V>> {
+class SlotMap : public ReactiveMap<K, V, Computed<V>> {
  public:
-  using Base = ReactiveMap<K, V, SlotHandle<V>>;
+  using Base = ReactiveMap<K, V, Computed<V>>;
   using Base::Base;
 
   // **Eager materialization**: pre-mint a derived slot for every key in `keys`

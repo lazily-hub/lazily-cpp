@@ -64,7 +64,7 @@ struct Step {
 // for this step, check emit, output, and cache-survival invalidation.
 template <typename Drive>
 static void run(Context& ctx, const std::vector<Step>& steps,
-                const SlotHandle<OptS>& observed, Drive drive) {
+                const Computed<OptS>& observed, Drive drive) {
   (void)ctx.get(observed);
   for (const auto& step : steps) {
     OptS emitted;
@@ -94,7 +94,7 @@ TEST(debounce) {
   const uint64_t quiet = 3;  // initial.quiet
   DebounceCell<std::string> cell(ctx, quiet);
   auto out = cell.output_cell();
-  auto observed = ctx.memo<OptS>([out](Context& c) { return out.get(c); });
+  auto observed = ctx.computed<OptS>([out](Context& c) { return out.get(c); });
 
   std::vector<Step> steps = {
       in(0, "a", std::nullopt, std::nullopt, false),
@@ -125,7 +125,7 @@ static void run_throttle(const std::string& file, const std::string& model,
   const uint64_t window = 5;  // initial.window
   ThrottleCell<std::string> cell(ctx, edge, window);
   auto out = cell.output_cell();
-  auto observed = ctx.memo<OptS>([out](Context& c) { return out.get(c); });
+  auto observed = ctx.computed<OptS>([out](Context& c) { return out.get(c); });
   run(ctx, steps, observed, [&](const Step& s, OptS& emitted, OptS& output) {
     if (s.is_input) {
       emitted = cell.input(ctx, s.now, s.value);
@@ -166,7 +166,7 @@ TEST(sample_count) {
   const uint64_t n = 3;  // initial.n
   SampleCell<std::string> cell(ctx, SampleMode::Count(n));
   auto out = cell.output_cell();
-  auto observed = ctx.memo<OptS>([out](Context& c) { return out.get(c); });
+  auto observed = ctx.computed<OptS>([out](Context& c) { return out.get(c); });
 
   std::vector<Step> steps = {
       in(0, "a", std::nullopt, std::nullopt, false),
@@ -190,7 +190,7 @@ TEST(sample_time) {
   const uint64_t period = 2;  // initial.period
   SampleCell<std::string> cell(ctx, SampleMode::Time(period));
   auto out = cell.output_cell();
-  auto observed = ctx.memo<OptS>([out](Context& c) { return out.get(c); });
+  auto observed = ctx.computed<OptS>([out](Context& c) { return out.get(c); });
 
   std::vector<Step> steps = {
       in(0, "a", std::nullopt, std::nullopt, false),
@@ -221,7 +221,7 @@ TEST(probabilistic_sample) {
   // a deterministic `Lcg` satisfies the type bound.
   ProbabilisticSampleCell<std::string, Lcg> cell(ctx, rate, Lcg(0));
   auto out = cell.output_cell();
-  auto observed = ctx.memo<OptS>([out](Context& c) { return out.get(c); });
+  auto observed = ctx.computed<OptS>([out](Context& c) { return out.get(c); });
 
   struct PStep {
     std::string value;

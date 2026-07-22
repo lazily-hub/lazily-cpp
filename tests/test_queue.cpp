@@ -26,10 +26,10 @@ static int test_passed = 0;
 // still valid (not invalidated); `value()` returns the cached value.
 template <typename T> struct Reader {
   Context &ctx;
-  SlotHandle<T> slot;
+  Computed<T> slot;
   T cached;
   Reader(Context &c, std::function<T(Context &)> fn)
-      : ctx(c), slot(c.memo<T>([fn](Context &cc) { return fn(cc); })) {
+      : ctx(c), slot(c.computed<T>([fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   const T &value() { return cached; }
@@ -39,10 +39,10 @@ template <typename T> struct Reader {
 
 struct BoolReader {
   Context &ctx;
-  SlotHandle<bool> slot;
+  Computed<bool> slot;
   bool cached;
   BoolReader(Context &c, std::function<bool(Context &)> fn)
-      : ctx(c), slot(c.memo<bool>([fn](Context &cc) { return fn(cc); })) {
+      : ctx(c), slot(c.computed<bool>([fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   bool value() { return cached; }
@@ -52,10 +52,10 @@ struct BoolReader {
 
 struct OptReader {
   Context &ctx;
-  SlotHandle<std::optional<std::string>> slot;
+  Computed<std::optional<std::string>> slot;
   std::optional<std::string> cached;
   OptReader(Context &c, std::function<std::optional<std::string>(Context &)> fn)
-      : ctx(c), slot(c.memo<std::optional<std::string>>(
+      : ctx(c), slot(c.computed<std::optional<std::string>>(
                     [fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
@@ -66,10 +66,10 @@ struct OptReader {
 
 struct SizeReader {
   Context &ctx;
-  SlotHandle<size_t> slot;
+  Computed<size_t> slot;
   size_t cached;
   SizeReader(Context &c, std::function<size_t(Context &)> fn)
-      : ctx(c), slot(c.memo<size_t>([fn](Context &cc) { return fn(cc); })) {
+      : ctx(c), slot(c.computed<size_t>([fn](Context &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   size_t value() { return cached; }

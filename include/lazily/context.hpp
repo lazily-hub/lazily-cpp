@@ -31,7 +31,10 @@ class TeardownScopeImpl;
 // types; they are dependent on the member template's own `T`, so an incomplete
 // declaration is sufficient at this point.
 struct KeepLatest;  // defined in merge.hpp
-template <typename T, typename M>
+// The default policy lives on THIS forward declaration (a default template
+// argument may be specified only once), so `Source<T>` resolves everywhere the
+// forward declaration is visible — cell.hpp's definition omits the default.
+template <typename T, typename M = KeepLatest>
 class Source;
 template <typename T>
 class Computed;
@@ -438,27 +441,11 @@ class PendingQueue {
 };
 
 // ── Handle types (Traits-independent — just SlotId wrappers) ──
-
-template <typename T>
-struct SlotHandle {
-  SlotId id;
-  SlotHandle() = default;
-  explicit SlotHandle(SlotId id_) : id(id_) {}
-  T get(Context& ctx) const;
-  void clear(Context& ctx) const;
-  bool operator==(const SlotHandle<T>& o) const { return id == o.id; }
-};
-
-template <typename T>
-struct CellHandle {
-  SlotId id;
-  CellHandle() = default;
-  explicit CellHandle(SlotId id_) : id(id_) {}
-  T get(Context& ctx) const;
-  void set(Context& ctx, T value) const;
-  void clear_dependents(Context& ctx) const;
-  bool operator==(const CellHandle<T>& o) const { return id == o.id; }
-};
+//
+// `#lzcellkernel`: the former engine handle structs `SlotHandle<T>` and
+// `CellHandle<T>` are DELETED and everything is collapsed onto the two public
+// handles `Computed<T>` and `Source<T, M>` (cell.hpp), matching lazily-rs.
+// `Effect` stays — it is a sink, outside the value hierarchy.
 
 struct Effect {
   SlotId id;
@@ -568,79 +555,133 @@ class ContextImpl {
   ContextImpl(const ContextImpl&) = delete;
   ContextImpl& operator=(const ContextImpl&) = delete;
 
-  // -- Slot API --
+  // -- Derived (Computed) constructors (`#lzcellkernel`) --
+  //
+  // Both return the one derived handle, `Computed<T>`. `slot(f)` is the
+  // UNGUARDED pass-through — every recompute propagates; `computed(f)` (in the
+  // cell-kernel constructor surface below) is the guarded form. `slot` is kept
+  // as lazily-rs's bound-free primitive and is deliberately NOT forced guarded.
+  // (`memo` is DELETED — `computed` IS the guarded form.)
   template <typename T, typename F>
-  SlotHandle<T> slot(F&& compute) {
+  Computed<T> slot(F&& compute) {
     return slot_with_equals<T>(std::forward<F>(compute), nullptr);
   }
 
-  template <typename T, typename F>
-  SlotHandle<T> memo(F&& compute) {
-    EqualsFn eq = [](const void* a, const void* b) {
-      return *static_cast<const T*>(a) == *static_cast<const T*>(b);
-    };
-    return slot_with_equals<T>(std::forward<F>(compute), eq);
-  }
-
+  // -- Private engine reads/writes, keyed on SlotId --
+  //
+  // The public handle-typed `get`/`set`/`get_rc` (and the deprecated
+  // `get_cell`/`set_cell`) all funnel through these.
   template <typename T>
-  T get(const SlotHandle<T>& handle) {
-    return get_slot<T>(handle.id);
-  }
-
-  template <typename T>
-  std::shared_ptr<T> get_rc(const SlotHandle<T>& handle) {
+  T read_cell(SlotId id) {
     if (auto parent = current_tracking_frame())
-      register_dependency(handle.id, *parent);
-    refresh_slot(handle.id);
-    auto* slot = get_slot_node(handle.id);
-    if (!slot) throw DisposedError();
-    assert(slot->value && "get_rc on unset slot");
-    assert(slot->type_id == std::type_index(typeid(T)));
-    return std::make_shared<T>(*Traits::template cast<T>(slot->value));
-  }
-
-  // -- Cell API --
-  template <typename T>
-  CellHandle<T> cell(T value) {
-    auto id = alloc_id();
-    CellNode node;
-    node.value = Traits::template make<T>(std::move(value));
-#ifndef NDEBUG
-    node.type_id = std::type_index(typeid(T));
-#endif
-    insert_node(id, Node(std::move(node)));
-    return CellHandle<T>(id);
-  }
-
-  template <typename T>
-  T get_cell(const CellHandle<T>& handle) {
-    if (auto parent = current_tracking_frame())
-      register_dependency(handle.id, *parent);
-    auto* cell = get_cell_node(handle.id);
+      register_dependency(id, *parent);
+    auto* cell = get_cell_node(id);
     if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
     return *Traits::template cast<T>(cell->value);
   }
 
   template <typename T>
-  std::shared_ptr<T> get_cell_rc(const CellHandle<T>& handle) {
+  std::shared_ptr<T> read_cell_rc(SlotId id) {
     if (auto parent = current_tracking_frame())
-      register_dependency(handle.id, *parent);
-    auto* cell = get_cell_node(handle.id);
+      register_dependency(id, *parent);
+    auto* cell = get_cell_node(id);
     if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
     return std::make_shared<T>(*Traits::template cast<T>(cell->value));
   }
 
+  template <typename T>
+  std::shared_ptr<T> read_slot_rc(SlotId id) {
+    if (auto parent = current_tracking_frame())
+      register_dependency(id, *parent);
+    refresh_slot(id);
+    auto* slot = get_slot_node(id);
+    if (!slot) throw DisposedError();
+    assert(slot->value && "get_rc on unset slot");
+    assert(slot->type_id == std::type_index(typeid(T)));
+    return std::make_shared<T>(*Traits::template cast<T>(slot->value));
+  }
+
+  template <typename T>
+  void write_cell(SlotId id, T new_value) {
+    bool changed;
+    {
+      auto* cell = get_cell_node(id);
+      assert(cell && "set on non-cell");
+      assert(cell->type_id == std::type_index(typeid(T)));
+      changed = (*Traits::template cast<T>(cell->value) != new_value);
+    }
+    if (!changed) return;
+    {
+      auto* cell = get_cell_node_mut(id);
+      cell->value = Traits::template make<T>(std::move(new_value));
+    }
+    if (is_batching()) {
+      batched_cells_.insert(id);
+    } else {
+      // Store-without-cascade: dirty-mark the dependent cone, then flush
+      // effects ONLY when the cone actually contains an active Effect.
+      if (invalidate_cell_dependents_now(id))
+        flush_effects();
+    }
+  }
+
+  // -- Unified cell read/write (canonical, `#lzcellkernel` §3) --
+  //
+  // `get` reads *any* cell handle — a `Source` returns its stored value, a
+  // `Computed` refreshes then returns — and `set` writes the one kind that has
+  // a write, a `Source`. Dispatch is a compile-time overload; because only a
+  // `Source` overload of `set` exists, `ctx.set(computed, v)` is a plain
+  // "no matching overload" compile error (write protection without a base
+  // class, matching lazily-rs's `Write` trait bound).
+  template <typename T, typename M>
+  T get(const Source<T, M>& handle) {
+    return read_cell<T>(handle.id());
+  }
+  template <typename T>
+  T get(const Computed<T>& handle) {
+    return get_slot<T>(handle.id());
+  }
+  template <typename T, typename M>
+  std::shared_ptr<T> get_rc(const Source<T, M>& handle) {
+    return read_cell_rc<T>(handle.id());
+  }
+  template <typename T>
+  std::shared_ptr<T> get_rc(const Computed<T>& handle) {
+    return read_slot_rc<T>(handle.id());
+  }
+  template <typename T, typename M>
+  void set(const Source<T, M>& handle, T value) {
+    write_cell<T>(handle.id(), std::move(value));
+  }
+
+  // -- Deprecated cell read/write aliases (superseded by `get`/`set`) --
+  template <typename T, typename M>
+  [[deprecated("use Context::get — the unified cell read (#lzcellkernel)")]]
+  T get_cell(const Source<T, M>& handle) {
+    return read_cell<T>(handle.id());
+  }
+  // `get_cell_rc` has no deprecation (no `get_rc` churn intended); retyped onto
+  // the `Source` handle for the collapse.
+  template <typename T, typename M>
+  std::shared_ptr<T> get_cell_rc(const Source<T, M>& handle) {
+    return read_cell_rc<T>(handle.id());
+  }
+  template <typename T, typename M>
+  [[deprecated("use Context::set — the unified cell write (#lzcellkernel)")]]
+  void set_cell(const Source<T, M>& handle, T new_value) {
+    write_cell<T>(handle.id(), std::move(new_value));
+  }
+
   // ── Read-only cache peeks (no mutation) ──
   //
   // Safe to call under a shared lock: they neither mutate node state nor copy
-  // the ref-counted AnyValue handle (they copy the boxed T by value through a
-  // stable, immutably-published pointer). Used by ThreadSafeContext's shared
-  // read fast path.
+  // the ref-counted AnyValue handle. Used by ThreadSafeContext's shared read
+  // fast path.
   template <typename T>
-  std::optional<T> try_get_cached(const SlotHandle<T>& handle) const {
-    auto idx = node_index(handle.id);
+  std::optional<T> try_get_cached(const Computed<T>& handle) const {
+    auto idx = node_index(handle.id());
     if (!idx || *idx >= nodes_.size()) return std::nullopt;
     auto& n = nodes_[*idx];
     if (std::holds_alternative<EmptyNode>(n)) return std::nullopt;
@@ -650,73 +691,15 @@ class ContextImpl {
     return *Traits::template cast<T>(slot->value);
   }
 
-  template <typename T>
-  std::optional<T> peek_cell(const CellHandle<T>& handle) const {
-    auto idx = node_index(handle.id);
+  template <typename T, typename M>
+  std::optional<T> peek_cell(const Source<T, M>& handle) const {
+    auto idx = node_index(handle.id());
     if (!idx || *idx >= nodes_.size()) return std::nullopt;
     auto& n = nodes_[*idx];
     if (std::holds_alternative<EmptyNode>(n)) return std::nullopt;
     const CellNode* cell = std::get_if<CellNode>(&n);
     if (!cell || !cell->value) return std::nullopt;
     return *Traits::template cast<T>(cell->value);
-  }
-
-  template <typename T>
-  void set_cell(const CellHandle<T>& handle, T new_value) {
-    bool changed;
-    {
-      auto* cell = get_cell_node(handle.id);
-      assert(cell && "set_cell on non-cell");
-      assert(cell->type_id == std::type_index(typeid(T)));
-      changed = (*Traits::template cast<T>(cell->value) != new_value);
-    }
-    if (!changed) return;
-    {
-      auto* cell = get_cell_node_mut(handle.id);
-      cell->value = Traits::template make<T>(std::move(new_value));
-    }
-    if (is_batching()) {
-      batched_cells_.insert(handle.id);
-    } else {
-      // Store-without-cascade: dirty-mark the dependent cone, then flush
-      // effects ONLY when the cone actually contains an active Effect. A cell
-      // with no Effect-bearing dependent stores its latest value (already done
-      // above, so a late subscriber reads it glitch-free) and dirty-marks lazy
-      // Slot dependents, but pays no effect-scheduling flush.
-      if (invalidate_cell_dependents_now(handle.id))
-        flush_effects();
-    }
-  }
-
-  // -- Unified cell read/write (`#lzcellkernel`, §3) --
-  //
-  // The canonical v2 read/write surface. `get` reads *any* cell handle — a
-  // `Source` returns its stored value, a `Computed` refreshes then returns —
-  // and `set` writes the one kind that has a write, a `Source`. Dispatch is a
-  // compile-time overload on the handle's static type, not a runtime branch.
-  // These supersede `get_cell`/`get(SlotHandle)`/`set_cell`; because only a
-  // `Source` overload of `set` exists, `ctx.set(computed, v)` is a plain
-  // "no matching overload" compile error (write protection without a base
-  // class, matching lazily-rs's `Write` trait bound).
-  template <typename T, typename M>
-  T get(const Source<T, M>& handle) {
-    return get_cell<T>(CellHandle<T>(handle.id()));
-  }
-  template <typename T>
-  T get(const Computed<T>& handle) {
-    return get_slot<T>(handle.id());
-  }
-  template <typename T, typename M>
-  std::shared_ptr<T> get_rc(const Source<T, M>& handle) {
-    return get_cell_rc<T>(CellHandle<T>(handle.id()));
-  }
-  template <typename T>
-  std::shared_ptr<T> get_rc(const Computed<T>& handle) {
-    return get_rc<T>(SlotHandle<T>(handle.id()));
-  }
-  template <typename T, typename M>
-  void set(const Source<T, M>& handle, T value) {
-    set_cell<T>(CellHandle<T>(handle.id()), std::move(value));
   }
 
   // -- Batch API --
@@ -818,8 +801,8 @@ class ContextImpl {
   /// reading a disposed node throws `DisposedError`, and so does a surviving
   /// reader's next recompute if it still names one.
   template <typename T>
-  void dispose_slot(const SlotHandle<T>& handle) {
-    dispose_slot_id(handle.id);
+  void dispose_slot(const Computed<T>& handle) {
+    dispose_slot_id(handle.id());
   }
 
   /// Tear down a source cell: detach its dependents, dirty the surviving cone,
@@ -827,9 +810,9 @@ class ContextImpl {
   ///
   /// Cells are pure sources with no dependencies, so only downstream edges need
   /// detaching. Same contract as `dispose_slot` in every other respect.
-  template <typename T>
-  void dispose_cell(const CellHandle<T>& handle) {
-    dispose_cell_id(handle.id);
+  template <typename T, typename M>
+  void dispose_cell(const Source<T, M>& handle) {
+    dispose_cell_id(handle.id());
   }
 
   /// Tear down whatever node `id` names, dispatching on the kind recorded in
@@ -873,12 +856,12 @@ class ContextImpl {
   ///
   /// Returns 0 for a disposed or unknown node.
   template <typename T>
-  size_t dependent_count(const SlotHandle<T>& handle) const {
-    return dependent_count_id(handle.id);
+  size_t dependent_count(const Computed<T>& handle) const {
+    return dependent_count_id(handle.id());
   }
-  template <typename T>
-  size_t dependent_count(const CellHandle<T>& handle) const {
-    return dependent_count_id(handle.id);
+  template <typename T, typename M>
+  size_t dependent_count(const Source<T, M>& handle) const {
+    return dependent_count_id(handle.id());
   }
   /// Always 0: effects are pure sinks, so nothing can read one.
   size_t dependent_count(const Effect& handle) const {
@@ -895,12 +878,12 @@ class ContextImpl {
   /// Returns 0 for a disposed or unknown node, and for source cells, which have
   /// no dependencies by construction.
   template <typename T>
-  size_t dependency_count(const SlotHandle<T>& handle) const {
-    return dependency_count_id(handle.id);
+  size_t dependency_count(const Computed<T>& handle) const {
+    return dependency_count_id(handle.id());
   }
-  template <typename T>
-  size_t dependency_count(const CellHandle<T>& handle) const {
-    return dependency_count_id(handle.id);
+  template <typename T, typename M>
+  size_t dependency_count(const Source<T, M>& handle) const {
+    return dependency_count_id(handle.id());
   }
   size_t dependency_count(const Effect& handle) const {
     return dependency_count_id(handle.id);
@@ -931,17 +914,15 @@ class ContextImpl {
 
   // -- Cell kernel constructor surface (`#lzcellkernel`, §9.3) --
   //
-  // `source`/`computed`/`.eager()` replace `cell`/`merge_cell` and
-  // `memo`/`slot`/`signal`. The engine names (`slot`/`memo`, this file above)
-  // remain as the internal substrate for downstream families; these return the
-  // two concrete handles from cell.hpp.
+  // `source`/`computed` are the canonical constructors returning the two public
+  // handles from cell.hpp. `cell` is a deprecated alias toward `source`; `memo`
+  // is DELETED — `computed` IS the guarded form.
 
   /// Create a `Source<T>` (a plain keep-latest input cell) holding `value`. The
-  /// default-policy form of `source`; use `source_with<M>` for a folding
-  /// policy. Subsumes the former `cell(v)`.
+  /// default-policy form of `source`; use `source_with<M>` for a folding policy.
   template <typename T>
   Source<T, KeepLatest> source(T value) {
-    return Source<T, KeepLatest>(cell<T>(std::move(value)).id);
+    return Source<T, KeepLatest>(make_cell_node<T>(std::move(value)));
   }
 
   /// Create a `Source<T, M>` whose writes fold under policy `M`
@@ -949,7 +930,14 @@ class ContextImpl {
   /// defaulted on a function template, so this is a distinct name from `source`.
   template <typename M, typename T>
   Source<T, M> source_with(T value) {
-    return Source<T, M>(cell<T>(std::move(value)).id);
+    return Source<T, M>(make_cell_node<T>(std::move(value)));
+  }
+
+  /// Deprecated alias for `source` (`#lzcellkernel`) — the former `cell(v)`.
+  template <typename T>
+  [[deprecated("use Context::source — the canonical source-cell constructor (#lzcellkernel)")]]
+  Source<T, KeepLatest> cell(T value) {
+    return source<T>(std::move(value));
   }
 
   /// Create a **guarded** `Computed<T>` computed from upstream. Guarded by
@@ -958,7 +946,10 @@ class ContextImpl {
   /// Lazy until `.eager()`.
   template <typename T, typename F>
   Computed<T> computed(F&& compute) {
-    return Computed<T>(memo<T>(std::forward<F>(compute)).id);
+    EqualsFn eq = [](const void* a, const void* b) {
+      return *static_cast<const T*>(a) == *static_cast<const T*>(b);
+    };
+    return slot_with_equals<T>(std::forward<F>(compute), eq);
   }
 
   // -- Eager-computed engine (`#lzcellkernel`, §9.3.1/§9.3.3/§9.3.4) --
@@ -983,7 +974,7 @@ class ContextImpl {
     }
     // Attach the puller. `effect_void` may reallocate `nodes_`, so set the bit
     // AFTER, re-fetching the node.
-    auto slot_handle = SlotHandle<T>(id);
+    auto slot_handle = Computed<T>(id);
     Effect eff = effect_void(
         [slot_handle](ContextImpl& ctx) { ctx.template get_rc<T>(slot_handle); });
     if (auto* slot = get_slot_node(id)) slot->eager = true;
@@ -1009,8 +1000,8 @@ class ContextImpl {
 
   // -- Clearing --
   template <typename T>
-  bool is_set(const SlotHandle<T>& handle) {
-    auto* slot = get_slot_node(handle.id);
+  bool is_set(const Computed<T>& handle) {
+    auto* slot = get_slot_node(handle.id());
     return slot && slot->value && !slot->dirty;
   }
 
@@ -1313,7 +1304,7 @@ class ContextImpl {
   }
 
   template <typename T, typename F>
-  SlotHandle<T> slot_with_equals(F&& compute, EqualsFn eq) {
+  Computed<T> slot_with_equals(F&& compute, EqualsFn eq) {
     auto id = alloc_id();
     SlotNode node;
 #ifndef NDEBUG
@@ -1327,7 +1318,21 @@ class ContextImpl {
                                  typename ComputeFnPtr::adopt_t{});
     node.equals = eq;
     insert_node(id, Node(std::move(node)));
-    return SlotHandle<T>(id);
+    return Computed<T>(id);
+  }
+
+  /// Create a source-cell node holding `value`; returns its id. Backs `source`
+  /// / `source_with` (and the deprecated `cell`). (`#lzcellkernel`)
+  template <typename T>
+  SlotId make_cell_node(T value) {
+    auto id = alloc_id();
+    CellNode node;
+    node.value = Traits::template make<T>(std::move(value));
+#ifndef NDEBUG
+    node.type_id = std::type_index(typeid(T));
+#endif
+    insert_node(id, Node(std::move(node)));
+    return id;
   }
 
   template <typename T>
@@ -1774,24 +1779,19 @@ class TeardownScopeImpl {
     return handle;
   }
 
+  /// Unguarded pass-through derived cell owned by this scope (`#lzcellkernel`).
   template <typename T, typename F>
-  SlotHandle<T> slot(F&& compute) {
+  Computed<T> slot(F&& compute) {
     auto handle = ctx_->template slot<T>(std::forward<F>(compute));
-    owned_.push_back(handle.id);
+    owned_.push_back(handle.id());
     return handle;
   }
 
-  template <typename T, typename F>
-  SlotHandle<T> memo(F&& compute) {
-    auto handle = ctx_->template memo<T>(std::forward<F>(compute));
-    owned_.push_back(handle.id);
-    return handle;
-  }
-
+  /// Create a `Source<T>` owned by this scope (the canonical source cell).
   template <typename T>
-  CellHandle<T> cell(T value) {
-    auto handle = ctx_->template cell<T>(std::move(value));
-    owned_.push_back(handle.id);
+  Source<T, KeepLatest> source(T value) {
+    auto handle = ctx_->template source<T>(std::move(value));
+    owned_.push_back(handle.id());
     return handle;
   }
 
@@ -1858,32 +1858,6 @@ inline TeardownScopeImpl<Traits> ContextImpl<Traits>::scope() {
 // ═══════════════════════════════════════════════════════════════════════════
 // Handle method implementations — use Context (= ContextImpl<RcTraits>)
 // ═══════════════════════════════════════════════════════════════════════════
-
-template <typename T>
-T SlotHandle<T>::get(Context& ctx) const {
-  return ctx.get<T>(*this);
-}
-
-template <typename T>
-void SlotHandle<T>::clear(Context& ctx) const {
-  ctx.clear_slot(id);
-  ctx.flush_effects_after_invalidation();
-}
-
-template <typename T>
-T CellHandle<T>::get(Context& ctx) const {
-  return ctx.get_cell<T>(*this);
-}
-
-template <typename T>
-void CellHandle<T>::set(Context& ctx, T value) const {
-  ctx.set_cell<T>(*this, std::move(value));
-}
-
-template <typename T>
-void CellHandle<T>::clear_dependents(Context& ctx) const {
-  ctx.clear_cell_dependents(id);
-}
 
 inline void Effect::dispose(Context& ctx) const {
   ctx.dispose_effect(*this);

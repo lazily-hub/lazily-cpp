@@ -48,7 +48,7 @@ TEST(test_circuit_breaker) {
   Context ctx;
   CircuitBreakerCell cb(ctx, 3, 2, 5);
   auto sc = cb.state_cell();
-  auto observed = ctx.memo<BreakerState>([sc](Context& c) { return sc.get(c); });
+  auto observed = ctx.computed<BreakerState>([sc](Context& c) { return sc.get(c); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -90,7 +90,7 @@ TEST(test_retry) {
   Context ctx;
   RetryPolicyCell r(ctx, 100, 2000);
   auto dc = r.delay_cell();
-  auto observed = ctx.memo<uint64_t>([dc](Context& c) { return dc.get(c); });
+  auto observed = ctx.computed<uint64_t>([dc](Context& c) { return dc.get(c); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -123,7 +123,7 @@ TEST(test_bulkhead) {
   Context ctx;
   BulkheadCell b(ctx, 2);
   auto uc = b.permits_in_use_cell();
-  auto observed = ctx.memo<uint64_t>([uc](Context& c) { return uc.get(c); });
+  auto observed = ctx.computed<uint64_t>([uc](Context& c) { return uc.get(c); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -159,7 +159,7 @@ TEST(test_timeout) {
   Context ctx;
   TimeoutCell t(ctx);
   auto tc = t.is_timed_out_cell();
-  auto observed = ctx.memo<bool>([tc](Context& c) { return tc.get(c); });
+  auto observed = ctx.computed<bool>([tc](Context& c) { return tc.get(c); });
   (void)ctx.get(observed);
 
   struct Step {

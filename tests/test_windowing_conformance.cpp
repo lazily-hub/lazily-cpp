@@ -56,7 +56,7 @@ TEST(test_tumbling_count) {
   Context ctx;
   TumblingCountWindow<uint64_t, Sum> w(ctx, 3);
   auto oc = w.output_cell();
-  auto observed = ctx.memo<OptU>([&](Context& c) { return oc.get(c); });
+  auto observed = ctx.computed<OptU>([&](Context& c) { return oc.get(c); });
   (void)ctx.get(observed);  // prime the cache
 
   struct Step {
@@ -93,7 +93,7 @@ TEST(test_tumbling_time) {
   Context ctx;
   TumblingTimeWindow<uint64_t, Sum> w(ctx, 2);
   auto oc = w.output_cell();
-  auto observed = ctx.memo<OptU>([&](Context& c) { return oc.get(c); });
+  auto observed = ctx.computed<OptU>([&](Context& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
   enum class Kind { Push, Tick };
@@ -139,7 +139,7 @@ TEST(test_sliding_count) {
   Context ctx;
   SlidingWindow<uint64_t, Sum> w(ctx, 3, 1);
   auto oc = w.output_cell();
-  auto observed = ctx.memo<OptU>([&](Context& c) { return oc.get(c); });
+  auto observed = ctx.computed<OptU>([&](Context& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -175,7 +175,7 @@ TEST(test_session) {
   Context ctx;
   SessionWindow<uint64_t, Sum> w(ctx, 3);
   auto oc = w.output_cell();
-  auto observed = ctx.memo<OptU>([&](Context& c) { return oc.get(c); });
+  auto observed = ctx.computed<OptU>([&](Context& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
   enum class Kind { Push, Flush };

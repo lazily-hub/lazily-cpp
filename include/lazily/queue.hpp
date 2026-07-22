@@ -2,6 +2,7 @@
 #define LAZILY_QUEUE_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 #include <cstdint>
 #include <deque>
@@ -167,15 +168,15 @@ private:
 template <typename T, typename Storage = VecDequeStorage<T>>
 struct QueueCellInner {
   Storage storage;
-  CellHandle<uint64_t> head_cell;
+  Source<uint64_t> head_cell;
   uint64_t head_version;
-  CellHandle<uint64_t> len_cell;
+  Source<uint64_t> len_cell;
   uint64_t len_version;
-  CellHandle<uint64_t> empty_cell;
+  Source<uint64_t> empty_cell;
   uint64_t empty_version;
-  CellHandle<uint64_t> full_cell;
+  Source<uint64_t> full_cell;
   uint64_t full_version;
-  CellHandle<uint64_t> closed_cell;
+  Source<uint64_t> closed_cell;
   uint64_t closed_version;
 
   explicit QueueCellInner(Storage s) : storage(std::move(s)) {}
@@ -192,15 +193,15 @@ public:
   QueueCell(Context &ctx, Storage storage)
       : inner_(
             std::make_shared<QueueCellInner<T, Storage>>(std::move(storage))) {
-    inner_->head_cell = ctx.cell(uint64_t(0));
+    inner_->head_cell = ctx.source(uint64_t(0));
     inner_->head_version = 0;
-    inner_->len_cell = ctx.cell(uint64_t(0));
+    inner_->len_cell = ctx.source(uint64_t(0));
     inner_->len_version = 0;
-    inner_->empty_cell = ctx.cell(uint64_t(0));
+    inner_->empty_cell = ctx.source(uint64_t(0));
     inner_->empty_version = 0;
-    inner_->full_cell = ctx.cell(uint64_t(0));
+    inner_->full_cell = ctx.source(uint64_t(0));
     inner_->full_version = 0;
-    inner_->closed_cell = ctx.cell(uint64_t(0));
+    inner_->closed_cell = ctx.source(uint64_t(0));
     inner_->closed_version = 0;
   }
 
@@ -288,7 +289,7 @@ public:
   // --
 
   std::optional<T> head(Context &ctx) {
-    (void)ctx.get_cell(inner_->head_cell);
+    (void)ctx.get(inner_->head_cell);
     // `head()` is an OPTIONAL storage capability (Phase 0 #relaycell): a
     // raw-channel backend that cannot peek has no head reader (nullopt).
     if constexpr (queue_detail::has_head<Storage>::value) {
@@ -299,17 +300,17 @@ public:
   }
 
   size_t len(Context &ctx) {
-    (void)ctx.get_cell(inner_->len_cell);
+    (void)ctx.get(inner_->len_cell);
     return inner_->storage.len();
   }
 
   bool is_empty(Context &ctx) {
-    (void)ctx.get_cell(inner_->empty_cell);
+    (void)ctx.get(inner_->empty_cell);
     return inner_->storage.len() == 0;
   }
 
   bool is_full(Context &ctx) {
-    (void)ctx.get_cell(inner_->full_cell);
+    (void)ctx.get(inner_->full_cell);
     // `is_full()`/`capacity()` are OPTIONAL: a backend without a bound is
     // unbounded and never full.
     if constexpr (queue_detail::has_is_full<Storage>::value) {
@@ -320,7 +321,7 @@ public:
   }
 
   bool closed(Context &ctx) {
-    (void)ctx.get_cell(inner_->closed_cell);
+    (void)ctx.get(inner_->closed_cell);
     return inner_->storage.is_closed();
   }
 
@@ -345,19 +346,19 @@ private:
   std::shared_ptr<QueueCellInner<T, Storage>> inner_;
 
   void bump_head(Context &ctx) {
-    ctx.set_cell(inner_->head_cell, ++inner_->head_version);
+    ctx.set(inner_->head_cell, ++inner_->head_version);
   }
   void bump_len(Context &ctx) {
-    ctx.set_cell(inner_->len_cell, ++inner_->len_version);
+    ctx.set(inner_->len_cell, ++inner_->len_version);
   }
   void bump_empty(Context &ctx) {
-    ctx.set_cell(inner_->empty_cell, ++inner_->empty_version);
+    ctx.set(inner_->empty_cell, ++inner_->empty_version);
   }
   void bump_full(Context &ctx) {
-    ctx.set_cell(inner_->full_cell, ++inner_->full_version);
+    ctx.set(inner_->full_cell, ++inner_->full_version);
   }
   void bump_closed(Context &ctx) {
-    ctx.set_cell(inner_->closed_cell, ++inner_->closed_version);
+    ctx.set(inner_->closed_cell, ++inner_->closed_version);
   }
 };
 
@@ -388,7 +389,7 @@ bool connected = false;
 };
 
 struct TopicReader {
-CellHandle<uint64_t> cell;
+Source<uint64_t> cell;
 uint64_t version = 0;
 };
 
@@ -486,7 +487,7 @@ return offset;
 
 std::vector<T> read_stream(Context &ctx,
 const std::string &subscriber_id) {
-(void)ctx.get_cell(ensure_reader(ctx, subscriber_id));
+(void)ctx.get(ensure_reader(ctx, subscriber_id));
 auto found = inner_->subscriptions.find(subscriber_id);
 if (found == inner_->subscriptions.end() || !found->second.connected)
 return {};
@@ -555,7 +556,7 @@ found->second.durability,
 found->second.connected};
 }
 
-CellHandle<uint64_t> reader_handle(Context &ctx,
+Source<uint64_t> reader_handle(Context &ctx,
 const std::string &subscriber_id) {
 return ensure_reader(ctx, subscriber_id);
 }
@@ -575,21 +576,21 @@ return result;
 private:
 std::shared_ptr<queue_detail::TopicCellInner<T>> inner_;
 
-CellHandle<uint64_t> ensure_reader(Context &ctx,
+Source<uint64_t> ensure_reader(Context &ctx,
 const std::string &subscriber_id) {
 auto found = inner_->readers.find(subscriber_id);
 if (found != inner_->readers.end())
 return found->second.cell;
 auto inserted = inner_->readers.emplace(
 subscriber_id,
-queue_detail::TopicReader{ctx.cell(uint64_t(0)), uint64_t(0)});
+queue_detail::TopicReader{ctx.source(uint64_t(0)), uint64_t(0)});
 return inserted.first->second.cell;
 }
 
 void bump_reader(Context &ctx, const std::string &subscriber_id) {
 auto handle = ensure_reader(ctx, subscriber_id);
 auto &reader = inner_->readers.at(subscriber_id);
-ctx.set_cell(handle, ++reader.version);
+ctx.set(handle, ++reader.version);
 }
 };
 

@@ -67,12 +67,12 @@ TEST(test_set_union_and_raw_fifo) {
 
 TEST(test_cell_is_merge_cell_keep_latest) {
   Context ctx;
-  auto cell = ctx.cell<long>(0);
+  auto cell = ctx.source<long>(0);
   MergeCell<long, KeepLatest> mc(ctx, 0);
   for (long v : {3L, 3L, 7L, 7L, 1L}) {
-    ctx.set_cell(cell, v);
+    ctx.set(cell, v);
     mc.merge(v);
-    assert(ctx.get_cell(cell) == mc.get());
+    assert(ctx.get(cell) == mc.get());
   }
   assert(mc.get() == 1);
 }

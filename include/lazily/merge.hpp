@@ -98,27 +98,32 @@ struct RawFifo {
 template <typename T, typename Policy>
 class MergeCell {
  public:
+  // `#lzcellkernel`: the cell is held by id (`Source<T>` lives in cell.hpp,
+  // which includes this header — storing the id keeps merge.hpp free of that
+  // cycle; the `Source<T>` handle is materialized inside each template method,
+  // which is only instantiated where cell.hpp is already complete).
   MergeCell(Context& ctx, T initial)
-      : ctx_(&ctx), cell_(ctx.cell(std::move(initial))) {}
+      : ctx_(&ctx), cell_(ctx.source(std::move(initial)).id()) {}
 
   /// The underlying reactive cell (for wiring derived readers).
-  CellHandle<T> cell() const { return cell_; }
+  Source<T> cell() const { return Source<T>(cell_); }
 
   /// Read the current converged value (tracks a dependency in a computation).
-  T get() const { return ctx_->get_cell(cell_); }
+  T get() const { return ctx_->get(Source<T>(cell_)); }
 
   /// Replace the value outright (the keep-latest write), bypassing the policy.
-  void set(T value) { ctx_->set_cell(cell_, std::move(value)); }
+  void set(T value) { ctx_->set(Source<T>(cell_), std::move(value)); }
 
   /// Fold `op` into the current value under `Policy`. Reads untracked via peek.
   void merge(T op) {
-    T old = ctx_->peek_cell(cell_).value();
-    ctx_->set_cell(cell_, Policy::template merge<T>(old, std::move(op)));
+    Source<T> h(cell_);
+    T old = ctx_->peek_cell(h).value();
+    ctx_->set(h, Policy::template merge<T>(old, std::move(op)));
   }
 
  private:
   Context* ctx_;
-  CellHandle<T> cell_;
+  SlotId cell_;
 };
 
 }  // namespace lazily

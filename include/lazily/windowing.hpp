@@ -9,7 +9,7 @@
 // (`Sum`/`Max`/`SetUnion`/custom) composes: the aggregate of a window equals the
 // associative fold of its elements. Each primitive is a pure compute **core**
 // (window bookkeeping + a merge-policy fold) split from a reactive **cell**
-// projecting the last emitted aggregate onto a `CellHandle<std::optional<T>>`.
+// projecting the last emitted aggregate onto a `Source<std::optional<T>>`.
 //
 //   - TumblingCountCore / TumblingCountWindow — count-based, non-overlapping.
 //   - TumblingTimeCore  / TumblingTimeWindow  — time-based, non-overlapping.
@@ -21,6 +21,7 @@
 // exactly: a window emits its aggregate only when it closes.
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 #include <lazily/merge.hpp>
 
 #include <cstdint>
@@ -193,9 +194,9 @@ class SessionCore {
 // Project the last emitted aggregate onto the output cell (only on a real emit).
 template <typename T>
 inline void window_set_output(Context& ctx,
-                              const CellHandle<std::optional<T>>& cell,
+                              const Source<std::optional<T>>& cell,
                               const std::optional<T>& emitted) {
-  if (emitted.has_value()) ctx.set_cell(cell, std::optional<T>(*emitted));
+  if (emitted.has_value()) ctx.set(cell, std::optional<T>(*emitted));
 }
 
 /// Reactive count-tumbling window; projects the last emitted aggregate.
@@ -203,19 +204,19 @@ template <typename T, typename M>
 class TumblingCountWindow {
  public:
   TumblingCountWindow(Context& ctx, uint64_t n)
-      : core_(n), output_(ctx.cell(std::optional<T>())) {}
+      : core_(n), output_(ctx.source(std::optional<T>())) {}
 
   std::optional<T> push(Context& ctx, T v) {
     std::optional<T> e = core_.push(std::move(v));
     window_set_output(ctx, output_, e);
     return e;
   }
-  std::optional<T> output(Context& ctx) const { return ctx.get_cell(output_); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   TumblingCountCore<T, M> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 /// Reactive time-tumbling window (`push(now, v)` + `tick(now)`).
@@ -223,7 +224,7 @@ template <typename T, typename M>
 class TumblingTimeWindow {
  public:
   TumblingTimeWindow(Context& ctx, uint64_t period)
-      : core_(period), output_(ctx.cell(std::optional<T>())) {}
+      : core_(period), output_(ctx.source(std::optional<T>())) {}
 
   void push(Context& /*ctx*/, uint64_t now, T v) { core_.push(now, std::move(v)); }
   std::optional<T> tick(Context& ctx, uint64_t now) {
@@ -231,12 +232,12 @@ class TumblingTimeWindow {
     window_set_output(ctx, output_, e);
     return e;
   }
-  std::optional<T> output(Context& ctx) const { return ctx.get_cell(output_); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   TumblingTimeCore<T, M> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 /// Reactive count-sliding window; projects the last emitted aggregate.
@@ -244,19 +245,19 @@ template <typename T, typename M>
 class SlidingWindow {
  public:
   SlidingWindow(Context& ctx, uint64_t size, uint64_t slide)
-      : core_(size, slide), output_(ctx.cell(std::optional<T>())) {}
+      : core_(size, slide), output_(ctx.source(std::optional<T>())) {}
 
   std::optional<T> push(Context& ctx, T v) {
     std::optional<T> e = core_.push(std::move(v));
     window_set_output(ctx, output_, e);
     return e;
   }
-  std::optional<T> output(Context& ctx) const { return ctx.get_cell(output_); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   SlidingCore<T, M> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 /// Reactive session window (`push(now, v)` + `flush(now)`).
@@ -264,7 +265,7 @@ template <typename T, typename M>
 class SessionWindow {
  public:
   SessionWindow(Context& ctx, uint64_t gap)
-      : core_(gap), output_(ctx.cell(std::optional<T>())) {}
+      : core_(gap), output_(ctx.source(std::optional<T>())) {}
 
   std::optional<T> push(Context& ctx, uint64_t now, T v) {
     std::optional<T> e = core_.push(now, std::move(v));
@@ -276,12 +277,12 @@ class SessionWindow {
     window_set_output(ctx, output_, e);
     return e;
   }
-  std::optional<T> output(Context& ctx) const { return ctx.get_cell(output_); }
-  CellHandle<std::optional<T>> output_cell() const { return output_; }
+  std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
+  Source<std::optional<T>> output_cell() const { return output_; }
 
  private:
   SessionCore<T, M> core_;
-  CellHandle<std::optional<T>> output_;
+  Source<std::optional<T>> output_;
 };
 
 }  // namespace lazily

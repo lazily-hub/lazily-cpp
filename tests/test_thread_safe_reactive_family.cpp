@@ -92,18 +92,18 @@ TEST(test_derived_count_reacts_to_cell_writes) {
   ThreadSafeContext ctx;
   ThreadSafeCellMap<uint32_t, bool> liveness(ctx);
   for (uint32_t k : {10u, 20u, 30u}) liveness.set(ctx, k, true);
-  std::vector<CellHandle<bool>> handles;
+  std::vector<Source<bool>> handles;
   for (uint32_t k : {10u, 20u, 30u}) handles.push_back(*liveness.handle(k));
-  auto live_count = ctx.memo<int>([handles](Context& c) {
+  auto live_count = ctx.computed<int>([handles](Context& c) {
     int n = 0;
     for (const auto& h : handles)
-      if (c.get_cell(h)) ++n;
+      if (c.get(h)) ++n;
     return n;
   });
   assert(ctx.get(live_count) == 3);
-  ctx.set_cell(handles[1], false);
+  ctx.set(handles[1], false);
   assert(ctx.get(live_count) == 2);
-  ctx.set_cell(handles[1], true);
+  ctx.set(handles[1], true);
   assert(ctx.get(live_count) == 3);
 }
 

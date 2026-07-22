@@ -7,7 +7,7 @@
 // and the formal model `lazily-formal/LazilyFormal/Resilience.lean`. Circuit
 // breaker / retry / bulkhead / timeout, each a pure compute **core** (a state
 // machine / counter over a monotone logical clock) split from a reactive
-// **cell** projecting the salient reader onto a `CellHandle`. Cross-language
+// **cell** projecting the salient reader onto a `Source`. Cross-language
 // conformance fixtures live in
 // `lazily-spec/conformance/resilience/{circuit_breaker,retry,bulkhead,timeout}.json`.
 
@@ -15,6 +15,7 @@
 #include <deque>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
@@ -113,7 +114,7 @@ class CircuitBreakerCell {
   CircuitBreakerCell(Context& ctx, std::size_t window,
                      std::size_t failure_threshold, uint64_t reset_timeout)
       : core_(window, failure_threshold, reset_timeout),
-        state_(ctx.cell(BreakerState::Closed)) {}
+        state_(ctx.source(BreakerState::Closed)) {}
 
   bool allow(Context& ctx, uint64_t now) {
     bool r = core_.allow(now);
@@ -127,13 +128,13 @@ class CircuitBreakerCell {
   }
 
   BreakerState state() const { return core_.state(); }
-  CellHandle<BreakerState> state_cell() const { return state_; }
+  Source<BreakerState> state_cell() const { return state_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(state_, core_.state()); }
+  void refresh(Context& ctx) { ctx.set(state_, core_.state()); }
 
   CircuitBreakerCore core_;
-  CellHandle<BreakerState> state_;
+  Source<BreakerState> state_;
 };
 
 // ===========================================================================
@@ -176,25 +177,25 @@ class RetryPolicyCore {
 class RetryPolicyCell {
  public:
   RetryPolicyCell(Context& ctx, uint64_t base, uint64_t cap)
-      : core_(base, cap), delay_(ctx.cell(uint64_t(0))) {}
+      : core_(base, cap), delay_(ctx.source(uint64_t(0))) {}
 
   uint64_t next_delay(Context& ctx) {
     uint64_t d = core_.next_delay();
-    ctx.set_cell(delay_, d);
+    ctx.set(delay_, d);
     return d;
   }
 
   void reset(Context& ctx) {
     core_.reset();
-    ctx.set_cell(delay_, uint64_t(0));
+    ctx.set(delay_, uint64_t(0));
   }
 
-  uint64_t delay(Context& ctx) { return ctx.get_cell(delay_); }
-  CellHandle<uint64_t> delay_cell() const { return delay_; }
+  uint64_t delay(Context& ctx) { return ctx.get(delay_); }
+  Source<uint64_t> delay_cell() const { return delay_; }
 
  private:
   RetryPolicyCore core_;
-  CellHandle<uint64_t> delay_;
+  Source<uint64_t> delay_;
 };
 
 // ===========================================================================
@@ -229,7 +230,7 @@ class BulkheadCore {
 class BulkheadCell {
  public:
   BulkheadCell(Context& ctx, uint64_t capacity)
-      : core_(capacity), in_use_(ctx.cell(uint64_t(0))) {}
+      : core_(capacity), in_use_(ctx.source(uint64_t(0))) {}
 
   bool acquire(Context& ctx) {
     bool r = core_.acquire();
@@ -242,14 +243,14 @@ class BulkheadCell {
     refresh(ctx);
   }
 
-  uint64_t permits_in_use(Context& ctx) { return ctx.get_cell(in_use_); }
-  CellHandle<uint64_t> permits_in_use_cell() const { return in_use_; }
+  uint64_t permits_in_use(Context& ctx) { return ctx.get(in_use_); }
+  Source<uint64_t> permits_in_use_cell() const { return in_use_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(in_use_, core_.in_use()); }
+  void refresh(Context& ctx) { ctx.set(in_use_, core_.in_use()); }
 
   BulkheadCore core_;
-  CellHandle<uint64_t> in_use_;
+  Source<uint64_t> in_use_;
 };
 
 // ===========================================================================
@@ -288,7 +289,7 @@ class TimeoutCore {
 // Reactive timeout: projects `is_timed_out` onto a `Cell`.
 class TimeoutCell {
  public:
-  explicit TimeoutCell(Context& ctx) : timed_out_(ctx.cell(false)) {}
+  explicit TimeoutCell(Context& ctx) : timed_out_(ctx.source(false)) {}
 
   void arm(Context& ctx, uint64_t now, uint64_t timeout) {
     core_.arm(now, timeout);
@@ -301,14 +302,14 @@ class TimeoutCell {
     return r;
   }
 
-  bool is_timed_out(Context& ctx) { return ctx.get_cell(timed_out_); }
-  CellHandle<bool> is_timed_out_cell() const { return timed_out_; }
+  bool is_timed_out(Context& ctx) { return ctx.get(timed_out_); }
+  Source<bool> is_timed_out_cell() const { return timed_out_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(timed_out_, core_.is_timed_out()); }
+  void refresh(Context& ctx) { ctx.set(timed_out_, core_.is_timed_out()); }
 
   TimeoutCore core_;
-  CellHandle<bool> timed_out_;
+  Source<bool> timed_out_;
 };
 
 }  // namespace lazily

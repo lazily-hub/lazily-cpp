@@ -7,18 +7,18 @@ using namespace lazily;
 
 struct WorkQueueReaders {
   Context &ctx;
-  SlotHandle<size_t> pending;
-  SlotHandle<bool> empty;
-  SlotHandle<size_t> in_flight;
-  SlotHandle<size_t> dead;
+  Computed<size_t> pending;
+  Computed<bool> empty;
+  Computed<size_t> in_flight;
+  Computed<size_t> dead;
 
   WorkQueueReaders(Context &context, WorkQueueCell<std::string> &queue)
-      : ctx(context), pending(ctx.memo<size_t>(
+      : ctx(context), pending(ctx.computed<size_t>(
                           [&](Context &c) { return queue.pending_len(c); })),
-        empty(ctx.memo<bool>([&](Context &c) { return queue.is_empty(c); })),
-        in_flight(ctx.memo<size_t>(
+        empty(ctx.computed<bool>([&](Context &c) { return queue.is_empty(c); })),
+        in_flight(ctx.computed<size_t>(
             [&](Context &c) { return queue.in_flight_len(c); })),
-        dead(ctx.memo<size_t>(
+        dead(ctx.computed<size_t>(
             [&](Context &c) { return queue.dead_letter_len(c); })) {
     refresh();
   }

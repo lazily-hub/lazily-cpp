@@ -9,7 +9,7 @@
 // from its own runtime timer (a game loop, a test). Each source is a pure
 // [`TimelineSource`] **compute core** (a side-effect-free state machine over plain
 // integers — the C++-eligible, bytes-payload part) split from a thin reactive
-// **cell** that projects the core's fire edge onto a `CellHandle` so dependents
+// **cell** that projects the core's fire edge onto a `Source` so dependents
 // invalidate *only on an actual fire* (the backend-portability rule).
 // `DeadlineCell<T>` carries an opaque user value alongside a bytes-eligible
 // deadline core.
@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
@@ -92,13 +93,13 @@ class TimerCore {
 class TimerCell {
  public:
   TimerCell(Context& ctx, uint64_t fire_at)
-      : core_(fire_at), fired_(ctx.cell(false)) {}
+      : core_(fire_at), fired_(ctx.source(false)) {}
 
   /// Advance to logical time `now`; returns the fire edge. On a fire the backing
   /// cell flips to `true`.
   bool tick(Context& ctx, uint64_t now) {
     bool edge = core_.tick(now);
-    if (edge) ctx.set_cell(fired_, true);
+    if (edge) ctx.set(fired_, true);
     return edge;
   }
 
@@ -114,13 +115,13 @@ class TimerCell {
   }
 
   /// The backing cell, for dependents that want to subscribe directly.
-  CellHandle<bool> fired_cell() const { return fired_; }
+  Source<bool> fired_cell() const { return fired_; }
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
  private:
   TimerCore core_;
-  CellHandle<bool> fired_;
+  Source<bool> fired_;
 };
 
 // ---------------------------------------------------------------------------
@@ -171,26 +172,26 @@ class IntervalCore {
 class IntervalCell {
  public:
   IntervalCell(Context& ctx, uint64_t period)
-      : core_(period), count_(ctx.cell<uint64_t>(0)) {}
+      : core_(period), count_(ctx.source<uint64_t>(0)) {}
 
   /// Advance to logical time `now`; returns whether a boundary fired. The count
   /// cell mirrors the core's total fire count.
   bool tick(Context& ctx, uint64_t now) {
     bool edge = core_.tick(now);
-    if (edge) ctx.set_cell(count_, core_.count());
+    if (edge) ctx.set(count_, core_.count());
     return edge;
   }
 
   /// Total fires so far (reactive read).
   uint64_t count(Context& ctx) const { return count_.get(ctx); }
 
-  CellHandle<uint64_t> count_cell() const { return count_; }
+  Source<uint64_t> count_cell() const { return count_; }
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
  private:
   IntervalCore core_;
-  CellHandle<uint64_t> count_;
+  Source<uint64_t> count_;
 };
 
 // ---------------------------------------------------------------------------
@@ -274,23 +275,23 @@ class CronCore {
 class CronCell {
  public:
   CronCell(Context& ctx, uint64_t cycle, std::vector<uint64_t> offsets)
-      : core_(cycle, std::move(offsets)), count_(ctx.cell<uint64_t>(0)) {}
+      : core_(cycle, std::move(offsets)), count_(ctx.source<uint64_t>(0)) {}
 
   bool tick(Context& ctx, uint64_t now) {
     bool edge = core_.tick(now);
-    if (edge) ctx.set_cell(count_, core_.count());
+    if (edge) ctx.set(count_, core_.count());
     return edge;
   }
 
   uint64_t count(Context& ctx) const { return count_.get(ctx); }
 
-  CellHandle<uint64_t> count_cell() const { return count_; }
+  Source<uint64_t> count_cell() const { return count_; }
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
  private:
   CronCore core_;
-  CellHandle<uint64_t> count_;
+  Source<uint64_t> count_;
 };
 
 // ---------------------------------------------------------------------------
@@ -349,12 +350,12 @@ template <typename T>
 class DeadlineCell {
  public:
   DeadlineCell(Context& ctx, T value, uint64_t deadline)
-      : core_(deadline), value_(std::move(value)), expired_(ctx.cell(false)) {}
+      : core_(deadline), value_(std::move(value)), expired_(ctx.source(false)) {}
 
   /// Advance to logical time `now`; returns the expiry edge.
   bool tick(Context& ctx, uint64_t now) {
     bool edge = core_.tick(now);
-    if (edge) ctx.set_cell(expired_, true);
+    if (edge) ctx.set(expired_, true);
     return edge;
   }
 
@@ -366,14 +367,14 @@ class DeadlineCell {
 
   bool is_expired(Context& ctx) const { return expired_.get(ctx); }
 
-  CellHandle<bool> expired_cell() const { return expired_; }
+  Source<bool> expired_cell() const { return expired_; }
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
  private:
   DeadlineCore core_;
   T value_;
-  CellHandle<bool> expired_;
+  Source<bool> expired_;
 };
 
 }  // namespace lazily

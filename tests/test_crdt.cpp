@@ -25,46 +25,46 @@ static int test_passed = 0;
 
 TEST(test_thread_safe_basic) {
   ThreadSafeContext ctx;
-  auto c = ctx.cell(42);
-  assert(ctx.get_cell(c) == 42);
-  ctx.set_cell(c, 100);
-  assert(ctx.get_cell(c) == 100);
+  auto c = ctx.source(42);
+  assert(ctx.get(c) == 42);
+  ctx.set(c, 100);
+  assert(ctx.get(c) == 100);
 }
 
 TEST(test_thread_safe_concurrent) {
   ThreadSafeContext ctx;
-  auto a = ctx.cell(0);
+  auto a = ctx.source(0);
   ctx.batch([&](Context& c) {
-    c.set_cell(a, 1);
+    c.set(a, 1);
   });
-  assert(ctx.get_cell(a) == 1);
+  assert(ctx.get(a) == 1);
 }
 
 TEST(test_thread_safe_multi_thread) {
   ThreadSafeContext ctx;
-  auto counter = ctx.cell(0);
+  auto counter = ctx.source(0);
 
   std::vector<std::thread> threads;
   for (int t = 0; t < 4; ++t) {
     threads.emplace_back([&]() {
       for (int i = 0; i < 100; ++i) {
         ctx.batch([&](Context& c) {
-          int v = c.get_cell(counter);
-          c.set_cell(counter, v + 1);
+          int v = c.get(counter);
+          c.set(counter, v + 1);
         });
       }
     });
   }
   for (auto& t : threads) t.join();
-  assert(ctx.get_cell(counter) == 400);
+  assert(ctx.get(counter) == 400);
 }
 
 // Concurrent shared-lock readers must all observe the stable cached value
 // (guards the shared fast path against torn reads).
 TEST(test_thread_safe_concurrent_reads) {
   ThreadSafeContext ctx;
-  auto cell = ctx.cell(12345);
-  auto slot = ctx.slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
+  auto cell = ctx.source(12345);
+  auto slot = ctx.slot<int>([&](Context& c) { return c.get(cell) * 2; });
   (void)ctx.get(slot);  // prime cache
 
   std::atomic<int> bad{0};
@@ -72,7 +72,7 @@ TEST(test_thread_safe_concurrent_reads) {
   for (int t = 0; t < 8; ++t) {
     threads.emplace_back([&]() {
       for (int i = 0; i < 10000; ++i) {
-        if (ctx.get_cell(cell) != 12345) ++bad;
+        if (ctx.get(cell) != 12345) ++bad;
         if (ctx.get(slot) != 24690) ++bad;
       }
     });
@@ -86,12 +86,12 @@ TEST(test_thread_safe_concurrent_reads) {
 // owner-token re-entrancy bypass.
 TEST(test_thread_safe_reentrant_callback) {
   ThreadSafeContext ctx;
-  auto base = ctx.cell(7);
+  auto base = ctx.source(7);
   auto derived = ctx.slot<int>([&](Context&) {
-    return ctx.get_cell(base) + 1;  // re-entrant wrapper call
+    return ctx.get(base) + 1;  // re-entrant wrapper call
   });
   assert(ctx.get(derived) == 8);
-  ctx.set_cell(base, 40);
+  ctx.set(base, 40);
   assert(ctx.get(derived) == 41);
 }
 

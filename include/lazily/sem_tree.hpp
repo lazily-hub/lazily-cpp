@@ -3,6 +3,7 @@
 
 #include <lazily/collections.hpp>
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 #include <algorithm>
 #include <functional>
@@ -17,11 +18,11 @@ namespace lazily {
 template <typename V, typename D>
 struct SemNode {
   std::string id;
-  CellHandle<V> value_cell;
-  CellHandle<int> child_keys_cell;
+  Source<V> value_cell;
+  Source<int> child_keys_cell;
   std::vector<std::string> child_order;
   std::unordered_map<std::string, std::shared_ptr<SemNode<V, D>>> children;
-  SlotHandle<D> slot;
+  Computed<D> slot;
   int child_version;
 };
 
@@ -34,10 +35,10 @@ class SemTree {
       : ctx_(ctx), fold_(std::move(fold)) {
     root_ = std::make_shared<SemNode<V, D>>();
     root_->id = root_id;
-    root_->value_cell = ctx_.cell(std::move(root_value));
+    root_->value_cell = ctx_.source(std::move(root_value));
     root_->child_version = 0;
-    root_->child_keys_cell = ctx_.cell(0);
-    root_->slot = build_fold_memo(root_);
+    root_->child_keys_cell = ctx_.source(0);
+    root_->slot = build_fold_computed(root_);
   }
 
   void add_child(const std::string& parent_id, const std::string& child_id, V value) {
@@ -45,20 +46,20 @@ class SemTree {
     if (!parent) return;
     auto child = std::make_shared<SemNode<V, D>>();
     child->id = child_id;
-    child->value_cell = ctx_.cell(std::move(value));
+    child->value_cell = ctx_.source(std::move(value));
     child->child_version = 0;
-    child->child_keys_cell = ctx_.cell(0);
-    child->slot = build_fold_memo(child);
+    child->child_keys_cell = ctx_.source(0);
+    child->slot = build_fold_computed(child);
     parent->child_order.push_back(child_id);
     parent->children[child_id] = child;
     parent->child_version++;
-    ctx_.set_cell(parent->child_keys_cell, parent->child_version);
+    ctx_.set(parent->child_keys_cell, parent->child_version);
   }
 
   void set_value(const std::string& id, V value) {
     auto node = find_node(root_, id);
     if (!node) return;
-    ctx_.set_cell(node->value_cell, std::move(value));
+    ctx_.set(node->value_cell, std::move(value));
   }
 
   void remove_child(const std::string& parent_id, const std::string& child_id) {
@@ -69,7 +70,7 @@ class SemTree {
         parent->child_order.end());
     parent->children.erase(child_id);
     parent->child_version++;
-    ctx_.set_cell(parent->child_keys_cell, parent->child_version);
+    ctx_.set(parent->child_keys_cell, parent->child_version);
   }
 
   D value() { return ctx_.get(root_->slot); }
@@ -86,9 +87,9 @@ class SemTree {
     return ctx_.is_set(node->slot);
   }
 
-  SlotHandle<D> root_handle() { return root_->slot; }
+  Computed<D> root_handle() { return root_->slot; }
 
-  std::optional<SlotHandle<D>> node_handle(const std::string& id) {
+  std::optional<Computed<D>> node_handle(const std::string& id) {
     auto node = find_node(root_, id);
     if (!node) return std::nullopt;
     return node->slot;
@@ -99,14 +100,14 @@ class SemTree {
   FoldFn fold_;
   std::shared_ptr<SemNode<V, D>> root_;
 
-  SlotHandle<D> build_fold_memo(std::shared_ptr<SemNode<V, D>> node) {
+  Computed<D> build_fold_computed(std::shared_ptr<SemNode<V, D>> node) {
     auto value_cell = node->value_cell;
     auto child_keys_cell = node->child_keys_cell;
     auto fold = fold_;
 
-    return ctx_.memo<D>([=](Context& ctx) -> D {
-      (void)ctx.get_cell(child_keys_cell);
-      V val = ctx.get_cell(value_cell);
+    return ctx_.computed<D>([=](Context& ctx) -> D {
+      (void)ctx.get(child_keys_cell);
+      V val = ctx.get(value_cell);
       std::vector<D> child_vals;
       // Capture children at compute time
       auto n = node;

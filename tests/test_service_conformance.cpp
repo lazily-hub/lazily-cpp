@@ -48,7 +48,7 @@ static std::string fixture_text(const std::string& file) {
 
 // After an op, `observed` is dirty (is_set == false) iff the projection changed.
 template <typename T>
-static void check_inval(Context& ctx, const SlotHandle<T>& observed,
+static void check_inval(Context& ctx, const Computed<T>& observed,
                         bool expect_inval, const char* msg) {
   bool was = ctx.is_set(observed);
   (void)ctx.get(observed);
@@ -65,7 +65,7 @@ TEST(test_health) {
   Context ctx;
   HealthCell h(ctx);
   auto hc = h.health_cell();
-  auto observed = ctx.memo<Health>([hc](Context& c) { return c.get_cell(hc); });
+  auto observed = ctx.computed<Health>([hc](Context& c) { return c.get(hc); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -97,7 +97,7 @@ TEST(test_readiness) {
   Context ctx;
   ReadinessCell r(ctx);
   auto rc = r.ready_cell();
-  auto observed = ctx.memo<bool>([rc](Context& c) { return c.get_cell(rc); });
+  auto observed = ctx.computed<bool>([rc](Context& c) { return c.get(rc); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -128,7 +128,7 @@ TEST(test_discovery) {
   Context ctx;
   DiscoveryCell<uint64_t> d(ctx);
   auto dc = d.discovery_cell();
-  auto observed = ctx.memo<Map>([dc](Context& c) { return c.get_cell(dc); });
+  auto observed = ctx.computed<Map>([dc](Context& c) { return c.get(dc); });
   (void)ctx.get(observed);
 
   // step 1: register api -> {api}
@@ -165,7 +165,7 @@ TEST(test_service_registry) {
   Context ctx;
   ServiceRegistry reg(ctx);
   auto pc = reg.projection_cell();
-  auto observed = ctx.memo<Map>([pc](Context& c) { return c.get_cell(pc); });
+  auto observed = ctx.computed<Map>([pc](Context& c) { return c.get(pc); });
   (void)ctx.get(observed);
 
   // step 1: register api v1

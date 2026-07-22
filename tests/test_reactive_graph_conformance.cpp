@@ -33,7 +33,7 @@
 // The key exists because an eager signal and a lazy memo return IDENTICAL
 // values for every read sequence in these fixtures. The only caller-observable
 // difference is *when* compute runs, so a corpus asserting values alone cannot
-// distinguish `signal()` from `memo()`. That makes the counter's provenance the
+// distinguish `signal()` from `computed()`. That makes the counter's provenance the
 // whole point: it is incremented inside the compute body itself
 // (`counting_body`), never inferred by the runner from ops it saw. Two further
 // consequences are enforced below rather than left to convention — the counter
@@ -42,7 +42,7 @@
 // memo would advance the counter it is being compared against.
 //
 // lazily-cpp passes all four clauses structurally rather than by accident.
-// `Context::signal` (context.hpp) is the textbook composition — `memo<T>()`
+// `Context::signal` (context.hpp) is the textbook composition — `computed<T>()`
 // plus an `effect_void` puller — and `dispose_signal` disposes only the effect.
 // Clause 3 (one re-materialization per batch, not one per write) falls out of
 // the puller being an ordinary effect: effects are scheduled, not inline, so N
@@ -443,7 +443,7 @@ struct World {
   long long read_ref(Context& c, const Ref& ref) {
     switch (ref.kind) {
       case Kind::Cell:
-        return c.get_cell(CellHandle<long long>(ref.id));
+        return c.get(Source<long long>(ref.id));
       case Kind::Slot:
       // A signal reads through its backing slot — `get_signal` is defined as
       // exactly that. Reading the slot directly is not a shortcut around the
@@ -451,7 +451,7 @@ struct World {
       // what makes a de-eagered signal indistinguishable from a memo at the
       // read site, which is clause 4's whole claim.
       case Kind::Signal:
-        return c.get(SlotHandle<long long>(ref.id));
+        return c.get(Computed<long long>(ref.id));
       case Kind::Effect:
         REQUIRE(false, "fixture read of an effect — effects are pure sinks");
     }
@@ -497,10 +497,10 @@ std::size_t dependents_of(World& w, const std::string& id) {
   const Ref ref = w.lookup(id);
   switch (ref.kind) {
     case Kind::Cell:
-      return w.ctx.dependent_count(CellHandle<long long>(ref.id));
+      return w.ctx.dependent_count(Source<long long>(ref.id));
     case Kind::Slot:
     case Kind::Signal:
-      return w.ctx.dependent_count(SlotHandle<long long>(ref.id));
+      return w.ctx.dependent_count(Computed<long long>(ref.id));
     case Kind::Effect:
       return w.ctx.dependent_count(Effect(ref.id));
   }
@@ -511,10 +511,10 @@ std::size_t dependencies_of(World& w, const std::string& id) {
   const Ref ref = w.lookup(id);
   switch (ref.kind) {
     case Kind::Cell:
-      return w.ctx.dependency_count(CellHandle<long long>(ref.id));
+      return w.ctx.dependency_count(Source<long long>(ref.id));
     case Kind::Slot:
     case Kind::Signal:
-      return w.ctx.dependency_count(SlotHandle<long long>(ref.id));
+      return w.ctx.dependency_count(Computed<long long>(ref.id));
     case Kind::Effect:
       return w.ctx.dependency_count(Effect(ref.id));
   }
@@ -524,10 +524,10 @@ std::size_t dependencies_of(World& w, const std::string& id) {
 void dispose_ref(World& w, const Ref& ref) {
   switch (ref.kind) {
     case Kind::Cell:
-      w.ctx.dispose_cell(CellHandle<long long>(ref.id));
+      w.ctx.dispose_cell(Source<long long>(ref.id));
       return;
     case Kind::Slot:
-      w.ctx.dispose_slot(SlotHandle<long long>(ref.id));
+      w.ctx.dispose_slot(Computed<long long>(ref.id));
       return;
     case Kind::Effect:
       w.ctx.dispose_effect(Effect(ref.id));
@@ -538,7 +538,7 @@ void dispose_ref(World& w, const Ref& ref) {
       // the op below, which drops only the puller. Conflating the two is
       // failure (a) in dispose_signal_reverts_to_lazy.json.
       w.ctx.dispose_effect(Effect(ref.effect_id));
-      w.ctx.dispose_slot(SlotHandle<long long>(ref.id));
+      w.ctx.dispose_slot(Computed<long long>(ref.id));
       return;
   }
 }
@@ -608,9 +608,9 @@ Effect make_effect(World& w, const std::string& name,
   return scope ? scope->effect(body) : w.ctx.effect(body);
 }
 
-CellHandle<long long> make_cell(World& w, long long value,
+Source<long long> make_cell(World& w, long long value,
                                 TeardownScope* scope) {
-  return scope ? scope->cell<long long>(value) : w.ctx.cell<long long>(value);
+  return scope ? scope->source<long long>(value) : w.ctx.source<long long>(value);
 }
 
 // Collect every distinct `op.type` a fixture uses.
@@ -741,7 +741,7 @@ void replay(const std::string& fixture, World& w,
       const Json* value = op->find("value");
       REQUIRE(value != nullptr, "cell op has no value");
       auto h = make_cell(w, value->as_int(), scope_of(w, op));
-      bind_node(w, op_id(), Ref(Kind::Cell, h.id));
+      bind_node(w, op_id(), Ref(Kind::Cell, h.id()));
     } else if (kind == "computed") {
       const Json* offset = op->find("offset");
       const std::string id = op_id();
@@ -780,7 +780,7 @@ void replay(const std::string& fixture, World& w,
           REQUIRE(wid && wvalue, "batch write needs an id and a value");
           const Ref ref = w.lookup(wid->str);
           REQUIRE(ref.kind == Kind::Cell, "batch write to a node that is not a cell");
-          c.set_cell(CellHandle<long long>(ref.id), wvalue->as_int());
+          c.set(Source<long long>(ref.id), wvalue->as_int());
         }
       });
     } else if (kind == "effect") {
@@ -797,7 +797,7 @@ void replay(const std::string& fixture, World& w,
       REQUIRE(value != nullptr, "set_cell op has no value");
       const Ref ref = w.lookup(op_id());
       REQUIRE(ref.kind == Kind::Cell, "set_cell on a node that is not a cell");
-      w.ctx.set_cell(CellHandle<long long>(ref.id), value->as_int());
+      w.ctx.set(Source<long long>(ref.id), value->as_int());
     } else if (kind == "dispose") {
       // The binding is deliberately NOT erased: a disposed id stays
       // readable-as-an-error, and disposing it again must be a no-op.
@@ -1058,7 +1058,7 @@ void replay(const std::string& fixture, World& w,
   const Ref ref = w.lookup(pid->str);
   REQUIRE(ref.kind == Kind::Cell, "after_publish set_cell on a non-cell");
   const std::size_t before = w.run_log.size();
-  w.ctx.set_cell(CellHandle<long long>(ref.id), pvalue->as_int());
+  w.ctx.set(Source<long long>(ref.id), pvalue->as_int());
   report.observation.after_publish_observed.assign(w.run_log.begin() + before,
                                                    w.run_log.end());
   check_strs(fixture, tail_step, "after_publish.observed_by",

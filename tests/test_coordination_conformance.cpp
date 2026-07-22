@@ -56,7 +56,7 @@ TEST(test_lease) {
   LeaseCell<uint64_t> lease(ctx);
   auto hc = lease.holder_cell();
   auto observed =
-      ctx.memo<std::optional<uint64_t>>([hc](Context& c) { return hc.get(c); });
+      ctx.computed<std::optional<uint64_t>>([hc](Context& c) { return hc.get(c); });
   (void)ctx.get(observed);
 
   auto step = [&](bool inval) {
@@ -109,7 +109,7 @@ TEST(test_leader) {
   LeaderCell<uint64_t> leader(ctx, 1);
   auto lc = leader.current_leader_cell();
   auto observed =
-      ctx.memo<std::optional<uint64_t>>([lc](Context& c) { return lc.get(c); });
+      ctx.computed<std::optional<uint64_t>>([lc](Context& c) { return lc.get(c); });
   (void)ctx.get(observed);
 
   auto step = [&](bool inval) {
@@ -150,7 +150,7 @@ TEST(test_lock) {
   Context ctx;
   LockCell<uint64_t> lock(ctx);
   auto lc = lock.is_locked_cell();
-  auto observed = ctx.memo<bool>([lc](Context& c) { return lc.get(c); });
+  auto observed = ctx.computed<bool>([lc](Context& c) { return lc.get(c); });
   (void)ctx.get(observed);
 
   auto step = [&](bool inval) {
@@ -201,7 +201,7 @@ TEST(test_semaphore) {
   Context ctx;
   SemaphoreCell sem(ctx, 2);
   auto pc = sem.permits_available_cell();
-  auto observed = ctx.memo<uint64_t>([pc](Context& c) { return pc.get(c); });
+  auto observed = ctx.computed<uint64_t>([pc](Context& c) { return pc.get(c); });
   (void)ctx.get(observed);
 
   auto step = [&](bool inval) {
@@ -243,7 +243,7 @@ TEST(test_quorum) {
   Context ctx;
   auto q = BarrierCell<uint64_t>::quorum(ctx, 5);
   auto oc = q.is_open_cell();
-  auto observed = ctx.memo<bool>([oc](Context& c) { return oc.get(c); });
+  auto observed = ctx.computed<bool>([oc](Context& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
   auto step = [&](bool inval) {

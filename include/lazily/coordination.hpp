@@ -8,7 +8,7 @@
 // `lazily-formal/LazilyFormal/Coordination.lean`. Lease / leader / lock /
 // semaphore / barrier + quorum primitives, each a pure **compute core** (a state
 // machine over integers / peer ids — bytes-payload, C++-eligible) split from a
-// reactive **cell** projecting the salient reader onto a `CellHandle`. Time is a
+// reactive **cell** projecting the salient reader onto a `Source`. Time is a
 // logical clock — a monotone `now` (uint64_t) tick the runtime drives; `expiry`
 // is a tick value. A reader invalidates only when its projection changes (the
 // backend-portability rule).
@@ -19,6 +19,7 @@
 #include <utility>
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 namespace lazily {
 
@@ -101,7 +102,7 @@ template <typename P>
 class LeaseCell {
  public:
   explicit LeaseCell(Context& ctx)
-      : core_(), holder_(ctx.cell(std::optional<P>(std::nullopt))) {}
+      : core_(), holder_(ctx.source(std::optional<P>(std::nullopt))) {}
 
   std::optional<uint64_t> acquire(Context& ctx, P peer, uint64_t now,
                                   uint64_t ttl) {
@@ -130,15 +131,15 @@ class LeaseCell {
   std::optional<P> holder(uint64_t now) const { return core_.holder(now); }
   bool is_held(uint64_t now) const { return core_.is_held(now); }
   uint64_t fence() const { return core_.fence(); }
-  CellHandle<std::optional<P>> holder_cell() const { return holder_; }
+  Source<std::optional<P>> holder_cell() const { return holder_; }
 
  private:
   void refresh(Context& ctx, uint64_t now) {
-    ctx.set_cell(holder_, core_.holder(now));
+    ctx.set(holder_, core_.holder(now));
   }
 
   LeaseCore<P> core_;
-  CellHandle<std::optional<P>> holder_;
+  Source<std::optional<P>> holder_;
 };
 
 // ===========================================================================
@@ -159,7 +160,7 @@ class LeaderCell {
   LeaderCell(Context& ctx, P me)
       : core_(),
         me_(std::move(me)),
-        current_leader_(ctx.cell(std::optional<P>(std::nullopt))) {}
+        current_leader_(ctx.source(std::optional<P>(std::nullopt))) {}
 
   /// Try to acquire leadership for `me`.
   LeaderRole campaign(Context& ctx, uint64_t now, uint64_t ttl) {
@@ -191,18 +192,18 @@ class LeaderCell {
     return (*h == me_) ? LeaderRole::Leader : LeaderRole::Follower;
   }
 
-  CellHandle<std::optional<P>> current_leader_cell() const {
+  Source<std::optional<P>> current_leader_cell() const {
     return current_leader_;
   }
 
  private:
   void refresh(Context& ctx, uint64_t now) {
-    ctx.set_cell(current_leader_, core_.holder(now));
+    ctx.set(current_leader_, core_.holder(now));
   }
 
   LeaseCore<P> core_;
   P me_;
-  CellHandle<std::optional<P>> current_leader_;
+  Source<std::optional<P>> current_leader_;
 };
 
 // ===========================================================================
@@ -213,7 +214,7 @@ class LeaderCell {
 template <typename P>
 class LockCell {
  public:
-  explicit LockCell(Context& ctx) : core_(), is_locked_(ctx.cell(false)) {}
+  explicit LockCell(Context& ctx) : core_(), is_locked_(ctx.source(false)) {}
 
   /// Acquire the lock, returning a fencing token, or `std::nullopt` if held.
   std::optional<uint64_t> acquire(Context& ctx, P peer, uint64_t now,
@@ -239,15 +240,15 @@ class LockCell {
 
   bool is_locked(uint64_t now) const { return core_.is_held(now); }
   uint64_t fence() const { return core_.fence(); }
-  CellHandle<bool> is_locked_cell() const { return is_locked_; }
+  Source<bool> is_locked_cell() const { return is_locked_; }
 
  private:
   void refresh(Context& ctx, uint64_t now) {
-    ctx.set_cell(is_locked_, core_.is_held(now));
+    ctx.set(is_locked_, core_.is_held(now));
   }
 
   LeaseCore<P> core_;
-  CellHandle<bool> is_locked_;
+  Source<bool> is_locked_;
 };
 
 // ===========================================================================
@@ -283,7 +284,7 @@ class SemaphoreCore {
 class SemaphoreCell {
  public:
   SemaphoreCell(Context& ctx, uint64_t capacity)
-      : core_(capacity), available_(ctx.cell<uint64_t>(capacity)) {}
+      : core_(capacity), available_(ctx.source<uint64_t>(capacity)) {}
 
   bool acquire(Context& ctx) {
     bool r = core_.acquire();
@@ -297,13 +298,13 @@ class SemaphoreCell {
   }
 
   uint64_t permits_available(Context& ctx) const { return available_.get(ctx); }
-  CellHandle<uint64_t> permits_available_cell() const { return available_; }
+  Source<uint64_t> permits_available_cell() const { return available_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(available_, core_.available()); }
+  void refresh(Context& ctx) { ctx.set(available_, core_.available()); }
 
   SemaphoreCore core_;
-  CellHandle<uint64_t> available_;
+  Source<uint64_t> available_;
 };
 
 // ===========================================================================
@@ -337,7 +338,7 @@ template <typename P>
 class BarrierCell {
  public:
   BarrierCell(Context& ctx, uint64_t required)
-      : core_(required), is_open_(ctx.cell(core_.is_open())) {}
+      : core_(required), is_open_(ctx.source(core_.is_open())) {}
 
   /// A quorum gate: opens at strict majority of `total`.
   static BarrierCell<P> quorum(Context& ctx, uint64_t total) {
@@ -353,13 +354,13 @@ class BarrierCell {
 
   uint64_t count() const { return core_.count(); }
   bool is_open(Context& ctx) const { return is_open_.get(ctx); }
-  CellHandle<bool> is_open_cell() const { return is_open_; }
+  Source<bool> is_open_cell() const { return is_open_; }
 
  private:
-  void refresh(Context& ctx) { ctx.set_cell(is_open_, core_.is_open()); }
+  void refresh(Context& ctx) { ctx.set(is_open_, core_.is_open()); }
 
   BarrierCore<P> core_;
-  CellHandle<bool> is_open_;
+  Source<bool> is_open_;
 };
 
 }  // namespace lazily

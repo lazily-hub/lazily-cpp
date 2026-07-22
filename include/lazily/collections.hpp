@@ -2,6 +2,7 @@
 #define LAZILY_COLLECTIONS_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 #include <lazily/reactive_family.hpp>
 
 #include <algorithm>
@@ -21,7 +22,7 @@ namespace lazily {
 template <typename Id, typename V>
 struct CellTreeNode {
   Id id;
-  CellHandle<V> value;
+  Source<V> value;
   std::optional<CellMap<Id, bool>> order;
   std::unordered_map<Id, size_t> child_index;
   std::vector<std::shared_ptr<CellTreeNode<Id, V>>> children;
@@ -33,7 +34,7 @@ class CellTree {
   CellTree(Context& ctx, Id id, V value)
       : inner_(std::make_shared<CellTreeNode<Id, V>>()) {
     inner_->id = std::move(id);
-    inner_->value = ctx.cell(std::move(value));
+    inner_->value = ctx.source(std::move(value));
     inner_->order.emplace(ctx);
   }
 
@@ -42,10 +43,10 @@ class CellTree {
   }
 
   const Id& id() const { return inner_->id; }
-  CellHandle<V> value_handle() const { return inner_->value; }
+  Source<V> value_handle() const { return inner_->value; }
 
-  V get(Context& ctx) { return ctx.get_cell(inner_->value); }
-  void set(Context& ctx, V value) { ctx.set_cell(inner_->value, std::move(value)); }
+  V get(Context& ctx) { return ctx.get(inner_->value); }
+  void set(Context& ctx, V value) { ctx.set(inner_->value, std::move(value)); }
 
   CellTree insert_child(Context& ctx, Id child_id, V value) {
     auto it = inner_->child_index.find(child_id);
@@ -54,7 +55,7 @@ class CellTree {
 
     auto child = std::make_shared<CellTreeNode<Id, V>>();
     child->id = child_id;
-    child->value = ctx.cell(std::move(value));
+    child->value = ctx.source(std::move(value));
     child->order.emplace(ctx);
 
     size_t idx = inner_->children.size();

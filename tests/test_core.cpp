@@ -31,41 +31,41 @@ static int test_passed = 0;
 
 TEST(test_cell_basic) {
   Context ctx;
-  auto c = ctx.cell(42);
-  assert(ctx.get_cell(c) == 42);
-  ctx.set_cell(c, 100);
-  assert(ctx.get_cell(c) == 100);
+  auto c = ctx.source(42);
+  assert(ctx.get(c) == 42);
+  ctx.set(c, 100);
+  assert(ctx.get(c) == 100);
 }
 
 TEST(test_slot_lazy) {
   Context ctx;
-  auto a = ctx.cell(2);
-  auto b = ctx.cell(3);
-  auto sum = ctx.memo<int>([&](Context& c) {
-    return c.get_cell(a) + c.get_cell(b);
+  auto a = ctx.source(2);
+  auto b = ctx.source(3);
+  auto sum = ctx.computed<int>([&](Context& c) {
+    return c.get(a) + c.get(b);
   });
   assert(ctx.get(sum) == 5);
-  ctx.set_cell(a, 10);
+  ctx.set(a, 10);
   assert(ctx.get(sum) == 13);
-  ctx.set_cell(b, 7);
+  ctx.set(b, 7);
   assert(ctx.get(sum) == 17);
 }
 
 TEST(test_slot_caching) {
   Context ctx;
   int compute_count = 0;
-  auto a = ctx.cell(1);
-  auto s = ctx.memo<int>([&](Context& c) {
+  auto a = ctx.source(1);
+  auto s = ctx.computed<int>([&](Context& c) {
     compute_count++;
-    return c.get_cell(a) * 2;
+    return c.get(a) * 2;
   });
   assert(ctx.get(s) == 2);
   assert(ctx.get(s) == 2);
   assert(compute_count == 1);
-  ctx.set_cell(a, 5);
+  ctx.set(a, 5);
   assert(ctx.get(s) == 10);
   assert(compute_count == 2);
-  ctx.set_cell(a, 5);
+  ctx.set(a, 5);
   assert(ctx.get(s) == 10);
   assert(compute_count == 2);
 }
@@ -73,15 +73,15 @@ TEST(test_slot_caching) {
 TEST(test_partial_eq_guard) {
   Context ctx;
   int effect_runs = 0;
-  auto a = ctx.cell(1);
+  auto a = ctx.source(1);
   ctx.effect_void([&](Context& c) {
     effect_runs++;
-    c.get_cell(a);
+    c.get(a);
   });
   assert(effect_runs == 1);
-  ctx.set_cell(a, 1);
+  ctx.set(a, 1);
   assert(effect_runs == 1);
-  ctx.set_cell(a, 2);
+  ctx.set(a, 2);
   assert(effect_runs == 2);
 }
 
@@ -89,12 +89,12 @@ TEST(test_memo_equality_guard) {
   Context ctx;
   int compute_count = 0;
   int downstream_count = 0;
-  auto a = ctx.cell(2);
-  auto m = ctx.memo<int>([&](Context& c) {
+  auto a = ctx.source(2);
+  auto m = ctx.computed<int>([&](Context& c) {
     compute_count++;
-    return c.get_cell(a) / 2;
+    return c.get(a) / 2;
   });
-  auto downstream = ctx.memo<int>([&](Context& c) {
+  auto downstream = ctx.computed<int>([&](Context& c) {
     downstream_count++;
     return c.get(m) + 1;
   });
@@ -102,7 +102,7 @@ TEST(test_memo_equality_guard) {
   assert(compute_count == 1);
   assert(downstream_count == 1);
   // 2 -> 3: 3/2 = 1 (unchanged from 2/2=1) — memo suppresses downstream
-  ctx.set_cell(a, 3);
+  ctx.set(a, 3);
   assert(ctx.get(downstream) == 2);
   assert(compute_count == 2);
   assert(downstream_count == 1);
@@ -111,17 +111,17 @@ TEST(test_memo_equality_guard) {
 TEST(test_batch_coalesce) {
   Context ctx;
   int compute_count = 0;
-  auto a = ctx.cell(1);
-  auto b = ctx.cell(2);
-  auto sum = ctx.memo<int>([&](Context& c) {
+  auto a = ctx.source(1);
+  auto b = ctx.source(2);
+  auto sum = ctx.computed<int>([&](Context& c) {
     compute_count++;
-    return c.get_cell(a) + c.get_cell(b);
+    return c.get(a) + c.get(b);
   });
   assert(ctx.get(sum) == 3);
   assert(compute_count == 1);
   ctx.batch([&](Context& c) {
-    c.set_cell(a, 10);
-    c.set_cell(b, 20);
+    c.set(a, 10);
+    c.set(b, 20);
   });
   assert(ctx.get(sum) == 30);
   assert(compute_count == 2);
@@ -129,40 +129,40 @@ TEST(test_batch_coalesce) {
 
 TEST(test_signal_eager) {
   Context ctx;
-  auto a = ctx.cell(1);
-  auto b = ctx.cell(2);
+  auto a = ctx.source(1);
+  auto b = ctx.source(2);
   auto sig = ctx.signal<int>([&](Context& c) {
-    return c.get_cell(a) + c.get_cell(b);
+    return c.get(a) + c.get(b);
   });
   assert(ctx.get(sig) == 3);
-  ctx.set_cell(a, 10);
+  ctx.set(a, 10);
   assert(ctx.get(sig) == 12);
 }
 
 TEST(test_effect_rerun) {
   Context ctx;
   std::vector<int> log;
-  auto a = ctx.cell(0);
+  auto a = ctx.source(0);
   ctx.effect_void([&](Context& c) {
-    log.push_back(c.get_cell(a));
+    log.push_back(c.get(a));
   });
   assert(log.size() == 1 && log[0] == 0);
-  ctx.set_cell(a, 1);
+  ctx.set(a, 1);
   assert(log.size() == 2 && log[1] == 1);
-  ctx.set_cell(a, 2);
+  ctx.set(a, 2);
   assert(log.size() == 3 && log[2] == 2);
 }
 
 TEST(test_effect_cleanup) {
   Context ctx;
   int cleanup_count = 0;
-  auto a = ctx.cell(1);
+  auto a = ctx.source(1);
   auto eff = ctx.effect([&](Context& c) -> CleanupFn {
-    c.get_cell(a);
+    c.get(a);
     return [&]() { cleanup_count++; };
   });
   assert(cleanup_count == 0);
-  ctx.set_cell(a, 2);
+  ctx.set(a, 2);
   assert(cleanup_count == 1);
   eff.dispose(ctx);
   assert(cleanup_count == 2);
@@ -170,22 +170,22 @@ TEST(test_effect_cleanup) {
 
 TEST(test_diamond_dependencies) {
   Context ctx;
-  auto a = ctx.cell(1);
-  auto b = ctx.memo<int>([&](Context& c) { return c.get_cell(a) + 1; });
-  auto c2 = ctx.memo<int>([&](Context& c) { return c.get_cell(a) + 2; });
-  auto d = ctx.memo<int>([&](Context& c) { return c.get(b) + c.get(c2); });
+  auto a = ctx.source(1);
+  auto b = ctx.computed<int>([&](Context& c) { return c.get(a) + 1; });
+  auto c2 = ctx.computed<int>([&](Context& c) { return c.get(a) + 2; });
+  auto d = ctx.computed<int>([&](Context& c) { return c.get(b) + c.get(c2); });
   assert(ctx.get(d) == (1 + 1) + (1 + 2));
-  ctx.set_cell(a, 10);
+  ctx.set(a, 10);
   assert(ctx.get(d) == (10 + 1) + (10 + 2));
 }
 
 TEST(test_clear_slot) {
   Context ctx;
   int compute_count = 0;
-  auto a = ctx.cell(5);
-  auto s = ctx.memo<int>([&](Context& c) {
+  auto a = ctx.source(5);
+  auto s = ctx.computed<int>([&](Context& c) {
     compute_count++;
-    return c.get_cell(a) * 2;
+    return c.get(a) * 2;
   });
   assert(ctx.get(s) == 10);
   assert(compute_count == 1);
@@ -198,25 +198,25 @@ TEST(test_clear_slot) {
 
 TEST(test_dynamic_dependencies) {
   Context ctx;
-  auto flag = ctx.cell(true);
-  auto a = ctx.cell(1);
-  auto b = ctx.cell(100);
-  auto s = ctx.memo<int>([&](Context& c) {
-    if (c.get_cell(flag))
-      return c.get_cell(a);
+  auto flag = ctx.source(true);
+  auto a = ctx.source(1);
+  auto b = ctx.source(100);
+  auto s = ctx.computed<int>([&](Context& c) {
+    if (c.get(flag))
+      return c.get(a);
     else
-      return c.get_cell(b);
+      return c.get(b);
   });
   assert(ctx.get(s) == 1);
-  ctx.set_cell(flag, false);
+  ctx.set(flag, false);
   assert(ctx.get(s) == 100);
-  ctx.set_cell(a, 999);
+  ctx.set(a, 999);
   assert(ctx.get(s) == 100);
 }
 
 TEST(test_get_rc_avoids_clone) {
   Context ctx;
-  auto s = ctx.memo<std::string>([&](Context& c) {
+  auto s = ctx.computed<std::string>([&](Context& c) {
     return std::string("hello world");
   });
   auto rc = ctx.get_rc<std::string>(s);
@@ -225,9 +225,9 @@ TEST(test_get_rc_avoids_clone) {
 
 TEST(test_signal_dispose) {
   Context ctx;
-  auto a = ctx.cell(1);
+  auto a = ctx.source(1);
   auto sig = ctx.signal<int>([&](Context& c) {
-    return c.get_cell(a) * 10;
+    return c.get(a) * 10;
   });
   assert(sig.is_eager(ctx));
   assert(ctx.get(sig) == 10);
@@ -238,36 +238,36 @@ TEST(test_signal_dispose) {
 TEST(test_effect_dispose) {
   Context ctx;
   int run_count = 0;
-  auto a = ctx.cell(1);
+  auto a = ctx.source(1);
   auto eff = ctx.effect_void([&](Context& c) {
     run_count++;
-    c.get_cell(a);
+    c.get(a);
   });
   assert(run_count == 1);
   assert(ctx.is_effect_active(eff));
-  ctx.set_cell(a, 2);
+  ctx.set(a, 2);
   assert(run_count == 2);
   eff.dispose(ctx);
   assert(!ctx.is_effect_active(eff));
-  ctx.set_cell(a, 3);
+  ctx.set(a, 3);
   assert(run_count == 2);
 }
 
 TEST(test_nested_batch) {
   Context ctx;
   int compute_count = 0;
-  auto a = ctx.cell(1);
-  auto b = ctx.cell(2);
-  auto sum = ctx.memo<int>([&](Context& c) {
+  auto a = ctx.source(1);
+  auto b = ctx.source(2);
+  auto sum = ctx.computed<int>([&](Context& c) {
     compute_count++;
-    return c.get_cell(a) + c.get_cell(b);
+    return c.get(a) + c.get(b);
   });
   ctx.get(sum);
   assert(compute_count == 1);
   ctx.batch([&](Context& c) {
-    c.set_cell(a, 10);
+    c.set(a, 10);
     c.batch([&](Context& c2) {
-      c2.set_cell(b, 20);
+      c2.set(b, 20);
     });
     assert(compute_count == 1);
   });
@@ -277,12 +277,12 @@ TEST(test_nested_batch) {
 
 TEST(test_string_values) {
   Context ctx;
-  auto name = ctx.cell<std::string>("alice");
-  auto greeting = ctx.memo<std::string>([&](Context& c) {
-    return "Hello, " + c.get_cell(name) + "!";
+  auto name = ctx.source<std::string>("alice");
+  auto greeting = ctx.computed<std::string>([&](Context& c) {
+    return "Hello, " + c.get(name) + "!";
   });
   assert(ctx.get(greeting) == "Hello, alice!");
-  ctx.set_cell(name, std::string("bob"));
+  ctx.set(name, std::string("bob"));
   assert(ctx.get(greeting) == "Hello, bob!");
 }
 
@@ -415,19 +415,19 @@ TEST(test_wide_fanout_dispose_and_recycle) {
   // to the replacements), then publish and check every survivor observed it.
   Context ctx;
   const size_t width = EdgeSet::kPromote * 3;
-  auto topic = ctx.cell(0);
+  auto topic = ctx.source(0);
   std::vector<int> seen(width * 2, -1);
   std::vector<Effect> handles;
   for (size_t i = 0; i < width; ++i)
     handles.push_back(ctx.effect_void(
-        [&, i](Context& c) { seen[i] = c.get_cell(topic); }));
+        [&, i](Context& c) { seen[i] = c.get(topic); }));
 
   for (size_t i = 0; i < width; i += 2) ctx.dispose_effect(handles[i]);
   for (size_t i = width; i < width + width / 2; ++i)
     handles.push_back(ctx.effect_void(
-        [&, i](Context& c) { seen[i] = c.get_cell(topic); }));
+        [&, i](Context& c) { seen[i] = c.get(topic); }));
 
-  ctx.set_cell(topic, 42);
+  ctx.set(topic, 42);
   for (size_t i = 1; i < width; i += 2) assert(seen[i] == 42);
   for (size_t i = width; i < width + width / 2; ++i) assert(seen[i] == 42);
   for (size_t i = 0; i < width; i += 2) assert(seen[i] == 0);  // disposed
@@ -439,15 +439,15 @@ TEST(test_wide_fanout_repeated_publish) {
   // as a subscriber missing a later publish.
   Context ctx;
   const size_t width = EdgeSet::kPromote * 2 + 1;
-  auto topic = ctx.cell(0);
+  auto topic = ctx.source(0);
   std::vector<int> seen(width, -1);
   std::vector<int> runs(width, 0);
   for (size_t i = 0; i < width; ++i)
     ctx.effect_void([&, i](Context& c) {
-      seen[i] = c.get_cell(topic);
+      seen[i] = c.get(topic);
       runs[i]++;
     });
-  for (int v = 1; v <= 5; ++v) ctx.set_cell(topic, v);
+  for (int v = 1; v <= 5; ++v) ctx.set(topic, v);
   for (size_t i = 0; i < width; ++i) {
     assert(seen[i] == 5);
     assert(runs[i] == 6);  // creation + 5 publishes, no duplicate edges
@@ -460,29 +460,29 @@ TEST(test_wide_fanin_tracks_dynamic_dependencies) {
   // recompute, and a dynamic read set must still shrink correctly when indexed.
   Context ctx;
   const size_t n = EdgeSet::kPromote * 4;
-  std::vector<CellHandle<int>> cells;
-  for (size_t i = 0; i < n; ++i) cells.push_back(ctx.cell(1));
-  auto use_all = ctx.cell(true);
+  std::vector<Source<int>> cells;
+  for (size_t i = 0; i < n; ++i) cells.push_back(ctx.source(1));
+  auto use_all = ctx.source(true);
 
   int computes = 0;
-  auto sum = ctx.memo<long>([&](Context& c) {
+  auto sum = ctx.computed<long>([&](Context& c) {
     computes++;
-    if (!c.get_cell(use_all)) return long(-1);
+    if (!c.get(use_all)) return long(-1);
     long total = 0;
-    for (auto& h : cells) total += c.get_cell(h);
+    for (auto& h : cells) total += c.get(h);
     return total;
   });
 
   assert(ctx.get(sum) == long(n));
-  ctx.set_cell(cells[n / 2], 3);
+  ctx.set(cells[n / 2], 3);
   assert(ctx.get(sum) == long(n) + 2);
 
   // Collapse the read set to a single cell; the other n edges must detach.
-  ctx.set_cell(use_all, false);
+  ctx.set(use_all, false);
   assert(ctx.get(sum) == -1);
   const int before = computes;
   // A cell that is no longer read must not invalidate the slot any more.
-  ctx.set_cell(cells[0], 99);
+  ctx.set(cells[0], 99);
   (void)ctx.get(sum);
   assert(computes == before);
 }
@@ -542,25 +542,25 @@ TEST(test_pending_queue_matches_reference_model) {
 
 TEST(test_dispose_from_inside_flush_runs_survivors_only) {
   Context ctx;
-  auto topic = ctx.cell(0);
+  auto topic = ctx.source(0);
   const size_t n = 200;  // > PendingQueue promote, so the indexed path runs
   std::vector<int> ran(n, 0);
   std::vector<Effect> effects;
   for (size_t i = 0; i < n; ++i)
     effects.push_back(
-        ctx.effect_void([topic, i, &ran](Context& c) { c.get_cell(topic); ++ran[i]; }));
+        ctx.effect_void([topic, i, &ran](Context& c) { c.get(topic); ++ran[i]; }));
 
   // Registered last => scheduled first (the invalidation walk uses a stack), so
   // this runs with all n still queued. Disposes every even-indexed sibling.
   int runs = 0;
   ctx.effect_void([topic, &effects, &runs, n](Context& c) {
-    c.get_cell(topic);
+    c.get(topic);
     if (++runs != 2) return;  // run 1 is the registration flush
     for (size_t i = 0; i < n; i += 2) c.dispose_effect(effects[i]);
   });
 
   for (auto& r : ran) r = 0;
-  ctx.set_cell(topic, 1);
+  ctx.set(topic, 1);
 
   for (size_t i = 0; i < n; ++i) {
     if (i % 2 == 0)
@@ -575,29 +575,29 @@ TEST(test_dispose_from_inside_flush_survives_id_recycling) {
   // a sloppy erase would fire the *new* effect. Create replacements during the
   // same flush and assert each runs exactly once.
   Context ctx;
-  auto topic = ctx.cell(0);
+  auto topic = ctx.source(0);
   const size_t n = 128;
   std::vector<Effect> effects;
   std::vector<int> ran(n, 0);
   for (size_t i = 0; i < n; ++i)
     effects.push_back(
-        ctx.effect_void([topic, i, &ran](Context& c) { c.get_cell(topic); ++ran[i]; }));
+        ctx.effect_void([topic, i, &ran](Context& c) { c.get(topic); ++ran[i]; }));
 
   int fresh_runs = 0;
   int runs = 0;
   ctx.effect_void([topic, &effects, &runs, &fresh_runs, n](Context& c) {
-    c.get_cell(topic);
+    c.get(topic);
     if (++runs != 2) return;
     for (size_t i = 0; i < n; ++i) c.dispose_effect(effects[i]);
     for (size_t i = 0; i < n; ++i)
       c.effect_void([topic, &fresh_runs](Context& cc) {
-        cc.get_cell(topic);
+        cc.get(topic);
         ++fresh_runs;
       });
   });
 
   for (auto& r : ran) r = 0;
-  ctx.set_cell(topic, 1);
+  ctx.set(topic, 1);
 
   for (size_t i = 0; i < n; ++i) REQUIRE(ran[i] == 0, "disposed must not run");
   // Each replacement runs once on creation; none may be run a second time by a
@@ -622,10 +622,10 @@ TEST(test_disposal_dirties_the_surviving_dependent_cone) {
   // This shipped as a real defect in lazily-rs (5db90d2) and lazily-js
   // (4d20670).
   Context ctx;
-  auto src = ctx.cell<long long>(1);
-  auto mid = ctx.memo<long long>(
-      [src](Context& c) { return c.get_cell(src) + 1; });
-  auto reader = ctx.memo<long long>(
+  auto src = ctx.source<long long>(1);
+  auto mid = ctx.computed<long long>(
+      [src](Context& c) { return c.get(src) + 1; });
+  auto reader = ctx.computed<long long>(
       [mid](Context& c) { return c.get(mid) + 10; });
 
   REQUIRE(ctx.get(reader) == 12, "baseline");
@@ -655,9 +655,9 @@ TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
   // `schedule_effect` instead of dropping the list) makes this test fail with
   // runs == 2, while all nine reactive-graph fixtures stay green.
   Context ctx;
-  auto src = ctx.cell<long long>(1);
-  auto mid = ctx.memo<long long>(
-      [src](Context& c) { return c.get_cell(src) + 1; });
+  auto src = ctx.source<long long>(1);
+  auto mid = ctx.computed<long long>(
+      [src](Context& c) { return c.get(src) + 1; });
 
   int runs = 0;
   // Reads through `mid`, so disposing `mid` puts this effect in the cone.
@@ -677,13 +677,13 @@ TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
 
   // And the effect is not silently broken: it is dirty, so the next real
   // publish that reaches it still runs it.
-  auto other = ctx.cell<long long>(0);
+  auto other = ctx.source<long long>(0);
   int other_runs = 0;
   ctx.effect_void([other, &other_runs](Context& c) {
-    (void)c.get_cell(other);
+    (void)c.get(other);
     ++other_runs;
   });
-  ctx.set_cell(other, 1LL);
+  ctx.set(other, 1LL);
   REQUIRE(other_runs == 2, "unrelated publishes still flush normally");
 }
 
@@ -697,14 +697,14 @@ TEST(test_scope_teardown_runs_in_reverse_creation_order) {
   // this test fail with order == [a, b, c], while all nine reactive-graph
   // fixtures stay green.
   Context ctx;
-  auto topic = ctx.cell<long long>(0);
+  auto topic = ctx.source<long long>(0);
   std::vector<std::string> order;
   {
     TeardownScope scope = ctx.scope();
     for (const char* name : {"a", "b", "c"}) {
       std::string id = name;
       scope.effect([topic, id, &order](Context& c) {
-        (void)c.get_cell(topic);
+        (void)c.get(topic);
         return CleanupFn([id, &order]() { order.push_back(id); });
       });
     }
@@ -730,12 +730,12 @@ TEST(test_scope_is_move_only_and_disposes_exactly_once) {
                 "scope() returns by value");
 
   Context ctx;
-  auto topic = ctx.cell<long long>(0);
+  auto topic = ctx.source<long long>(0);
   int cleanups = 0;
   {
     TeardownScope outer = ctx.scope();  // moved from the prvalue scope()
     outer.effect([topic, &cleanups](Context& c) {
-      (void)c.get_cell(topic);
+      (void)c.get(topic);
       return CleanupFn([&cleanups]() { ++cleanups; });
     });
     REQUIRE(outer.size() == 1, "the scope owns its effect");
@@ -751,24 +751,24 @@ TEST(test_disarm_disposes_nothing_and_leaves_nodes_disposable) {
   // keep their values, their edges, and their ability to propagate, and they
   // revert to plain context ownership — still individually disposable.
   Context ctx;
-  auto topic = ctx.cell<long long>(1);
-  auto escaped = ctx.memo<long long>([topic](Context& c) {
-    return c.get_cell(topic);
+  auto topic = ctx.source<long long>(1);
+  auto escaped = ctx.computed<long long>([topic](Context& c) {
+    return c.get(topic);
   });
   {
     TeardownScope scope = ctx.scope();
-    auto owned = scope.memo<long long>(
+    auto owned = scope.computed<long long>(
         [escaped](Context& c) { return c.get(escaped) + 5; });
     REQUIRE(ctx.get(owned) == 6, "baseline through the scoped node");
     REQUIRE(scope.size() == 1, "the scope owns it");
     scope.disarm();
     REQUIRE(scope.size() == 0, "a disarmed scope owns nothing");
     // Edges are untouched, so the node still propagates.
-    ctx.set_cell(topic, 4LL);
+    ctx.set(topic, 4LL);
     REQUIRE(ctx.get(owned) == 9, "a disarmed scope's node still propagates");
   }
   // The scope has ended and disposed nothing.
-  auto survivor = ctx.memo<long long>(
+  auto survivor = ctx.computed<long long>(
       [escaped](Context& c) { return c.get(escaped) + 5; });
   REQUIRE(ctx.get(survivor) == 9, "nothing was torn down");
   REQUIRE(ctx.dependent_count(topic) >= 1, "the source keeps its dependents");
@@ -778,11 +778,11 @@ TEST(test_degree_counts_track_live_edges) {
   // Degree introspection is counts only — the observable the churn contract is
   // written against.
   Context ctx;
-  auto topic = ctx.cell<long long>(0);
+  auto topic = ctx.source<long long>(0);
   REQUIRE(ctx.dependent_count(topic) == 0, "a fresh cell has no dependents");
 
-  auto a = ctx.memo<long long>(
-      [topic](Context& c) { return c.get_cell(topic) + 1; });
+  auto a = ctx.computed<long long>(
+      [topic](Context& c) { return c.get(topic) + 1; });
   REQUIRE(ctx.dependent_count(topic) == 0,
           "a lazy slot registers nothing until it is pulled");
   REQUIRE(ctx.get(a) == 1, "pull it");
@@ -791,7 +791,7 @@ TEST(test_degree_counts_track_live_edges) {
   REQUIRE(ctx.dependency_count(topic) == 0, "cells are pure sources");
 
   // Disposal detaches BOTH directions.
-  auto b = ctx.memo<long long>([a](Context& c) { return c.get(a) + 1; });
+  auto b = ctx.computed<long long>([a](Context& c) { return c.get(a) + 1; });
   REQUIRE(ctx.get(b) == 2, "pull b");
   REQUIRE(ctx.dependent_count(a) == 1, "b depends on a");
   ctx.dispose_slot(a);
@@ -804,12 +804,12 @@ TEST(test_dispose_is_idempotent_and_kind_checked) {
   // Disposing twice is a no-op, and a stale handle whose id has been recycled
   // onto a node of another kind must not tear that node down.
   Context ctx;
-  auto sentinel = ctx.cell<long long>(99);
+  auto sentinel = ctx.source<long long>(99);
   ctx.dispose_cell(sentinel);
   ctx.dispose_cell(sentinel);  // no-op, not an error
 
   // The successor very likely lands on the recycled id.
-  auto successor = ctx.memo<long long>([](Context&) { return 1LL; });
+  auto successor = ctx.computed<long long>([](Context&) { return 1LL; });
   REQUIRE(ctx.get(successor) == 1, "the successor is live");
   REQUIRE(ctx.dependent_count(successor) == 0, "and inherits no edges");
   REQUIRE(ctx.dependency_count(successor) == 0, "in either direction");
@@ -827,10 +827,10 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
   // cleanly — otherwise every later read in the context registers its
   // dependency against a dead node.
   Context ctx;
-  auto src = ctx.cell<long long>(4);
+  auto src = ctx.source<long long>(4);
   auto derived =
-      ctx.memo<long long>([src](Context& c) { return c.get_cell(src); });
-  auto reader = ctx.memo<long long>(
+      ctx.computed<long long>([src](Context& c) { return c.get(src); });
+  auto reader = ctx.computed<long long>(
       [derived](Context& c) { return c.get(derived) + 1; });
   REQUIRE(ctx.get(reader) == 5, "baseline");
 
@@ -846,13 +846,13 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
   }
 
   // The context is still usable and its dependency tracking is not corrupted.
-  auto fresh = ctx.memo<long long>(
-      [src](Context& c) { return c.get_cell(src) * 2; });
+  auto fresh = ctx.computed<long long>(
+      [src](Context& c) { return c.get(src) * 2; });
   REQUIRE(ctx.get(fresh) == 8, "a fresh slot computes correctly");
   REQUIRE(ctx.dependency_count(fresh) == 1,
           "and registered exactly its own dependency — a stranded tracking "
           "frame would have mis-registered it");
-  ctx.set_cell(src, 5LL);
+  ctx.set(src, 5LL);
   REQUIRE(ctx.get(fresh) == 10, "and still propagates");
 }
 

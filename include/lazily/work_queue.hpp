@@ -2,6 +2,7 @@
 #define LAZILY_WORK_QUEUE_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -42,10 +43,10 @@ template <typename T> struct WorkQueueDeadLetter {
 };
 
 struct WorkQueueReaderHandles {
-  CellHandle<uint64_t> pending_len;
-  CellHandle<uint64_t> is_empty;
-  CellHandle<uint64_t> in_flight_len;
-  CellHandle<uint64_t> dead_letter_len;
+  Source<uint64_t> pending_len;
+  Source<uint64_t> is_empty;
+  Source<uint64_t> in_flight_len;
+  Source<uint64_t> dead_letter_len;
 };
 
 template <typename T> struct WorkQueueCellInner {
@@ -81,10 +82,10 @@ public:
       throw std::invalid_argument("visibility_timeout must be positive");
     if (max_deliveries == 0)
       throw std::invalid_argument("max_deliveries must be at least one");
-    inner_->readers.pending_len = ctx.cell(uint64_t(0));
-    inner_->readers.is_empty = ctx.cell(uint64_t(0));
-    inner_->readers.in_flight_len = ctx.cell(uint64_t(0));
-    inner_->readers.dead_letter_len = ctx.cell(uint64_t(0));
+    inner_->readers.pending_len = ctx.source(uint64_t(0));
+    inner_->readers.is_empty = ctx.source(uint64_t(0));
+    inner_->readers.in_flight_len = ctx.source(uint64_t(0));
+    inner_->readers.dead_letter_len = ctx.source(uint64_t(0));
   }
 
   uint64_t push(Context &ctx, T value) {
@@ -160,22 +161,22 @@ public:
   }
 
   size_t pending_len(Context &ctx) const {
-    (void)ctx.get_cell(inner_->readers.pending_len);
+    (void)ctx.get(inner_->readers.pending_len);
     return inner_->pending.size();
   }
 
   bool is_empty(Context &ctx) const {
-    (void)ctx.get_cell(inner_->readers.is_empty);
+    (void)ctx.get(inner_->readers.is_empty);
     return inner_->pending.empty();
   }
 
   size_t in_flight_len(Context &ctx) const {
-    (void)ctx.get_cell(inner_->readers.in_flight_len);
+    (void)ctx.get(inner_->readers.in_flight_len);
     return inner_->in_flight.size();
   }
 
   size_t dead_letter_len(Context &ctx) const {
-    (void)ctx.get_cell(inner_->readers.dead_letter_len);
+    (void)ctx.get(inner_->readers.dead_letter_len);
     return inner_->dead_letters.size();
   }
 
@@ -217,18 +218,18 @@ private:
     const Counts after = counts();
     ctx.batch([&](Context &batched) {
       if (before.pending != after.pending) {
-        batched.set_cell(inner_->readers.pending_len,
+        batched.set(inner_->readers.pending_len,
                          ++inner_->pending_version);
       }
       if ((before.pending == 0) != (after.pending == 0)) {
-        batched.set_cell(inner_->readers.is_empty, ++inner_->empty_version);
+        batched.set(inner_->readers.is_empty, ++inner_->empty_version);
       }
       if (before.in_flight != after.in_flight) {
-        batched.set_cell(inner_->readers.in_flight_len,
+        batched.set(inner_->readers.in_flight_len,
                          ++inner_->in_flight_version);
       }
       if (before.dead_letters != after.dead_letters) {
-        batched.set_cell(inner_->readers.dead_letter_len,
+        batched.set(inner_->readers.dead_letter_len,
                          ++inner_->dead_letter_version);
       }
     });

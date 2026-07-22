@@ -2,6 +2,7 @@
 #define LAZILY_ASYNC_CONTEXT_HPP
 
 #include <lazily/context.hpp>
+#include <lazily/cell.hpp>
 #include <lazily/rc_ptr.hpp>
 #include <lazily/small_fn.hpp>
 #include <lazily/types.hpp>
@@ -87,11 +88,11 @@ struct AsyncSlotHandle {
 template <typename T>
 struct AsyncCellHandle {
   Context* ctx;
-  CellHandle<T> cell;
-  AsyncCellHandle(Context& c, T value) : ctx(&c), cell(c.cell(std::move(value))) {}
-  T peek() { return ctx->get_cell(cell); }
-  T get() { return ctx->get_cell(cell); }
-  void set(T value) { ctx->set_cell(cell, std::move(value)); }
+  Source<T> cell;  // #lzcellkernel: was CellHandle<T>
+  AsyncCellHandle(Context& c, T value) : ctx(&c), cell(c.source(std::move(value))) {}
+  T peek() { return ctx->get(cell); }
+  T get() { return ctx->get(cell); }
+  void set(T value) { ctx->set(cell, std::move(value)); }
 };
 
 struct AsyncEffectHandle {
