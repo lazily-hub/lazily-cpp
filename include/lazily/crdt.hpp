@@ -564,7 +564,13 @@ class SeqCrdt {
     return it->second.deleted.set(true, stamp);
   }
 
-  bool contains(const Id& id) const { return entries_.count(id) > 0; }
+  // Live membership: a tombstoned entry is NOT contained (matches lazily-rs
+  // `SeqCrdt::contains` and the spec — `get`/`order` already exclude tombstones,
+  // so an inclusive `contains` was an inconsistency). #lzcellkernel
+  bool contains(const Id& id) const {
+    auto it = entries_.find(id);
+    return it != entries_.end() && !it->second.deleted.value();
+  }
 
   std::optional<V> get(const Id& id) const {
     auto it = entries_.find(id);

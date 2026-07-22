@@ -148,6 +148,10 @@ add_executable(test_service_conformance test_service_conformance.cpp)
 target_link_libraries(test_service_conformance PRIVATE lazily)
 add_test(NAME ServiceConformance COMMAND test_service_conformance)
 
+add_executable(test_seqcrdt_conformance test_seqcrdt_conformance.cpp)
+target_link_libraries(test_seqcrdt_conformance PRIVATE lazily)
+add_test(NAME SeqCrdtConformance COMMAND test_seqcrdt_conformance)
+
 # Reactive-graph disposal/teardown + invalidation corpus (#lzspecedgeindex).
 # Replays ../lazily-spec/conformance/reactive-graph/. lazily-cpp replayed NONE
 # of this corpus until now — only lazily-rs did, family-wide, which is why an
@@ -186,6 +190,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_windowing_conformance
   test_resilience_conformance
   test_service_conformance
+  test_seqcrdt_conformance
   test_reactive_graph_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
