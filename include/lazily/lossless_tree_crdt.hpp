@@ -176,7 +176,7 @@ class LosslessTreeCrdt {
 
     nodes_[id] = node;
     children_[parent].push_back(id);
-    log_.push_back(TreeOp{id, TreeOpCreateNode{id, parent, key, seed}});
+    record(TreeOp{id, TreeOpCreateNode{id, parent, key, seed}});
     return id;
   }
 
@@ -187,7 +187,7 @@ class LosslessTreeCrdt {
       if (it->second.tomb < node_id) return;
     }
     it->second.tomb = next_id();
-    log_.push_back(TreeOp{it->second.tomb.value(), TreeOpTombstone{node_id}});
+    record(TreeOp{it->second.tomb.value(), TreeOpTombstone{node_id}});
   }
 
   void reorder_child(const OpId& node_id, const OpId* after) {
@@ -205,7 +205,7 @@ class LosslessTreeCrdt {
     auto stamp = next_id();
     it->second.sort = key;
     it->second.sort_stamp = stamp;
-    log_.push_back(TreeOp{stamp, TreeOpReorder{node_id, key}});
+    record(TreeOp{stamp, TreeOpReorder{node_id, key}});
   }
 
   void edit_leaf(const OpId& node_id, size_t at_byte, size_t delete_bytes,
@@ -216,13 +216,17 @@ class LosslessTreeCrdt {
     // Re-own the leaf's TextCrdt under local peer
     it->second.text = std::make_shared<TextCrdt>(it->second.text->fork(peer_));
 
-    size_t char_pos = byte_to_char(it->second.text->text(), at_byte);
-    for (size_t i = 0; i < delete_bytes && char_pos < it->second.text->visible_len();) {
-      it->second.text->del(char_pos);
+    // The per-leaf TextCrdt is BYTE-indexed (one element per byte), so the
+    // UTF-8 byte offset is the direct index — converting it to a codepoint index
+    // split multibyte characters (`héllo` at byte 3 landed inside `é`).
+    // For ASCII this is identical to the old byte_to_char path. #lzcellkernel
+    size_t byte_pos = at_byte;
+    for (size_t i = 0; i < delete_bytes && byte_pos < it->second.text->visible_len();) {
+      it->second.text->del(byte_pos);
       ++i;
     }
     if (!insert.empty()) {
-      it->second.text->insert_str(char_pos, insert);
+      it->second.text->insert_str(byte_pos, insert);
     }
 
     auto prev = it->second.text_head;
@@ -230,7 +234,7 @@ class LosslessTreeCrdt {
     it->second.text_head = stamp;
     auto vv = it->second.text->version_vector();
     auto delta = it->second.text->delta_since({});
-    log_.push_back(TreeOp{stamp, TreeOpLeafEdit{node_id, prev, delta}});
+    record(TreeOp{stamp, TreeOpLeafEdit{node_id, prev, delta}});
   }
 
   OpId split_leaf(const OpId& node_id, size_t at_byte) {
@@ -266,8 +270,8 @@ class LosslessTreeCrdt {
     nodes_[new_id] = tail_node;
     children_[parent].push_back(new_id);
 
-    log_.push_back(TreeOp{stamp, TreeOpSplitLeaf{node_id, new_id, tail_node.sort,
-                                                     static_cast<int>(char_pos), prev}});
+    record(TreeOp{stamp, TreeOpSplitLeaf{node_id, new_id, tail_node.sort,
+                                          static_cast<int>(char_pos), prev}});
     return new_id;
   }
 
@@ -289,7 +293,7 @@ class LosslessTreeCrdt {
     // Tombstone right node
     rit->second.tomb = next_id();
 
-    log_.push_back(TreeOp{stamp, TreeOpMergeLeaves{left_id, right_id, prev_left, prev_right}});
+    record(TreeOp{stamp, TreeOpMergeLeaves{left_id, right_id, prev_left, prev_right}});
   }
 
   std::string render() const {
@@ -299,9 +303,11 @@ class LosslessTreeCrdt {
   }
 
   size_t live_node_count() const {
+    // The synthetic ROOT container is not a document node — exclude it, matching
+    // lazily-rs `live_node_count` and the spec. #lzcellkernel
     size_t count = 0;
-    for (auto& [_, node] : nodes_) {
-      if (!node.tomb) ++count;
+    for (auto& [id, node] : nodes_) {
+      if (!(id == kTreeRoot) && !node.tomb) ++count;
     }
     return count;
   }
@@ -350,9 +356,19 @@ class LosslessTreeCrdt {
 
   void apply_update(const TreeUpdate& update) {
     for (auto& op : update.ops) {
-      frontier_.observe(op.id);
+      if (frontier_.contains(op.id)) continue;  // already known — idempotent
       apply_op(op);
+      record(op);  // observe into the frontier AND append to the log so this
+                   // replica can forward the op transitively (anti-entropy).
     }
+  }
+
+  // Observe a locally-produced or newly-applied op into this replica's frontier
+  // AND append it to the log, so `diff` excludes ops the replica already knows
+  // and can forward applied ops onward (matches lazily-rs `record`). #lzcellkernel
+  void record(TreeOp op) {
+    frontier_.observe(op.id);
+    log_.push_back(std::move(op));
   }
 
   LosslessTreeCrdt fork(PeerId new_peer) const {

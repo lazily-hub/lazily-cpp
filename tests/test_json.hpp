@@ -11,6 +11,7 @@
 
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -19,6 +20,27 @@
 #include "test_require.hpp"
 
 namespace lazily_test {
+
+// Append `cp` (a Unicode scalar) as UTF-8. Fixture text carries real multibyte
+// content via `\uXXXX` escapes (lossless-tree leaves), so byte offsets only line
+// up if the escape is decoded to UTF-8 rather than kept verbatim.
+inline void append_utf8(std::string& out, std::uint32_t cp) {
+  if (cp < 0x80) {
+    out += static_cast<char>(cp);
+  } else if (cp < 0x800) {
+    out += static_cast<char>(0xC0 | (cp >> 6));
+    out += static_cast<char>(0x80 | (cp & 0x3F));
+  } else if (cp < 0x10000) {
+    out += static_cast<char>(0xE0 | (cp >> 12));
+    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (cp & 0x3F));
+  } else {
+    out += static_cast<char>(0xF0 | (cp >> 18));
+    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (cp & 0x3F));
+  }
+}
 
 struct Json;
 using JsonPtr = std::shared_ptr<Json>;
@@ -56,6 +78,19 @@ struct JsonParser {
     while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' ||
                                 src[pos] == '\n' || src[pos] == '\r'))
       ++pos;
+  }
+
+  std::uint32_t hex4(std::size_t at) const {
+    std::uint32_t v = 0;
+    for (int i = 0; i < 4; ++i) {
+      const char c = src[at + i];
+      v <<= 4;
+      if (c >= '0' && c <= '9') v |= static_cast<std::uint32_t>(c - '0');
+      else if (c >= 'a' && c <= 'f') v |= static_cast<std::uint32_t>(c - 'a' + 10);
+      else if (c >= 'A' && c <= 'F') v |= static_cast<std::uint32_t>(c - 'A' + 10);
+      else REQUIRE(false, "bad hex digit in \\u escape");
+    }
+    return v;
   }
 
   JsonPtr parse() {
@@ -126,8 +161,18 @@ struct JsonParser {
           case 'f': node->str += '\f'; break;
           case 'u': {
             REQUIRE(pos + 4 < src.size(), "truncated \\u escape");
-            node->str += src.substr(pos - 1, 6);
+            std::uint32_t cp = hex4(pos + 1);
             pos += 4;
+            // Combine a UTF-16 surrogate pair into one scalar.
+            if (cp >= 0xD800 && cp <= 0xDBFF && pos + 6 < src.size() &&
+                src[pos + 1] == '\\' && src[pos + 2] == 'u') {
+              std::uint32_t lo = hex4(pos + 3);
+              if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                pos += 6;
+              }
+            }
+            append_utf8(node->str, cp);
             break;
           }
           default: node->str += src[pos]; break;
