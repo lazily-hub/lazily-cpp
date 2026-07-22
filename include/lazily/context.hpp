@@ -952,6 +952,34 @@ class ContextImpl {
     return slot_with_equals<T>(std::forward<F>(compute), eq);
   }
 
+  /// Like `computed`, but downstream propagation (the *ripple*) is gated by an
+  /// explicit PURE predicate `changed(old, new)` instead of the value's natural
+  /// `==`: `changed` returns `true` to **propagate** the recompute downstream,
+  /// `false` to **suppress** it. So `computed(f) ≡ computed_ripple_when(f, !=)`
+  /// and `slot(f) ≡ computed_ripple_when(f, [](auto&,auto&){return true;})`
+  /// (always propagate). (`#lzcellkernel`)
+  ///
+  /// The value is **always computed** (the predicate needs `new`); the guard
+  /// gates only the cascade, not the computation. `changed` MUST be pure in
+  /// `(old, new)` — reading value-carried state (a version/counter/hash) stays
+  /// deterministic; capturing external mutable state does not.
+  ///
+  /// Implemented over the guarded engine by installing the equality guard
+  /// `!changed` (the engine's guard is "equal ⇒ suppress"); the predicate lives
+  /// in the `ripple_by_` side table so a plain `computed`/`slot` pays nothing.
+  template <typename T, typename F, typename C>
+  Computed<T> computed_ripple_when(F&& compute, C&& changed) {
+    Computed<T> handle =
+        slot_with_equals<T>(std::forward<F>(compute), nullptr);
+    ripple_by_[handle.id().value] = SmallFn<bool(const void*, const void*)>(
+        [changed = std::forward<C>(changed)](const void* a,
+                                             const void* b) -> bool {
+          // engine guard: true = equal = suppress; that is `!changed`.
+          return !changed(*static_cast<const T*>(a), *static_cast<const T*>(b));
+        });
+    return handle;
+  }
+
   // -- Eager-computed engine (`#lzcellkernel`, §9.3.1/§9.3.3/§9.3.4) --
   //
   // Eagerness is an eager `Computed`, not a `Signal` kind: `make_eager` attaches
@@ -1056,6 +1084,14 @@ class ContextImpl {
   // in `dispose_slot_id`/`make_lazy`) or a recycled id would alias the disposed
   // computed cell's puller.
   std::unordered_map<uint64_t, uint64_t> eager_by_;
+  // Ripple-guard side table (`#lzcellkernel`): a `computed_ripple_when` cell's
+  // slot id -> its stored equality guard (`!changed(old, new)`; true = suppress).
+  // One entry per ripple-guarded computed, zero for plain `computed`/`slot` (which
+  // use the inline fn-ptr `equals` / no guard). Owner-keyed, so it MUST be cleared
+  // on disposal (done in `dispose_slot_id`) or a recycled id would alias the guard.
+  // The recompute hot path gates on `!empty()`, so a graph with no ripple cell
+  // pays nothing beyond one branch (the `eager_by_`/`EdgeIndex` precedent).
+  std::unordered_map<uint64_t, SmallFn<bool(const void*, const void*)>> ripple_by_;
   PendingQueue pending_effects_;
   // Mark bitset over the node id space (mirrors BatchSet below): a set bit
   // means the effect node is already queued in pending_effects_. Cheaper than
@@ -1163,6 +1199,8 @@ class ContextImpl {
         }
         slot->eager = false;
       }
+      // Clear any ripple guard so a recycled id never inherits it.
+      if (!ripple_by_.empty()) ripple_by_.erase(id.value);
     }
     if (puller) dispose_effect(Effect(*puller));
     // Detach both directions before the node goes away.
@@ -1444,8 +1482,19 @@ class ContextImpl {
       if (!slot) return false;
       bool had_value = static_cast<bool>(slot->value);
       bool unchanged = false;
-      if (slot->value && slot->equals != nullptr) {
-        unchanged = slot->equals(slot->value.raw(), result.raw());
+      if (slot->value) {
+        // A `computed_ripple_when` cell's guard lives in `ripple_by_`; a plain
+        // `computed` uses the inline fn-ptr `equals`; `slot` has neither. Gated
+        // on `!empty()` so a graph with no ripple cell never hashes here.
+        if (!ripple_by_.empty()) {
+          auto it = ripple_by_.find(id.value);
+          if (it != ripple_by_.end())
+            unchanged = it->second(slot->value.raw(), result.raw());
+          else if (slot->equals != nullptr)
+            unchanged = slot->equals(slot->value.raw(), result.raw());
+        } else if (slot->equals != nullptr) {
+          unchanged = slot->equals(slot->value.raw(), result.raw());
+        }
       }
       slot->dirty = false;
       slot->force_recompute = false;

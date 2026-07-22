@@ -30,6 +30,10 @@ add_executable(test_cell_kernel test_cell_kernel.cpp)
 target_link_libraries(test_cell_kernel PRIVATE lazily)
 add_test(NAME cell_kernel COMMAND test_cell_kernel)
 
+add_executable(test_computed_ripple_when test_computed_ripple_when.cpp)
+target_link_libraries(test_computed_ripple_when PRIVATE lazily)
+add_test(NAME computed_ripple_when COMMAND test_computed_ripple_when)
+
 # Compile-fail proof: `formula.set(...)` must NOT compile. Built on demand and
 # asserted to FAIL — a successful build fails the test (write protection lost).
 add_executable(compile_fail_formula_set EXCLUDE_FROM_ALL compile_fail_formula_set.cpp)

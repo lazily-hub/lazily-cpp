@@ -54,7 +54,7 @@ struct ThreadSafeMapHandleTraits<Source<V>> {
   template <typename K>
   static Source<V> materialize(ThreadSafeContext& ctx, const K& key,
                                    const std::function<V(const K&)>& factory) {
-    return ctx.template cell<V>(factory(key));
+    return ctx.template source<V>(factory(key));
   }
 
   static V observe(const Source<V>& h, ThreadSafeContext& ctx) {

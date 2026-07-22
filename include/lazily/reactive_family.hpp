@@ -76,7 +76,7 @@ struct MapHandleTraits<Source<V>> {
   // An input has no derivation: materialize by setting its value directly.
   template <typename Compute>
   static Source<V> materialize(Context& ctx, Compute&& compute) {
-    return ctx.template cell<V>(compute(ctx));
+    return ctx.template source<V>(compute(ctx));
   }
 
   static V observe(const Source<V>& h, Context& ctx) {
