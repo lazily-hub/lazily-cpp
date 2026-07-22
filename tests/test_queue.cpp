@@ -28,8 +28,8 @@ template <typename T> struct Reader {
   Context &ctx;
   Computed<T> slot;
   T cached;
-  Reader(Context &c, std::function<T(Context &)> fn)
-      : ctx(c), slot(c.computed<T>([fn](Context &cc) { return fn(cc); })) {
+  Reader(Context &c, std::function<T(Compute &)> fn)
+      : ctx(c), slot(c.computed<T>([fn](Compute &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   const T &value() { return cached; }
@@ -41,8 +41,8 @@ struct BoolReader {
   Context &ctx;
   Computed<bool> slot;
   bool cached;
-  BoolReader(Context &c, std::function<bool(Context &)> fn)
-      : ctx(c), slot(c.computed<bool>([fn](Context &cc) { return fn(cc); })) {
+  BoolReader(Context &c, std::function<bool(Compute &)> fn)
+      : ctx(c), slot(c.computed<bool>([fn](Compute &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   bool value() { return cached; }
@@ -54,9 +54,9 @@ struct OptReader {
   Context &ctx;
   Computed<std::optional<std::string>> slot;
   std::optional<std::string> cached;
-  OptReader(Context &c, std::function<std::optional<std::string>(Context &)> fn)
+  OptReader(Context &c, std::function<std::optional<std::string>(Compute &)> fn)
       : ctx(c), slot(c.computed<std::optional<std::string>>(
-                    [fn](Context &cc) { return fn(cc); })) {
+                    [fn](Compute &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   const std::optional<std::string> &value() { return cached; }
@@ -68,8 +68,8 @@ struct SizeReader {
   Context &ctx;
   Computed<size_t> slot;
   size_t cached;
-  SizeReader(Context &c, std::function<size_t(Context &)> fn)
-      : ctx(c), slot(c.computed<size_t>([fn](Context &cc) { return fn(cc); })) {
+  SizeReader(Context &c, std::function<size_t(Compute &)> fn)
+      : ctx(c), slot(c.computed<size_t>([fn](Compute &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   size_t value() { return cached; }
@@ -90,11 +90,11 @@ struct Readers {
   BoolReader full;
   BoolReader closed;
   Readers(Context &ctx, QueueCell<std::string> &q)
-      : head(ctx, [&](Context &c) { return q.head(c); }),
-        len(ctx, [&](Context &c) { return q.len(c); }),
-        empty(ctx, [&](Context &c) { return q.is_empty(c); }),
-        full(ctx, [&](Context &c) { return q.is_full(c); }),
-        closed(ctx, [&](Context &c) { return q.closed(c); }) {}
+      : head(ctx, [&](Compute &c) { return q.head(c); }),
+        len(ctx, [&](Compute &c) { return q.len(c); }),
+        empty(ctx, [&](Compute &c) { return q.is_empty(c); }),
+        full(ctx, [&](Compute &c) { return q.is_full(c); }),
+        closed(ctx, [&](Compute &c) { return q.closed(c); }) {}
   InvSnapshot snap() {
     return {head.is_valid(), len.is_valid(), empty.is_valid(), full.is_valid(),
             closed.is_valid()};
@@ -353,7 +353,7 @@ TEST(test_queue_backpressure_effect) {
 
   int resume_count = 0;
   bool last_full = false;
-  auto eff = ctx.effect_void([&](Context &c) {
+  auto eff = ctx.effect_void([&](Compute &c) {
     bool f = q.is_full(c);
     if (f != last_full || resume_count == 0) {
       last_full = f;
@@ -502,7 +502,7 @@ TEST(test_queue_raw_channel_reader_reactive) {
   Context ctx;
   QueueCell<int, MinimalFifo<int>> q(ctx, MinimalFifo<int>());
   std::vector<size_t> log;
-  auto eff = ctx.effect_void([&](Context &c) { log.push_back(q.len(c)); });
+  auto eff = ctx.effect_void([&](Compute &c) { log.push_back(q.len(c)); });
   (void)eff;
 
   assert(log.size() == 1 && log[0] == 0);

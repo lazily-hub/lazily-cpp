@@ -108,7 +108,14 @@ class MergeCell {
   /// The underlying reactive cell (for wiring derived readers).
   Source<T> cell() const { return Source<T>(cell_); }
 
-  /// Read the current converged value (tracks a dependency in a computation).
+  /// Read the current converged value through a compute-time surface — a
+  /// `Compute&` (value-threaded tracking, registers a dependency) or a
+  /// `Context&` (untracked). This is the tracking read for use inside a
+  /// compute/effect closure (`#lzcellkernel`).
+  template <typename Cx>
+  T get(Cx& cx) const { return cx.get(Source<T>(cell_)); }
+
+  /// Read the current converged value untracked (outside any computation).
   T get() const { return ctx_->get(Source<T>(cell_)); }
 
   /// Replace the value outright (the keep-latest write), bypassing the policy.

@@ -95,15 +95,15 @@ void run_rung_narrow(size_t width, int notify_reps, Rung& out) {
   auto observed = new std::vector<int>(width, -1);
   ctx->reserve(width + cells + 8);
 
-  std::vector<CellHandle<int>> topics;
+  std::vector<Source<int>> topics;
   topics.reserve(cells);
   for (size_t c = 0; c < cells; ++c) topics.push_back(ctx->cell(0));
 
   const auto t0 = SteadyClock::now();
   for (size_t i = 0; i < width; ++i) {
     auto topic = topics[i % cells];
-    ctx->effect_void([topic, i, observed](Context& c) {
-      (*observed)[i] = c.get_cell(topic);
+    ctx->effect_void([topic, i, observed](Compute& c) {
+      (*observed)[i] = c.get(topic);
     });
   }
   const auto t1 = SteadyClock::now();
@@ -157,8 +157,8 @@ Rung run_rung(size_t width, int notify_reps) {
 
   const auto build_start = SteadyClock::now();
   for (size_t i = 0; i < width; ++i) {
-    ctx->effect_void([topic, i, observed](Context& c) {
-      (*observed)[i] = c.get_cell(topic);
+    ctx->effect_void([topic, i, observed](Compute& c) {
+      (*observed)[i] = c.get(topic);
     });
   }
   const auto build_end = SteadyClock::now();

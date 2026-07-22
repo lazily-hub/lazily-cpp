@@ -94,7 +94,7 @@ TEST(test_derived_count_reacts_to_cell_writes) {
   for (uint32_t k : {10u, 20u, 30u}) liveness.set(ctx, k, true);
   std::vector<Source<bool>> handles;
   for (uint32_t k : {10u, 20u, 30u}) handles.push_back(*liveness.handle(k));
-  auto live_count = ctx.computed<int>([handles](Context& c) {
+  auto live_count = ctx.computed<int>([handles](Compute& c) {
     int n = 0;
     for (const auto& h : handles)
       if (c.get(h)) ++n;

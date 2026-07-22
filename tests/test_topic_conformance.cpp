@@ -86,7 +86,7 @@ static void run_fixture(const std::string& name) {
     if (probes.count(id)) return;
     auto reader = topic.reader_handle(ctx, id);
     auto probe = ctx.computed<std::uint64_t>(
-        [reader](Context& c) { return c.get(reader); });
+        [reader](Compute& c) { return c.get(reader); });
     ctx.get(probe);  // prime -> is_set true
     probes.insert({id, probe});
   };

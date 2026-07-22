@@ -63,7 +63,7 @@ TEST(test_membership_lifecycle) {
   MembershipCell<uint64_t> m(ctx, config);
   auto set = m.peer_set();
   auto observed =
-      ctx.computed<std::set<uint64_t>>([set](Context& c) { return c.get(set); });
+      ctx.computed<std::set<uint64_t>>([set](Compute& c) { return c.get(set); });
   (void)ctx.get(observed);
 
   struct Step {

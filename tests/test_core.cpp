@@ -41,7 +41,7 @@ TEST(test_slot_lazy) {
   Context ctx;
   auto a = ctx.source(2);
   auto b = ctx.source(3);
-  auto sum = ctx.computed<int>([&](Context& c) {
+  auto sum = ctx.computed<int>([&](Compute& c) {
     return c.get(a) + c.get(b);
   });
   assert(ctx.get(sum) == 5);
@@ -55,7 +55,7 @@ TEST(test_slot_caching) {
   Context ctx;
   int compute_count = 0;
   auto a = ctx.source(1);
-  auto s = ctx.computed<int>([&](Context& c) {
+  auto s = ctx.computed<int>([&](Compute& c) {
     compute_count++;
     return c.get(a) * 2;
   });
@@ -74,7 +74,7 @@ TEST(test_partial_eq_guard) {
   Context ctx;
   int effect_runs = 0;
   auto a = ctx.source(1);
-  ctx.effect_void([&](Context& c) {
+  ctx.effect_void([&](Compute& c) {
     effect_runs++;
     c.get(a);
   });
@@ -90,11 +90,11 @@ TEST(test_memo_equality_guard) {
   int compute_count = 0;
   int downstream_count = 0;
   auto a = ctx.source(2);
-  auto m = ctx.computed<int>([&](Context& c) {
+  auto m = ctx.computed<int>([&](Compute& c) {
     compute_count++;
     return c.get(a) / 2;
   });
-  auto downstream = ctx.computed<int>([&](Context& c) {
+  auto downstream = ctx.computed<int>([&](Compute& c) {
     downstream_count++;
     return c.get(m) + 1;
   });
@@ -113,7 +113,7 @@ TEST(test_batch_coalesce) {
   int compute_count = 0;
   auto a = ctx.source(1);
   auto b = ctx.source(2);
-  auto sum = ctx.computed<int>([&](Context& c) {
+  auto sum = ctx.computed<int>([&](Compute& c) {
     compute_count++;
     return c.get(a) + c.get(b);
   });
@@ -131,7 +131,7 @@ TEST(test_signal_eager) {
   Context ctx;
   auto a = ctx.source(1);
   auto b = ctx.source(2);
-  auto sig = ctx.signal<int>([&](Context& c) {
+  auto sig = ctx.signal<int>([&](Compute& c) {
     return c.get(a) + c.get(b);
   });
   assert(ctx.get(sig) == 3);
@@ -143,7 +143,7 @@ TEST(test_effect_rerun) {
   Context ctx;
   std::vector<int> log;
   auto a = ctx.source(0);
-  ctx.effect_void([&](Context& c) {
+  ctx.effect_void([&](Compute& c) {
     log.push_back(c.get(a));
   });
   assert(log.size() == 1 && log[0] == 0);
@@ -157,7 +157,7 @@ TEST(test_effect_cleanup) {
   Context ctx;
   int cleanup_count = 0;
   auto a = ctx.source(1);
-  auto eff = ctx.effect([&](Context& c) -> CleanupFn {
+  auto eff = ctx.effect([&](Compute& c) -> CleanupFn {
     c.get(a);
     return [&]() { cleanup_count++; };
   });
@@ -171,9 +171,9 @@ TEST(test_effect_cleanup) {
 TEST(test_diamond_dependencies) {
   Context ctx;
   auto a = ctx.source(1);
-  auto b = ctx.computed<int>([&](Context& c) { return c.get(a) + 1; });
-  auto c2 = ctx.computed<int>([&](Context& c) { return c.get(a) + 2; });
-  auto d = ctx.computed<int>([&](Context& c) { return c.get(b) + c.get(c2); });
+  auto b = ctx.computed<int>([&](Compute& c) { return c.get(a) + 1; });
+  auto c2 = ctx.computed<int>([&](Compute& c) { return c.get(a) + 2; });
+  auto d = ctx.computed<int>([&](Compute& c) { return c.get(b) + c.get(c2); });
   assert(ctx.get(d) == (1 + 1) + (1 + 2));
   ctx.set(a, 10);
   assert(ctx.get(d) == (10 + 1) + (10 + 2));
@@ -183,7 +183,7 @@ TEST(test_clear_slot) {
   Context ctx;
   int compute_count = 0;
   auto a = ctx.source(5);
-  auto s = ctx.computed<int>([&](Context& c) {
+  auto s = ctx.computed<int>([&](Compute& c) {
     compute_count++;
     return c.get(a) * 2;
   });
@@ -201,7 +201,7 @@ TEST(test_dynamic_dependencies) {
   auto flag = ctx.source(true);
   auto a = ctx.source(1);
   auto b = ctx.source(100);
-  auto s = ctx.computed<int>([&](Context& c) {
+  auto s = ctx.computed<int>([&](Compute& c) {
     if (c.get(flag))
       return c.get(a);
     else
@@ -216,7 +216,7 @@ TEST(test_dynamic_dependencies) {
 
 TEST(test_get_rc_avoids_clone) {
   Context ctx;
-  auto s = ctx.computed<std::string>([&](Context& c) {
+  auto s = ctx.computed<std::string>([&](Compute& c) {
     return std::string("hello world");
   });
   auto rc = ctx.get_rc<std::string>(s);
@@ -226,7 +226,7 @@ TEST(test_get_rc_avoids_clone) {
 TEST(test_signal_dispose) {
   Context ctx;
   auto a = ctx.source(1);
-  auto sig = ctx.signal<int>([&](Context& c) {
+  auto sig = ctx.signal<int>([&](Compute& c) {
     return c.get(a) * 10;
   });
   assert(sig.is_eager(ctx));
@@ -239,7 +239,7 @@ TEST(test_effect_dispose) {
   Context ctx;
   int run_count = 0;
   auto a = ctx.source(1);
-  auto eff = ctx.effect_void([&](Context& c) {
+  auto eff = ctx.effect_void([&](Compute& c) {
     run_count++;
     c.get(a);
   });
@@ -258,7 +258,7 @@ TEST(test_nested_batch) {
   int compute_count = 0;
   auto a = ctx.source(1);
   auto b = ctx.source(2);
-  auto sum = ctx.computed<int>([&](Context& c) {
+  auto sum = ctx.computed<int>([&](Compute& c) {
     compute_count++;
     return c.get(a) + c.get(b);
   });
@@ -278,7 +278,7 @@ TEST(test_nested_batch) {
 TEST(test_string_values) {
   Context ctx;
   auto name = ctx.source<std::string>("alice");
-  auto greeting = ctx.computed<std::string>([&](Context& c) {
+  auto greeting = ctx.computed<std::string>([&](Compute& c) {
     return "Hello, " + c.get(name) + "!";
   });
   assert(ctx.get(greeting) == "Hello, alice!");
@@ -420,12 +420,12 @@ TEST(test_wide_fanout_dispose_and_recycle) {
   std::vector<Effect> handles;
   for (size_t i = 0; i < width; ++i)
     handles.push_back(ctx.effect_void(
-        [&, i](Context& c) { seen[i] = c.get(topic); }));
+        [&, i](Compute& c) { seen[i] = c.get(topic); }));
 
   for (size_t i = 0; i < width; i += 2) ctx.dispose_effect(handles[i]);
   for (size_t i = width; i < width + width / 2; ++i)
     handles.push_back(ctx.effect_void(
-        [&, i](Context& c) { seen[i] = c.get(topic); }));
+        [&, i](Compute& c) { seen[i] = c.get(topic); }));
 
   ctx.set(topic, 42);
   for (size_t i = 1; i < width; i += 2) assert(seen[i] == 42);
@@ -443,7 +443,7 @@ TEST(test_wide_fanout_repeated_publish) {
   std::vector<int> seen(width, -1);
   std::vector<int> runs(width, 0);
   for (size_t i = 0; i < width; ++i)
-    ctx.effect_void([&, i](Context& c) {
+    ctx.effect_void([&, i](Compute& c) {
       seen[i] = c.get(topic);
       runs[i]++;
     });
@@ -465,7 +465,7 @@ TEST(test_wide_fanin_tracks_dynamic_dependencies) {
   auto use_all = ctx.source(true);
 
   int computes = 0;
-  auto sum = ctx.computed<long>([&](Context& c) {
+  auto sum = ctx.computed<long>([&](Compute& c) {
     computes++;
     if (!c.get(use_all)) return long(-1);
     long total = 0;
@@ -548,12 +548,12 @@ TEST(test_dispose_from_inside_flush_runs_survivors_only) {
   std::vector<Effect> effects;
   for (size_t i = 0; i < n; ++i)
     effects.push_back(
-        ctx.effect_void([topic, i, &ran](Context& c) { c.get(topic); ++ran[i]; }));
+        ctx.effect_void([topic, i, &ran](Compute& c) { c.get(topic); ++ran[i]; }));
 
   // Registered last => scheduled first (the invalidation walk uses a stack), so
   // this runs with all n still queued. Disposes every even-indexed sibling.
   int runs = 0;
-  ctx.effect_void([topic, &effects, &runs, n](Context& c) {
+  ctx.effect_void([topic, &effects, &runs, n](Compute& c) {
     c.get(topic);
     if (++runs != 2) return;  // run 1 is the registration flush
     for (size_t i = 0; i < n; i += 2) c.dispose_effect(effects[i]);
@@ -581,16 +581,16 @@ TEST(test_dispose_from_inside_flush_survives_id_recycling) {
   std::vector<int> ran(n, 0);
   for (size_t i = 0; i < n; ++i)
     effects.push_back(
-        ctx.effect_void([topic, i, &ran](Context& c) { c.get(topic); ++ran[i]; }));
+        ctx.effect_void([topic, i, &ran](Compute& c) { c.get(topic); ++ran[i]; }));
 
   int fresh_runs = 0;
   int runs = 0;
-  ctx.effect_void([topic, &effects, &runs, &fresh_runs, n](Context& c) {
+  ctx.effect_void([topic, &effects, &runs, &fresh_runs, n](Compute& c) {
     c.get(topic);
     if (++runs != 2) return;
     for (size_t i = 0; i < n; ++i) c.dispose_effect(effects[i]);
     for (size_t i = 0; i < n; ++i)
-      c.effect_void([topic, &fresh_runs](Context& cc) {
+      c.effect_void([topic, &fresh_runs](Compute& cc) {
         cc.get(topic);
         ++fresh_runs;
       });
@@ -624,9 +624,9 @@ TEST(test_disposal_dirties_the_surviving_dependent_cone) {
   Context ctx;
   auto src = ctx.source<long long>(1);
   auto mid = ctx.computed<long long>(
-      [src](Context& c) { return c.get(src) + 1; });
+      [src](Compute& c) { return c.get(src) + 1; });
   auto reader = ctx.computed<long long>(
-      [mid](Context& c) { return c.get(mid) + 10; });
+      [mid](Compute& c) { return c.get(mid) + 10; });
 
   REQUIRE(ctx.get(reader) == 12, "baseline");
   ctx.dispose_slot(mid);
@@ -657,11 +657,11 @@ TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
   Context ctx;
   auto src = ctx.source<long long>(1);
   auto mid = ctx.computed<long long>(
-      [src](Context& c) { return c.get(src) + 1; });
+      [src](Compute& c) { return c.get(src) + 1; });
 
   int runs = 0;
   // Reads through `mid`, so disposing `mid` puts this effect in the cone.
-  ctx.effect_void([mid, &runs](Context& c) {
+  ctx.effect_void([mid, &runs](Compute& c) {
     try {
       (void)c.get(mid);
     } catch (const DisposedError&) {
@@ -679,7 +679,7 @@ TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
   // publish that reaches it still runs it.
   auto other = ctx.source<long long>(0);
   int other_runs = 0;
-  ctx.effect_void([other, &other_runs](Context& c) {
+  ctx.effect_void([other, &other_runs](Compute& c) {
     (void)c.get(other);
     ++other_runs;
   });
@@ -703,7 +703,7 @@ TEST(test_scope_teardown_runs_in_reverse_creation_order) {
     TeardownScope scope = ctx.scope();
     for (const char* name : {"a", "b", "c"}) {
       std::string id = name;
-      scope.effect([topic, id, &order](Context& c) {
+      scope.effect([topic, id, &order](Compute& c) {
         (void)c.get(topic);
         return CleanupFn([id, &order]() { order.push_back(id); });
       });
@@ -734,7 +734,7 @@ TEST(test_scope_is_move_only_and_disposes_exactly_once) {
   int cleanups = 0;
   {
     TeardownScope outer = ctx.scope();  // moved from the prvalue scope()
-    outer.effect([topic, &cleanups](Context& c) {
+    outer.effect([topic, &cleanups](Compute& c) {
       (void)c.get(topic);
       return CleanupFn([&cleanups]() { ++cleanups; });
     });
@@ -752,13 +752,13 @@ TEST(test_disarm_disposes_nothing_and_leaves_nodes_disposable) {
   // revert to plain context ownership — still individually disposable.
   Context ctx;
   auto topic = ctx.source<long long>(1);
-  auto escaped = ctx.computed<long long>([topic](Context& c) {
+  auto escaped = ctx.computed<long long>([topic](Compute& c) {
     return c.get(topic);
   });
   {
     TeardownScope scope = ctx.scope();
     auto owned = scope.computed<long long>(
-        [escaped](Context& c) { return c.get(escaped) + 5; });
+        [escaped](Compute& c) { return c.get(escaped) + 5; });
     REQUIRE(ctx.get(owned) == 6, "baseline through the scoped node");
     REQUIRE(scope.size() == 1, "the scope owns it");
     scope.disarm();
@@ -769,7 +769,7 @@ TEST(test_disarm_disposes_nothing_and_leaves_nodes_disposable) {
   }
   // The scope has ended and disposed nothing.
   auto survivor = ctx.computed<long long>(
-      [escaped](Context& c) { return c.get(escaped) + 5; });
+      [escaped](Compute& c) { return c.get(escaped) + 5; });
   REQUIRE(ctx.get(survivor) == 9, "nothing was torn down");
   REQUIRE(ctx.dependent_count(topic) >= 1, "the source keeps its dependents");
 }
@@ -782,7 +782,7 @@ TEST(test_degree_counts_track_live_edges) {
   REQUIRE(ctx.dependent_count(topic) == 0, "a fresh cell has no dependents");
 
   auto a = ctx.computed<long long>(
-      [topic](Context& c) { return c.get(topic) + 1; });
+      [topic](Compute& c) { return c.get(topic) + 1; });
   REQUIRE(ctx.dependent_count(topic) == 0,
           "a lazy slot registers nothing until it is pulled");
   REQUIRE(ctx.get(a) == 1, "pull it");
@@ -791,7 +791,7 @@ TEST(test_degree_counts_track_live_edges) {
   REQUIRE(ctx.dependency_count(topic) == 0, "cells are pure sources");
 
   // Disposal detaches BOTH directions.
-  auto b = ctx.computed<long long>([a](Context& c) { return c.get(a) + 1; });
+  auto b = ctx.computed<long long>([a](Compute& c) { return c.get(a) + 1; });
   REQUIRE(ctx.get(b) == 2, "pull b");
   REQUIRE(ctx.dependent_count(a) == 1, "b depends on a");
   ctx.dispose_slot(a);
@@ -809,7 +809,7 @@ TEST(test_dispose_is_idempotent_and_kind_checked) {
   ctx.dispose_cell(sentinel);  // no-op, not an error
 
   // The successor very likely lands on the recycled id.
-  auto successor = ctx.computed<long long>([](Context&) { return 1LL; });
+  auto successor = ctx.computed<long long>([](Compute&) { return 1LL; });
   REQUIRE(ctx.get(successor) == 1, "the successor is live");
   REQUIRE(ctx.dependent_count(successor) == 0, "and inherits no edges");
   REQUIRE(ctx.dependency_count(successor) == 0, "in either direction");
@@ -829,9 +829,9 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
   Context ctx;
   auto src = ctx.source<long long>(4);
   auto derived =
-      ctx.computed<long long>([src](Context& c) { return c.get(src); });
+      ctx.computed<long long>([src](Compute& c) { return c.get(src); });
   auto reader = ctx.computed<long long>(
-      [derived](Context& c) { return c.get(derived) + 1; });
+      [derived](Compute& c) { return c.get(derived) + 1; });
   REQUIRE(ctx.get(reader) == 5, "baseline");
 
   ctx.dispose_slot(derived);
@@ -847,7 +847,7 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
 
   // The context is still usable and its dependency tracking is not corrupted.
   auto fresh = ctx.computed<long long>(
-      [src](Context& c) { return c.get(src) * 2; });
+      [src](Compute& c) { return c.get(src) * 2; });
   REQUIRE(ctx.get(fresh) == 8, "a fresh slot computes correctly");
   REQUIRE(ctx.dependency_count(fresh) == 1,
           "and registered exactly its own dependency — a stranded tracking "

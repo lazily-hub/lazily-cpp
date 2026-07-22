@@ -288,7 +288,8 @@ public:
   // -- Reactive reads (each establishes a dependency on its reader-kind cell)
   // --
 
-  std::optional<T> head(Context &ctx) {
+  template <typename Cx>
+  std::optional<T> head(Cx &ctx) {
     (void)ctx.get(inner_->head_cell);
     // `head()` is an OPTIONAL storage capability (Phase 0 #relaycell): a
     // raw-channel backend that cannot peek has no head reader (nullopt).
@@ -299,17 +300,20 @@ public:
     }
   }
 
-  size_t len(Context &ctx) {
+  template <typename Cx>
+  size_t len(Cx &ctx) {
     (void)ctx.get(inner_->len_cell);
     return inner_->storage.len();
   }
 
-  bool is_empty(Context &ctx) {
+  template <typename Cx>
+  bool is_empty(Cx &ctx) {
     (void)ctx.get(inner_->empty_cell);
     return inner_->storage.len() == 0;
   }
 
-  bool is_full(Context &ctx) {
+  template <typename Cx>
+  bool is_full(Cx &ctx) {
     (void)ctx.get(inner_->full_cell);
     // `is_full()`/`capacity()` are OPTIONAL: a backend without a bound is
     // unbounded and never full.
@@ -320,7 +324,8 @@ public:
     }
   }
 
-  bool closed(Context &ctx) {
+  template <typename Cx>
+  bool closed(Cx &ctx) {
     (void)ctx.get(inner_->closed_cell);
     return inner_->storage.is_closed();
   }

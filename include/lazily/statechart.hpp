@@ -466,7 +466,8 @@ class StateChart {
 
   std::vector<std::string> last_actions() const { return last_actions_; }
 
-  Config configuration(Context& ctx) { return ctx.get(config_); }
+  template <typename Cx>
+  Config configuration(Cx& ctx) { return ctx.get(config_); }
 
   std::vector<std::string> active_leaves(Context& ctx) {
     auto config = configuration(ctx);
@@ -478,7 +479,8 @@ class StateChart {
     return leaves;
   }
 
-  bool matches(Context& ctx, const std::string& id) {
+  template <typename Cx>
+  bool matches(Cx& ctx, const std::string& id) {
     return configuration(ctx).count(id) > 0;
   }
 

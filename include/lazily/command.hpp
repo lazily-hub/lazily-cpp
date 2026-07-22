@@ -563,7 +563,7 @@ inline std::vector<BenchmarkResult> run_benchmark_suite(int iterations) {
     Context ctx;
     auto a = ctx.source(1);
     auto b = ctx.source(2);
-    auto s = ctx.computed<int>([&](Context& c) {
+    auto s = ctx.computed<int>([&](Compute& c) {
       return c.get(a) + c.get(b);
     });
     (void)ctx.get(s);

@@ -160,22 +160,26 @@ public:
     return expired.size();
   }
 
-  size_t pending_len(Context &ctx) const {
+  template <typename Cx>
+  size_t pending_len(Cx &ctx) const {
     (void)ctx.get(inner_->readers.pending_len);
     return inner_->pending.size();
   }
 
-  bool is_empty(Context &ctx) const {
+  template <typename Cx>
+  bool is_empty(Cx &ctx) const {
     (void)ctx.get(inner_->readers.is_empty);
     return inner_->pending.empty();
   }
 
-  size_t in_flight_len(Context &ctx) const {
+  template <typename Cx>
+  size_t in_flight_len(Cx &ctx) const {
     (void)ctx.get(inner_->readers.in_flight_len);
     return inner_->in_flight.size();
   }
 
-  size_t dead_letter_len(Context &ctx) const {
+  template <typename Cx>
+  size_t dead_letter_len(Cx &ctx) const {
     (void)ctx.get(inner_->readers.dead_letter_len);
     return inner_->dead_letters.size();
   }

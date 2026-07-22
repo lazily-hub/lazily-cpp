@@ -72,8 +72,8 @@ void print_results() {
 // -- Cached reads --
 void bench_cached_reads() {
   Context ctx;
-  auto c = ctx.cell(42);
-  auto s = ctx.slot<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
+  auto c = ctx.source(42);
+  auto s = ctx.slot<int>([c](Compute& ctx) { return ctx.get(c) * 2; });
   ctx.get(s);  // prime cache
 
   bench("cached_reads", "context", 1000000, [&]() {
@@ -81,8 +81,8 @@ void bench_cached_reads() {
   });
 
   ThreadSafeContext ts_ctx;
-  auto tc = ts_ctx.cell(42);
-  auto ts = ts_ctx.slot<int>([tc](Context& c) { return c.get_cell(tc) * 2; });
+  auto tc = ts_ctx.source(42);
+  auto ts = ts_ctx.slot<int>([tc](Compute& c) { return c.get(tc) * 2; });
   ts_ctx.get(ts);  // prime cache
 
   bench("cached_reads", "thread_safe_context", 1000000, [&]() {
@@ -94,15 +94,15 @@ void bench_cached_reads() {
 void bench_cold_first_get() {
   bench("cold_first_get", "context", 100000, [&]() {
     Context ctx;
-    auto c = ctx.cell(42);
-    auto s = ctx.slot<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
+    auto c = ctx.source(42);
+    auto s = ctx.slot<int>([c](Compute& ctx) { return ctx.get(c) * 2; });
     (void)ctx.get(s);
   });
 
   bench("cold_first_get", "thread_safe_context", 100000, [&]() {
     ThreadSafeContext ctx;
-    auto c = ctx.cell(42);
-    auto s = ctx.slot<int>([c](Context& ctx) { return ctx.get_cell(c) * 2; });
+    auto c = ctx.source(42);
+    auto s = ctx.slot<int>([c](Compute& ctx) { return ctx.get(c) * 2; });
     (void)ctx.get(s);
   });
 }
@@ -111,15 +111,15 @@ void bench_cold_first_get() {
 void bench_fan_out() {
   for (int n : {32, 256}) {
     Context ctx;
-    auto src = ctx.cell(1);
-    std::vector<SlotHandle<int>> slots;
+    auto src = ctx.source(1);
+    std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Context& c) {
-        return c.get_cell(src) + i;
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
+        return c.get(src) + i;
       }));
     }
     for (auto& s : slots) (void)ctx.get(s);  // prime
-    ctx.set_cell(src, 2);  // invalidate
+    ctx.set(src, 2);  // invalidate
 
     std::string label = "context / " + std::to_string(n);
     bench("dependency_fan_out", label, 10000, [&]() {
@@ -127,26 +127,26 @@ void bench_fan_out() {
     });
 
     // Invalidate again for next round
-    ctx.set_cell(src, 1);
+    ctx.set(src, 1);
   }
 
   for (int n : {32, 256}) {
     ThreadSafeContext ctx;
-    auto src = ctx.cell(1);
-    std::vector<SlotHandle<int>> slots;
+    auto src = ctx.source(1);
+    std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Context& c) {
-        return c.get_cell(src) + i;
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
+        return c.get(src) + i;
       }));
     }
     for (auto& s : slots) (void)ctx.get(s);
-    ctx.set_cell(src, 2);
+    ctx.set(src, 2);
 
     std::string label = "thread_safe_context / " + std::to_string(n);
     bench("dependency_fan_out", label, 10000, [&]() {
       for (auto& s : slots) (void)ctx.get(s);
     });
-    ctx.set_cell(src, 1);
+    ctx.set(src, 1);
   }
 }
 
@@ -155,57 +155,57 @@ void bench_set_cell_invalidation() {
   // High fan-out (512 dependents)
   {
     Context ctx;
-    auto src = ctx.cell(0);
-    std::vector<SlotHandle<int>> slots;
+    auto src = ctx.source(0);
+    std::vector<Computed<int>> slots;
     for (int i = 0; i < 512; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Context& c) {
-        return c.get_cell(src) + i;
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
+        return c.get(src) + i;
       }));
     }
     for (auto& s : slots) (void)ctx.get(s);
 
     bench("set_cell_invalidation", "high_fan_out / 512", 1000, [&]() {
-      ctx.set_cell(src, 1);
-      ctx.set_cell(src, 0);  // reset
+      ctx.set(src, 1);
+      ctx.set(src, 0);  // reset
     });
   }
 
   // Same-slot contention
   for (int n : {1, 2, 4, 8, 16}) {
     Context ctx;
-    auto src = ctx.cell(0);
-    std::vector<SlotHandle<int>> slots;
+    auto src = ctx.source(0);
+    std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Context& c) {
-        return c.get_cell(src) + i;
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
+        return c.get(src) + i;
       }));
     }
     for (auto& s : slots) (void)ctx.get(s);
 
     std::string label = "same_slot_contention / " + std::to_string(n);
     bench("set_cell_invalidation", label, 10000, [&]() {
-      ctx.set_cell(src, 1);
-      ctx.set_cell(src, 0);
+      ctx.set(src, 1);
+      ctx.set(src, 0);
     });
   }
 
   // Independent-slot contention
   for (int n : {1, 2, 4, 8, 16}) {
     Context ctx;
-    std::vector<CellHandle<int>> cells;
-    std::vector<SlotHandle<int>> slots;
+    std::vector<Source<int>> cells;
+    std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      cells.push_back(ctx.cell(i));
-      slots.push_back(ctx.slot<int>([&, i](Context& c) {
-        return c.get_cell(cells[i]) + 1;
+      cells.push_back(ctx.source(i));
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
+        return c.get(cells[i]) + 1;
       }));
     }
     for (auto& s : slots) (void)ctx.get(s);
 
     std::string label = "independent_slot_contention / " + std::to_string(n);
     bench("set_cell_invalidation", label, 10000, [&]() {
-      for (int i = 0; i < n; ++i) ctx.set_cell(cells[i], i + 100);
-      for (int i = 0; i < n; ++i) ctx.set_cell(cells[i], i);
+      for (int i = 0; i < n; ++i) ctx.set(cells[i], i + 100);
+      for (int i = 0; i < n; ++i) ctx.set(cells[i], i);
     });
   }
 }
@@ -213,100 +213,100 @@ void bench_set_cell_invalidation() {
 // -- Memo equality suppression --
 void bench_memo_equality() {
   Context ctx;
-  auto src = ctx.cell(2);
-  auto m = ctx.memo<int>([&](Context& c) {
-    return c.get_cell(src) / 2;  // 2/2=1, 3/2=1 (unchanged)
+  auto src = ctx.source(2);
+  auto m = ctx.computed<int>([&](Compute& c) {
+    return c.get(src) / 2;  // 2/2=1, 3/2=1 (unchanged)
   });
-  auto downstream = ctx.slot<int>([&](Context& c) {
+  auto downstream = ctx.slot<int>([&](Compute& c) {
     return c.get(m) + 1;
   });
   (void)ctx.get(downstream);
 
   bench("memo_equality_suppression", "context", 100000, [&]() {
-    ctx.set_cell(src, 3);  // memo unchanged → downstream stays cached
-    ctx.set_cell(src, 2);  // reset
+    ctx.set(src, 3);  // memo unchanged → downstream stays cached
+    ctx.set(src, 2);  // reset
   });
 
   ThreadSafeContext ts_ctx;
-  auto ts_src = ts_ctx.cell(2);
-  auto ts_m = ts_ctx.memo<int>([&](Context& c) {
-    return c.get_cell(ts_src) / 2;
+  auto ts_src = ts_ctx.source(2);
+  auto ts_m = ts_ctx.computed<int>([&](Compute& c) {
+    return c.get(ts_src) / 2;
   });
-  auto ts_down = ts_ctx.slot<int>([&](Context& c) {
+  auto ts_down = ts_ctx.slot<int>([&](Compute& c) {
     return c.get(ts_m) + 1;
   });
   (void)ts_ctx.get(ts_down);
 
   bench("memo_equality_suppression", "thread_safe_context", 100000, [&]() {
-    ts_ctx.set_cell(ts_src, 3);
-    ts_ctx.set_cell(ts_src, 2);
+    ts_ctx.set(ts_src, 3);
+    ts_ctx.set(ts_src, 2);
   });
 }
 
 // -- Effect flushing --
 void bench_effect_flushing() {
   Context ctx;
-  auto src = ctx.cell(0);
+  auto src = ctx.source(0);
   int sink = 0;
-  auto eff = ctx.effect_void([&](Context& c) {
-    sink = c.get_cell(src);
+  auto eff = ctx.effect_void([&](Compute& c) {
+    sink = c.get(src);
   });
 
   bench("effect_flushing", "context", 1000000, [&]() {
-    ctx.set_cell(src, 1);
-    ctx.set_cell(src, 0);
+    ctx.set(src, 1);
+    ctx.set(src, 0);
   });
 
   ThreadSafeContext ts_ctx;
-  auto ts_src = ts_ctx.cell(0);
+  auto ts_src = ts_ctx.source(0);
   int ts_sink = 0;
-  auto ts_eff = ts_ctx.effect_void([&](Context& c) {
-    ts_sink = c.get_cell(ts_src);
+  auto ts_eff = ts_ctx.effect_void([&](Compute& c) {
+    ts_sink = c.get(ts_src);
   });
 
   bench("effect_flushing", "thread_safe_context", 1000000, [&]() {
-    ts_ctx.set_cell(ts_src, 1);
-    ts_ctx.set_cell(ts_src, 0);
+    ts_ctx.set(ts_src, 1);
+    ts_ctx.set(ts_src, 0);
   });
 }
 
 // -- Batch storms --
 void bench_batch_storms() {
   Context ctx;
-  std::vector<CellHandle<int>> cells;
-  for (int i = 0; i < 64; ++i) cells.push_back(ctx.cell(i));
-  auto sum = ctx.slot<int>([&](Context& c) {
+  std::vector<Source<int>> cells;
+  for (int i = 0; i < 64; ++i) cells.push_back(ctx.source(i));
+  auto sum = ctx.slot<int>([&](Compute& c) {
     int s = 0;
-    for (auto& cell : cells) s += c.get_cell(cell);
+    for (auto& cell : cells) s += c.get(cell);
     return s;
   });
   (void)ctx.get(sum);
 
   bench("batch_storms", "context / 64", 100000, [&]() {
     ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set_cell(cells[i], i + 1);
+      for (int i = 0; i < 64; ++i) c.set(cells[i], i + 1);
     });
     ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set_cell(cells[i], i);
+      for (int i = 0; i < 64; ++i) c.set(cells[i], i);
     });
   });
 
   ThreadSafeContext ts_ctx;
-  std::vector<CellHandle<int>> ts_cells;
-  for (int i = 0; i < 64; ++i) ts_cells.push_back(ts_ctx.cell(i));
-  auto ts_sum = ts_ctx.slot<int>([&](Context& c) {
+  std::vector<Source<int>> ts_cells;
+  for (int i = 0; i < 64; ++i) ts_cells.push_back(ts_ctx.source(i));
+  auto ts_sum = ts_ctx.slot<int>([&](Compute& c) {
     int s = 0;
-    for (auto& cell : ts_cells) s += c.get_cell(cell);
+    for (auto& cell : ts_cells) s += c.get(cell);
     return s;
   });
   (void)ts_ctx.get(ts_sum);
 
   bench("batch_storms", "thread_safe_context / 64", 100000, [&]() {
     ts_ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set_cell(ts_cells[i], i + 1);
+      for (int i = 0; i < 64; ++i) c.set(ts_cells[i], i + 1);
     });
     ts_ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set_cell(ts_cells[i], i);
+      for (int i = 0; i < 64; ++i) c.set(ts_cells[i], i);
     });
   });
 }
@@ -325,8 +325,8 @@ void ts_contention_for(const std::string& policy) {
   constexpr int kWindowMs = 30;
   for (int n : {1, 2, 4, 8, 16}) {
     Ctx ctx;
-    auto cell = ctx.cell(0);
-    auto slot = ctx.template slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
+    auto cell = ctx.source(0);
+    auto slot = ctx.template slot<int>([&](Compute& c) { return c.get(cell) * 2; });
     (void)ctx.get(slot);
 
     std::atomic<int> barrier{n};
@@ -340,7 +340,7 @@ void ts_contention_for(const std::string& policy) {
         uint64_t local = 0;
         int v = 0;
         while (!stop.load(std::memory_order_relaxed)) {
-          ctx.set_cell(cell, v);
+          ctx.set(cell, v);
           (void)ctx.get(slot);
           v ^= 1;
           ++local;
@@ -385,8 +385,8 @@ void read_scaling_for(const std::string& policy) {
   constexpr int kWindowMs = 30;
   for (int n : {1, 2, 4, 8, 16}) {
     Ctx ctx;
-    auto cell = ctx.cell(42);
-    auto slot = ctx.template slot<int>([&](Context& c) { return c.get_cell(cell) * 2; });
+    auto cell = ctx.source(42);
+    auto slot = ctx.template slot<int>([&](Compute& c) { return c.get(cell) * 2; });
     (void)ctx.get(slot);  // prime cache (clean)
 
     std::atomic<int> barrier{n};
@@ -399,7 +399,7 @@ void read_scaling_for(const std::string& policy) {
         while (barrier > 0) std::this_thread::yield();
         uint64_t local = 0;
         while (!stop.load(std::memory_order_relaxed)) {
-          (void)ctx.get_cell(cell);
+          (void)ctx.get(cell);
           (void)ctx.get(slot);
           ++local;
         }
@@ -551,19 +551,19 @@ void bench_effect_alloc() {
     std::string label = std::to_string(n);
     bench("effect_alloc", "create_dispose / " + label, 200, [&]() {
       Context ctx;
-      auto src = ctx.cell(0);
+      auto src = ctx.source(0);
       int sink_a = 0;
       int sink_b = 0;
       std::vector<Effect> effects;
       effects.reserve(static_cast<size_t>(n));
       for (int i = 0; i < n; ++i) {
-        effects.push_back(ctx.effect([&, i](Context& c) -> CleanupFn {
-          sink_a = c.get_cell(src) + i;
+        effects.push_back(ctx.effect([&, i](Compute& c) -> CleanupFn {
+          sink_a = c.get(src) + i;
           sink_b = sink_a * 2;
           return [&, i]() { sink_a -= i; };
         }));
       }
-      ctx.set_cell(src, 1);  // fires every effect (re-installs cleanup)
+      ctx.set(src, 1);  // fires every effect (re-installs cleanup)
       for (auto& e : effects) e.dispose(ctx);
     });
   }
@@ -645,21 +645,21 @@ void bench_scale() {
       auto start = clk::now();
       Context ctx;
       ctx.reserve(static_cast<size_t>(n) * 2 + 16);
-      std::vector<CellHandle<int>> inputs;
-      std::vector<SlotHandle<int>> formulas;
+      std::vector<Source<int>> inputs;
+      std::vector<Computed<int>> formulas;
       inputs.reserve(n);
       formulas.reserve(n);
-      for (long long i = 0; i < n; ++i) inputs.push_back(ctx.cell(static_cast<int>(i)));
+      for (long long i = 0; i < n; ++i) inputs.push_back(ctx.source(static_cast<int>(i)));
       for (long long i = 0; i < n; ++i) {
         if (i == 0) {
-          formulas.push_back(ctx.slot<int>([&](Context& c) {
-            return c.get_cell(inputs[0]);
+          formulas.push_back(ctx.slot<int>([&](Compute& c) {
+            return c.get(inputs[0]);
           }));
         } else {
           auto prev = inputs[i - 1];
           auto cur = inputs[i];
-          formulas.push_back(ctx.slot<int>([prev, cur](Context& c) {
-            return c.get_cell(cur) + c.get_cell(prev);
+          formulas.push_back(ctx.slot<int>([prev, cur](Compute& c) {
+            return c.get(cur) + c.get(prev);
           }));
         }
       }
@@ -679,7 +679,7 @@ void bench_scale() {
 
       // Full recalc invalidate all
       start = clk::now();
-      for (long long i = 0; i < n; ++i) ctx.set_cell(inputs[i], static_cast<int>(i + 1));
+      for (long long i = 0; i < n; ++i) ctx.set(inputs[i], static_cast<int>(i + 1));
       for (auto& f : formulas) (void)ctx.get(f);
       end = clk::now();
       label = "full_recalc_invalidate_all / " + std::to_string(n);
@@ -688,7 +688,7 @@ void bench_scale() {
 
       // Viewport recalc (edit 1, read 1000)
       start = clk::now();
-      ctx.set_cell(inputs[0], 999);
+      ctx.set(inputs[0], 999);
       for (int i = 0; i < std::min(1000LL, n); ++i) (void)ctx.get(formulas[i]);
       end = clk::now();
       label = "viewport_recalc / " + std::to_string(n);

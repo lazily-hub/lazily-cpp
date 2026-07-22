@@ -55,7 +55,7 @@ TEST(test_timer_single_shot) {
   Context ctx;
   TimerCell timer(ctx, 3);
   auto fired = timer.fired_cell();
-  auto observed = ctx.computed<bool>([&](Context& c) { return fired.get(c); });
+  auto observed = ctx.computed<bool>([&](Compute& c) { return fired.get(c); });
   (void)ctx.get(observed);  // prime the cache
 
   struct Step {
@@ -93,7 +93,7 @@ TEST(test_interval_periodic) {
   Context ctx;
   IntervalCell iv(ctx, 2);
   auto count = iv.count_cell();
-  auto observed = ctx.computed<uint64_t>([&](Context& c) { return count.get(c); });
+  auto observed = ctx.computed<uint64_t>([&](Compute& c) { return count.get(c); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -131,7 +131,7 @@ TEST(test_cron_pattern) {
   Context ctx;
   CronCell cron(ctx, 5, {0, 3});
   auto count = cron.count_cell();
-  auto observed = ctx.computed<uint64_t>([&](Context& c) { return count.get(c); });
+  auto observed = ctx.computed<uint64_t>([&](Compute& c) { return count.get(c); });
   (void)ctx.get(observed);
 
   struct Step {
@@ -170,7 +170,7 @@ TEST(test_deadline_expiry) {
   const std::string value = "payload";
   DeadlineCell<std::string> d(ctx, value, 4);
   auto expired = d.expired_cell();
-  auto observed = ctx.computed<bool>([&](Context& c) { return expired.get(c); });
+  auto observed = ctx.computed<bool>([&](Compute& c) { return expired.get(c); });
   (void)ctx.get(observed);
 
   struct Step {

@@ -38,7 +38,7 @@ class StateMachine {
     auto state_handle = state_;
     auto prev = std::make_shared<std::optional<S>>();
     auto h = std::make_shared<std::function<void(const S&, const S&)>>(std::move(handler));
-    return ctx.effect_void([state_handle, prev, h](Context& c) {
+    return ctx.effect_void([state_handle, prev, h](Compute& c) {
       S current = c.get(state_handle);
       if (*prev && **prev != current) {
         (*h)(**prev, current);
@@ -51,7 +51,7 @@ class StateMachine {
   // (`signal` is now the eager-computed convenience — `#lzcellkernel`.)
   Computed<bool> state_is(Context& ctx, S target) {
     auto state_handle = state_;
-    return ctx.signal<bool>([state_handle, target](Context& c) {
+    return ctx.signal<bool>([state_handle, target](Compute& c) {
       return c.get(state_handle) == target;
     });
   }

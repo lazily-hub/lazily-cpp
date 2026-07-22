@@ -40,7 +40,7 @@ TEST(ripple_when_custom_significance_propagates_on_proxy_change) {
 
   using Pair = std::pair<std::uint64_t, std::uint64_t>;  // (payload, bucket)
   auto derived = ctx.computed_ripple_when<Pair>(
-      [input](Context& c) -> Pair {
+      [input](Compute& c) -> Pair {
         auto v = c.get(input);
         return {v, v / 10};
       },
@@ -49,7 +49,7 @@ TEST(ripple_when_custom_significance_propagates_on_proxy_change) {
       });
 
   auto recomputes = std::make_shared<int>(0);
-  auto observer = ctx.computed<std::uint64_t>([derived, recomputes](Context& c) {
+  auto observer = ctx.computed<std::uint64_t>([derived, recomputes](Compute& c) {
     ++*recomputes;
     return c.get(derived).first;
   });
@@ -75,13 +75,13 @@ TEST(ripple_when_propagate_every_n_via_value_carried_counter) {
   auto input = ctx.source<std::uint64_t>(0);
 
   auto sampled = ctx.computed_ripple_when<std::uint64_t>(
-      [input](Context& c) { return c.get(input); },
+      [input](Compute& c) { return c.get(input); },
       [](const std::uint64_t& old_v, const std::uint64_t& new_v) {
         return new_v / 3 != old_v / 3;  // cross a size-3 window boundary
       });
 
   auto seen = std::make_shared<int>(0);
-  auto observer = ctx.computed<std::uint64_t>([sampled, seen](Context& c) {
+  auto observer = ctx.computed<std::uint64_t>([sampled, seen](Compute& c) {
     ++*seen;
     return c.get(sampled);
   });
@@ -107,18 +107,18 @@ TEST(computed_is_ripple_when_not_equal) {
   auto input = ctx.source<long long>(0);
 
   auto via_computed =
-      ctx.computed<long long>([input](Context& c) { return std::min(c.get(input), 1LL); });
+      ctx.computed<long long>([input](Compute& c) { return std::min(c.get(input), 1LL); });
   auto via_when = ctx.computed_ripple_when<long long>(
-      [input](Context& c) { return std::min(c.get(input), 1LL); },
+      [input](Compute& c) { return std::min(c.get(input), 1LL); },
       [](const long long& o, const long long& n) { return o != n; });
 
   auto ca = std::make_shared<int>(0);
   auto cb = std::make_shared<int>(0);
-  auto obs_a = ctx.computed<long long>([via_computed, ca](Context& c) {
+  auto obs_a = ctx.computed<long long>([via_computed, ca](Compute& c) {
     ++*ca;
     return c.get(via_computed);
   });
-  auto obs_b = ctx.computed<long long>([via_when, cb](Context& c) {
+  auto obs_b = ctx.computed<long long>([via_when, cb](Compute& c) {
     ++*cb;
     return c.get(via_when);
   });
@@ -145,13 +145,13 @@ TEST(computed_is_ripple_when_not_equal) {
 TEST(slot_is_pass_through_always_propagates) {
   Context ctx;
   auto input = ctx.source<std::uint64_t>(0);
-  auto passthrough = ctx.slot<std::uint64_t>([input](Context& c) {
+  auto passthrough = ctx.slot<std::uint64_t>([input](Compute& c) {
     (void)c.get(input);  // depend on input, but always yield the same value
     return std::uint64_t{0};
   });
 
   auto recomputes = std::make_shared<int>(0);
-  auto observer = ctx.computed<std::uint64_t>([passthrough, recomputes](Context& c) {
+  auto observer = ctx.computed<std::uint64_t>([passthrough, recomputes](Compute& c) {
     ++*recomputes;
     return c.get(passthrough);
   });

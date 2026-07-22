@@ -15,8 +15,8 @@ using Epoch = int64_t;
 
 struct SlotId {
   uint64_t value;
-  // constexpr so SlotId is a literal type — lets the engine name a compile-time
-  // sentinel (the `kNoTrack` untracked-barrier frame, #lzcellkernel).
+  // constexpr so SlotId is a literal type — usable in constant expressions and
+  // compile-time sentinels (#lzcellkernel).
   constexpr SlotId() : value(0) {}
   explicit constexpr SlotId(uint64_t v) : value(v) {}
   constexpr bool operator==(const SlotId& o) const { return value == o.value; }

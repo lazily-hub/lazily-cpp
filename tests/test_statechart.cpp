@@ -68,7 +68,7 @@ TEST(test_state_machine_reactive) {
     [](const int& s, const std::string&) -> std::optional<int> {
       return s + 1;
     });
-  auto doubled = ctx.computed<int>([&](Context& c) {
+  auto doubled = ctx.computed<int>([&](Compute& c) {
     return c.get(m.state_handle()) * 2;
   });
   assert(ctx.get(doubled) == 0);
@@ -293,7 +293,7 @@ TEST(test_chart_reactive) {
   std::unordered_map<std::string, bool> guards;
 
   bool is_on = false;
-  ctx.effect_void([&](Context& c) {
+  ctx.effect_void([&](Compute& c) {
     is_on = chart.matches(c, "on");
   });
   assert(!is_on);

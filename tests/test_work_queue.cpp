@@ -14,12 +14,12 @@ struct WorkQueueReaders {
 
   WorkQueueReaders(Context &context, WorkQueueCell<std::string> &queue)
       : ctx(context), pending(ctx.computed<size_t>(
-                          [&](Context &c) { return queue.pending_len(c); })),
-        empty(ctx.computed<bool>([&](Context &c) { return queue.is_empty(c); })),
+                          [&](Compute &c) { return queue.pending_len(c); })),
+        empty(ctx.computed<bool>([&](Compute &c) { return queue.is_empty(c); })),
         in_flight(ctx.computed<size_t>(
-            [&](Context &c) { return queue.in_flight_len(c); })),
+            [&](Compute &c) { return queue.in_flight_len(c); })),
         dead(ctx.computed<size_t>(
-            [&](Context &c) { return queue.dead_letter_len(c); })) {
+            [&](Compute &c) { return queue.dead_letter_len(c); })) {
     refresh();
   }
 

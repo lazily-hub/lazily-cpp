@@ -502,12 +502,13 @@ class ContextImpl {
  public:
   using AnyValue = typename Traits::AnyValue;
   using Compute = ComputeImpl<Traits>;
-  // The stored compute/effect closures now receive the fortified `Compute` view
-  // (value-threaded tracking), NOT the ambient `ContextImpl&` (#lzcellkernel).
-  // The two authoring shapes are bridged at construction (`slot_with_equals` /
-  // `effect`): a closure that takes `Compute&` is the primary, value-threaded
-  // surface; a closure that takes `ContextImpl&` (every pre-existing cell/kernel
-  // closure) is adapted onto the narrow ambient bridge — see `slot_with_equals`.
+  // The stored compute/effect closures receive the fortified `Compute` view
+  // (value-threaded tracking) as their SOLE tracking surface, NOT the ambient
+  // `ContextImpl&` (#lzcellkernel). A closure authored as `(Compute&)` or a
+  // generic `(auto&)` binds the value-threaded view directly; a closure that
+  // takes a raw `Context&` no longer tracks and is rejected by a `static_assert`
+  // at construction (`slot_with_equals` / `effect`). The ambient tracking stack
+  // is deleted — `ContextImpl` is now purely the untracked read surface.
   using ComputeFn = SmallFn<AnyValue(Compute&)>;
   // Non-atomic ref counting for the compute/effect closures (≈ Rust Rc).
   // Safe: Context is single-threaded; ThreadSafeContext guards it with a mutex.
@@ -617,8 +618,6 @@ class ContextImpl {
   // `get_cell`/`set_cell`) all funnel through these.
   template <typename T>
   T read_cell(SlotId id) {
-    if (auto parent = current_tracking_frame())
-      register_dependency(id, *parent);
     auto* cell = get_cell_node(id);
     if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
@@ -627,8 +626,6 @@ class ContextImpl {
 
   template <typename T>
   std::shared_ptr<T> read_cell_rc(SlotId id) {
-    if (auto parent = current_tracking_frame())
-      register_dependency(id, *parent);
     auto* cell = get_cell_node(id);
     if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
@@ -637,8 +634,6 @@ class ContextImpl {
 
   template <typename T>
   std::shared_ptr<T> read_slot_rc(SlotId id) {
-    if (auto parent = current_tracking_frame())
-      register_dependency(id, *parent);
     refresh_slot(id);
     auto* slot = get_slot_node(id);
     if (!slot) throw DisposedError();
@@ -764,14 +759,12 @@ class ContextImpl {
   Effect effect(F&& run) {
     auto id = alloc_id();
     EffectNode node;
+    static_assert(std::is_invocable_v<F&, Compute&>,
+                  "#lzcellkernel: an effect closure must run through the "
+                  "value-threaded Compute view — take (Compute&) or (auto&), "
+                  "not (Context&). The ambient tracking bridge is deleted.");
     auto run_fn = EffectFn([f = std::forward<F>(run)](Compute& cv) -> CleanupFn {
-      if constexpr (std::is_invocable_v<F&, Compute&>) {
-        return f(cv);  // fortified: effect tracks through its compute view
-      } else {
-        ContextImpl* c = &cv.untracked();
-        TrackingFrame frame(c, cv.node());
-        return f(*c);  // ambient bridge
-      }
+      return f(cv);  // fortified: effect tracks through its compute view
     });
     node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
                            typename EffectFnPtr::adopt_t{});
@@ -786,16 +779,13 @@ class ContextImpl {
   Effect effect_void(F&& run) {
     auto id = alloc_id();
     EffectNode node;
+    static_assert(std::is_invocable_v<F&, Compute&>,
+                  "#lzcellkernel: an effect closure must run through the "
+                  "value-threaded Compute view — take (Compute&) or (auto&), "
+                  "not (Context&). The ambient tracking bridge is deleted.");
     auto run_fn = EffectFn([f = std::forward<F>(run)](Compute& cv) -> CleanupFn {
-      if constexpr (std::is_invocable_v<F&, Compute&>) {
-        f(cv);
-        return CleanupFn{};
-      } else {
-        ContextImpl* c = &cv.untracked();
-        TrackingFrame frame(c, cv.node());
-        f(*c);
-        return CleanupFn{};
-      }
+      f(cv);
+      return CleanupFn{};
     });
     node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
                            typename EffectFnPtr::adopt_t{});
@@ -1062,7 +1052,7 @@ class ContextImpl {
     // AFTER, re-fetching the node.
     auto slot_handle = Computed<T>(id);
     Effect eff = effect_void(
-        [slot_handle](ContextImpl& ctx) { ctx.template get_rc<T>(slot_handle); });
+        [slot_handle](Compute& ctx) { ctx.template get_rc<T>(slot_handle); });
     if (auto* slot = get_slot_node(id)) slot->eager = true;
     eager_by_[id.value] = eff.id.value;
   }
@@ -1176,7 +1166,6 @@ class ContextImpl {
   BatchSet batched_cells_;
   BatchSet batched_cell_clears_;
   BatchSet batched_slots_;
-  std::vector<SlotId> tracking_stack_;
   // Per-node generation stamp (see `node_generation`/`bump_generation`). Grows
   // lazily; only ever touched by a dispose or by a `Compute`'s tracked read.
   std::vector<uint32_t> generations_;
@@ -1304,32 +1293,6 @@ class ContextImpl {
     nodes_[*idx] = std::move(node);
   }
 
-  // ── Ambient tracking bridge + untracked barrier (#lzcellkernel) ──
-  //
-  // Primary dependency tracking is value-threaded through `ComputeImpl` and
-  // touches this stack not at all. The stack survives ONLY as the narrow
-  // compatibility bridge for the pre-existing `Fn(ContextImpl&)` compute/effect
-  // closures — the shape shared with the ThreadSafe/Async contexts, exactly as
-  // lazily-rs keeps a thread-local frame for its `SyncReactiveGraph` closures.
-  //
-  // The engine pushes a `kNoTrack` BARRIER around every recompute, so that a
-  // value-threaded closure's `Compute::untracked()` reads (which route through
-  // this ambient surface) attribute to nothing even when nested inside an
-  // ambient-bridge recompute whose real frame is further down the stack. A
-  // bridge closure then pushes its own REAL frame on top of the barrier for the
-  // duration of `f(ctx)`, so its ambient reads track correctly.
-  static constexpr SlotId kNoTrack{UINT64_MAX};
-
-  std::optional<SlotId> current_tracking_frame() {
-    if (tracking_stack_.empty()) return std::nullopt;
-    SlotId top = tracking_stack_.back();
-    if (top == kNoTrack) return std::nullopt;  // untracked barrier
-    return top;
-  }
-
-  void push_tracking_frame(SlotId id) { tracking_stack_.push_back(id); }
-  void pop_tracking_frame() { tracking_stack_.pop_back(); }
-
   // ── Node generation stamps (#lzcellkernel fortification) ──
   //
   // A `Compute` captures the recomputing node's generation at construction and
@@ -1348,26 +1311,6 @@ class ContextImpl {
     if (*idx >= generations_.size()) generations_.resize(*idx + 1, 0);
     ++generations_[*idx];
   }
-
-  // Balances the tracking stack on the unwind path (#lzspecedgeindex).
-  //
-  // A compute or effect body that reads a disposed node throws DisposedError,
-  // and that throw travels through the recompute. With a bare push/pop pair the
-  // frame would be stranded on the stack and every later read in the context
-  // would register its dependency against a dead node — a corrupted graph
-  // arising from an error the spec says callers may recover from. lazily-rs
-  // has the same bare pair and works around it by catching inside the callback
-  // and setting a poison flag; C++ has destructors, so the fix belongs here
-  // rather than in every caller.
-  struct TrackingFrame {
-    ContextImpl* ctx;
-    explicit TrackingFrame(ContextImpl* c, SlotId id) : ctx(c) {
-      ctx->push_tracking_frame(id);
-    }
-    ~TrackingFrame() { ctx->pop_tracking_frame(); }
-    TrackingFrame(const TrackingFrame&) = delete;
-    TrackingFrame& operator=(const TrackingFrame&) = delete;
-  };
 
   void register_dependency(SlotId dependency_id, SlotId dependent_id) {
     if (dependency_id == dependent_id) return;
@@ -1448,20 +1391,16 @@ class ContextImpl {
 #ifndef NDEBUG
     node.type_id = std::type_index(typeid(T));
 #endif
+    // The closure reads through the value-threaded Compute view, so every edge
+    // attributes to `cv.node()`. This is the sole tracking surface — a closure
+    // that takes a raw `Context&` no longer tracks and is rejected here.
+    static_assert(std::is_invocable_v<F&, Compute&>,
+                  "#lzcellkernel: a compute closure must read through the "
+                  "value-threaded Compute view — take (Compute&) or (auto&), "
+                  "not (Context&). The ambient tracking bridge is deleted.");
     auto compute_fn =
         ComputeFn([f = std::forward<F>(compute)](Compute& cv) -> AnyValue {
-          if constexpr (std::is_invocable_v<F&, Compute&>) {
-            // Primary, fortified path: the closure reads through the value-
-            // threaded compute view, so every edge attributes to `cv.node()`.
-            return Traits::template make<T>(f(cv));
-          } else {
-            // Compatibility bridge for a pre-existing `Fn(ContextImpl&)` closure:
-            // push the real ambient frame for the recomputing node (on top of
-            // the engine's untracked barrier), then run against the raw context.
-            ContextImpl* c = &cv.untracked();
-            TrackingFrame frame(c, cv.node());
-            return Traits::template make<T>(f(*c));
-          }
+          return Traits::template make<T>(f(cv));
         });
     node.compute = ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)),
                                  typename ComputeFnPtr::adopt_t{});
@@ -1486,8 +1425,6 @@ class ContextImpl {
 
   template <typename T>
   T get_slot(SlotId id) {
-    if (auto parent = current_tracking_frame())
-      register_dependency(id, *parent);
     refresh_slot(id);
     auto* slot = get_slot_node(id);
     if (!slot) throw DisposedError();
@@ -1583,9 +1520,8 @@ class ContextImpl {
 
     AnyValue result;
     {
-      // Untracked barrier under the compute: value-threaded reads track via the
-      // Compute view; any ambient (untracked) read attributes to nothing.
-      TrackingFrame barrier(this, kNoTrack);
+      // Value-threaded tracking: reads through the Compute view register an edge
+      // against `id`; reads through the owning context register none.
       Compute cv(*this, id, node_generation(id));
       result = (*compute).value(cv);
     }
@@ -1809,7 +1745,6 @@ class ContextImpl {
 
     CleanupFn next_cleanup;
     {
-      TrackingFrame barrier(this, kNoTrack);
       Compute cv(*this, id, node_generation(id));
       next_cleanup = (*run).value(cv);
     }

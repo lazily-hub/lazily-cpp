@@ -36,7 +36,7 @@ template <typename Ctx>
 static void run_reads(const char* /*name*/) {
   Ctx ctx;
   auto cell = ctx.source(42);
-  auto slot = ctx.template slot<int>([&](Context& c) { return c.get(cell) * 2; });
+  auto slot = ctx.template slot<int>([&](Compute& c) { return c.get(cell) * 2; });
   (void)ctx.get(slot);
 
   std::atomic<int> bad{0};

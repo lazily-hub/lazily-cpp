@@ -79,7 +79,8 @@ struct MapHandleTraits<Source<V>> {
     return ctx.template source<V>(compute(ctx));
   }
 
-  static V observe(const Source<V>& h, Context& ctx) {
+  template <typename Cx>
+  static V observe(const Source<V>& h, Cx& ctx) {
     return ctx.get(h);
   }
 
@@ -100,7 +101,8 @@ struct MapHandleTraits<Computed<V>> {
     return ctx.template slot<V>(std::forward<Compute>(compute));
   }
 
-  static V observe(const Computed<V>& h, Context& ctx) { return ctx.get(h); }
+  template <typename Cx>
+  static V observe(const Computed<V>& h, Cx& ctx) { return ctx.get(h); }
 
   static void clear_dependents(const Computed<V>& h, Context& ctx) {
     h.clear(ctx);
@@ -158,7 +160,7 @@ class ReactiveMap {
     if (it != inner_->entries.end()) return Traits::observe(it->second, ctx);
     K k = key;
     H handle =
-        mint_with(ctx, key, [factory, k](Context&) -> V { return factory(k); });
+        mint_with(ctx, key, [factory, k](auto&) -> V { return factory(k); });
     return Traits::observe(handle, ctx);
   }
 
@@ -170,7 +172,8 @@ class ReactiveMap {
   }
 
   // Read the value at `key` if present. Reactive on that entry only.
-  std::optional<V> get(Context& ctx, const K& key) {
+  template <typename Cx>
+  std::optional<V> get(Cx& ctx, const K& key) {
     auto it = inner_->entries.find(key);
     if (it == inner_->entries.end()) return std::nullopt;
     return Traits::observe(it->second, ctx);
@@ -194,7 +197,8 @@ class ReactiveMap {
   // Reactive snapshot of the keys in their current order. Subscribes the caller
   // to order changes (add/remove and move/reorder), not to per-entry value
   // changes.
-  std::vector<K> keys(Context& ctx) {
+  template <typename Cx>
+  std::vector<K> keys(Cx& ctx) {
     (void)ctx.get(inner_->order_signal);
     return inner_->order;
   }
@@ -256,17 +260,20 @@ class ReactiveMap {
   }
 
   // Reactive entry count. Subscribes the caller to membership changes only.
-  size_t len(Context& ctx) {
+  template <typename Cx>
+  size_t len(Cx& ctx) {
     (void)ctx.get(inner_->membership);
     return inner_->order.size();
   }
 
   // Reactive emptiness check. Subscribes the caller to membership changes.
-  bool is_empty(Context& ctx) { return len(ctx) == 0; }
+  template <typename Cx>
+  bool is_empty(Cx& ctx) { return len(ctx) == 0; }
 
   // Reactive membership test for `key`. Subscribes the caller to membership
   // changes (add/remove of any key), not to value changes.
-  bool contains_key(Context& ctx, const K& key) {
+  template <typename Cx>
+  bool contains_key(Cx& ctx, const K& key) {
     (void)ctx.get(inner_->membership);
     return inner_->entries.count(key) > 0;
   }
@@ -284,8 +291,13 @@ class ReactiveMap {
   // Mint the entry node for `key` (via `Traits::materialize`) on first access,
   // caching the handle and bumping reactive membership. Re-minting an existing
   // key returns the cached handle.
-  H mint_with(Context& ctx, const K& key,
-              std::function<V(Context&)> compute) {
+  //
+  // `compute` is a generic `(auto&)` value factory. For a `SlotMap` it is
+  // stored as the derived slot's recompute (invoked with a `Compute&`, the
+  // value-threaded tracking surface — `#lzcellkernel`); for a `CellMap` it is
+  // evaluated once eagerly against the `Context&` to seed the input cell.
+  template <typename ComputeFn>
+  H mint_with(Context& ctx, const K& key, ComputeFn compute) {
     auto it = inner_->entries.find(key);
     if (it != inner_->entries.end()) return it->second;  // warm.
     H handle = Traits::materialize(ctx, compute);
@@ -328,7 +340,7 @@ class CellMap : public ReactiveMap<K, V, Source<V>> {
     auto h = this->handle(key);
     if (h) return *h;
     V value = default_fn();
-    return this->mint_with(ctx, key, [value](Context&) -> V { return value; });
+    return this->mint_with(ctx, key, [value](auto&) -> V { return value; });
   }
 
   // Return the value cell for `key`, minting it with `default_val` on first

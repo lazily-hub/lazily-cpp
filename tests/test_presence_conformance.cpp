@@ -53,7 +53,7 @@ TEST(test_presence) {
   PresenceCell<uint64_t, std::string> cell(ctx, ttl);
   auto pc = cell.present_cell();
   auto observed =
-      ctx.computed<PresenceMap>([pc](Context& c) { return c.get(pc); });
+      ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
   (void)ctx.get(observed);  // prime the observer cache
 
   auto step = [&](PresenceMap want, bool invalidates) {
@@ -90,7 +90,7 @@ TEST(test_awareness) {
   AwarenessCell<uint64_t, std::string> cell(ctx, ttl);
   auto pc = cell.present_cell();
   auto observed =
-      ctx.computed<PresenceMap>([pc](Context& c) { return c.get(pc); });
+      ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
   (void)ctx.get(observed);
 
   auto step = [&](PresenceMap want, bool invalidates) {
@@ -129,7 +129,7 @@ TEST(test_ephemeral) {
   EphemeralCell<std::string> cell(ctx);
   auto vc = cell.value_cell();
   auto observed = ctx.computed<std::optional<std::string>>(
-      [vc](Context& c) { return c.get(vc); });
+      [vc](Compute& c) { return c.get(vc); });
   (void)ctx.get(observed);
 
   auto step = [&](std::optional<std::string> want, bool invalidates) {

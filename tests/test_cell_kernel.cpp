@@ -83,7 +83,7 @@ TEST(test_formula_reads_upstream_guarded) {
   Source<long long> n = ctx.source<long long>(2);
   int computes = 0;
   Computed<long long> doubled =
-      ctx.computed<long long>([n, &computes](Context& c) {
+      ctx.computed<long long>([n, &computes](Compute& c) {
         ++computes;
         return n.get(c) * 2;
       });
@@ -120,7 +120,7 @@ TEST(test_drive_is_eager_and_idempotent) {
   Context ctx;
   Source<long long> n = ctx.source<long long>(1);
   int computes = 0;
-  Computed<long long> f = ctx.computed<long long>([n, &computes](Context& c) {
+  Computed<long long> f = ctx.computed<long long>([n, &computes](Compute& c) {
     ++computes;
     return n.get(c) + 100;
   });
@@ -153,7 +153,7 @@ TEST(test_drive_coalesces_in_a_batch) {
   Context ctx;
   Source<long long> n = ctx.source<long long>(0);
   int computes = 0;
-  Computed<long long> f = ctx.computed<long long>([n, &computes](Context& c) {
+  Computed<long long> f = ctx.computed<long long>([n, &computes](Compute& c) {
     ++computes;
     return n.get(c);
   });
@@ -176,7 +176,7 @@ TEST(test_dispose_driven_formula_tears_down_puller) {
   Context ctx;
   Source<long long> n = ctx.source<long long>(1);
   Computed<long long> f =
-      ctx.computed<long long>([n](Context& c) { return n.get(c); });
+      ctx.computed<long long>([n](Compute& c) { return n.get(c); });
   f.eager(ctx);
   REQUIRE(f.is_eager(ctx), "driven before dispose");
   f.dispose(ctx);

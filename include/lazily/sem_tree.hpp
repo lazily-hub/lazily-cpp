@@ -105,7 +105,7 @@ class SemTree {
     auto child_keys_cell = node->child_keys_cell;
     auto fold = fold_;
 
-    return ctx_.computed<D>([=](Context& ctx) -> D {
+    return ctx_.computed<D>([=](Compute& ctx) -> D {
       (void)ctx.get(child_keys_cell);
       V val = ctx.get(value_cell);
       std::vector<D> child_vals;

@@ -38,7 +38,7 @@ TEST(test_cellmap_membership_reactive) {
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
-  auto count = ctx.computed<int>([&](Context& c) {
+  auto count = ctx.computed<int>([&](Compute& c) {
     return (int)map.len(c);
   });
   assert(ctx.get(count) == 2);
@@ -59,7 +59,7 @@ TEST(test_cellmap_per_entry_independent) {
   auto a = map.entry(ctx, "a", 1);
   auto b = map.entry(ctx, "b", 2);
 
-  auto view_a = ctx.computed<int>([&](Context& c) {
+  auto view_a = ctx.computed<int>([&](Compute& c) {
     return map.get(c, "a").value_or(0) * 10;
   });
   assert(ctx.get(view_a) == 10);
@@ -93,10 +93,10 @@ TEST(test_cellmap_pure_move_spares_membership) {
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
 
-  auto count = ctx.computed<int>([&](Context& c) {
+  auto count = ctx.computed<int>([&](Compute& c) {
     return (int)map.len(c);
   });
-  auto has_b = ctx.computed<bool>([&](Context& c) {
+  auto has_b = ctx.computed<bool>([&](Compute& c) {
     return map.contains_key(c, "b");
   });
   ctx.get(count);
@@ -202,7 +202,7 @@ TEST(test_reconcile_apply_to_map) {
 
   auto a_handle = map.handle("a").value();
 
-  auto a_view = ctx.computed<int>([&](Context& c) {
+  auto a_view = ctx.computed<int>([&](Compute& c) {
     return map.get(c, "a").value_or(0) * 100;
   });
   assert(ctx.get(a_view) == 100);

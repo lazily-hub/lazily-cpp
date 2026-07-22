@@ -125,7 +125,7 @@ TEST(untracked_barrier_holds_under_nesting) {
 
   // Legacy Context& closure — exercised via the ambient bridge.
   auto outer = ctx.computed<int>(
-      [inner, src](Context& c) { return inner.get(c) + src.get(c); });
+      [inner, src](Compute& c) { return inner.get(c) + src.get(c); });
 
   REQUIRE(outer.get(ctx) == 101, "outer composed inner + src");
   REQUIRE(ctx.dependent_count(leak) == 0,

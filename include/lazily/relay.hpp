@@ -120,13 +120,13 @@ class RelayCell {
     auto head = head_;
     auto high_water = policy_.high_water;
     depth_ = ctx.computed<std::uint64_t>(
-        [pending](Context& c) { return c.get(pending); });
+        [pending](Compute& c) { return c.get(pending); });
     auto depth = depth_;
-    is_full_ = ctx.computed<bool>([depth, high_water](Context& c) {
+    is_full_ = ctx.computed<bool>([depth, high_water](Compute& c) {
       return c.get(depth) >= c.get(high_water);
     });
     is_empty_ = ctx.computed<bool>(
-        [head](Context& c) { return !c.get(head).has_value(); });
+        [head](Compute& c) { return !c.get(head).has_value(); });
   }
 
   /// Whether the current overflow choice is legal for `Policy` — a runtime guard

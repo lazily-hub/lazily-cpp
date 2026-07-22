@@ -440,7 +440,8 @@ struct World {
   // the dependency edge. That edge registration is the whole point of the
   // transitive fixture: a chain that does not register at depth stops
   // refreshing there.
-  long long read_ref(Context& c, const Ref& ref) {
+  template <typename Cx>
+  long long read_ref(Cx& c, const Ref& ref) {
     switch (ref.kind) {
       case Kind::Cell:
         return c.get(Source<long long>(ref.id));
@@ -558,7 +559,7 @@ void dispose_ref(World& w, const Ref& ref) {
 auto counting_body(World& w, const std::string& id, std::vector<Ref> sources,
                    long long offset) {
   World* wp = &w;
-  return [wp, id, sources, offset](Context& c) -> long long {
+  return [wp, id, sources, offset](Compute& c) -> long long {
     ++wp->computes[id];
     long long sum = offset;
     for (const auto& source : sources) sum += wp->read_ref(c, source);
@@ -593,7 +594,7 @@ Effect make_effect(World& w, const std::string& name,
   World* wp = &w;
   w.names.push_back(name);
   const std::string* np = &w.names.back();
-  auto body = [wp, sources, np](Context& c) -> CleanupFn {
+  auto body = [wp, sources, np](Compute& c) -> CleanupFn {
     for (const auto& source : sources) {
       // A publish that reaches an effect whose source is gone is not what any
       // fixture asserts on, and it must not abort the replay.

@@ -100,7 +100,7 @@ TEST(test_reactive_readers_via_effect) {
   auto r = make_relay<Sum>(ctx, 2);
   auto is_full = r.is_full();
   int fulls = 0;
-  ctx.effect([&, is_full](Context& c) -> CleanupFn {
+  ctx.effect([&, is_full](Compute& c) -> CleanupFn {
     if (c.get(is_full)) ++fulls;
     return {};
   });

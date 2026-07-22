@@ -64,7 +64,7 @@ TEST(test_thread_safe_multi_thread) {
 TEST(test_thread_safe_concurrent_reads) {
   ThreadSafeContext ctx;
   auto cell = ctx.source(12345);
-  auto slot = ctx.slot<int>([&](Context& c) { return c.get(cell) * 2; });
+  auto slot = ctx.slot<int>([&](Compute& c) { return c.get(cell) * 2; });
   (void)ctx.get(slot);  // prime cache
 
   std::atomic<int> bad{0};
@@ -87,8 +87,9 @@ TEST(test_thread_safe_concurrent_reads) {
 TEST(test_thread_safe_reentrant_callback) {
   ThreadSafeContext ctx;
   auto base = ctx.source(7);
-  auto derived = ctx.slot<int>([&](Context&) {
-    return ctx.get(base) + 1;  // re-entrant wrapper call
+  auto derived = ctx.slot<int>([&](Compute& c) {
+    (void)ctx.get(base);      // re-entrant wrapper call must not deadlock
+    return c.get(base) + 1;   // value-threaded tracking read (#lzcellkernel)
   });
   assert(ctx.get(derived) == 8);
   ctx.set(base, 40);

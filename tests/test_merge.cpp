@@ -91,8 +91,8 @@ TEST(test_idempotent_merge_no_ops_via_guard) {
   Context ctx;
   MergeCell<long, Max> mc(ctx, 10);
   int runs = 0;
-  ctx.effect([&](Context&) -> CleanupFn {
-    (void)mc.get();
+  ctx.effect([&](Compute& c) -> CleanupFn {
+    (void)mc.get(c);
     ++runs;
     return {};
   });

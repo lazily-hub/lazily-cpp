@@ -74,7 +74,7 @@ struct ThreadSafeMapHandleTraits<Computed<V>> {
                                    const std::function<V(const K&)>& factory) {
     K k = key;
     return ctx.template computed<V>(
-        [factory, k](Context&) -> V { return factory(k); });
+        [factory, k](auto&) -> V { return factory(k); });
   }
 
   static V observe(const Computed<V>& h, ThreadSafeContext& ctx) {
