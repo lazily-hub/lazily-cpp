@@ -15,11 +15,13 @@ using Epoch = int64_t;
 
 struct SlotId {
   uint64_t value;
-  SlotId() : value(0) {}
-  explicit SlotId(uint64_t v) : value(v) {}
-  bool operator==(const SlotId& o) const { return value == o.value; }
-  bool operator!=(const SlotId& o) const { return value != o.value; }
-  bool operator<(const SlotId& o) const { return value < o.value; }
+  // constexpr so SlotId is a literal type — lets the engine name a compile-time
+  // sentinel (the `kNoTrack` untracked-barrier frame, #lzcellkernel).
+  constexpr SlotId() : value(0) {}
+  explicit constexpr SlotId(uint64_t v) : value(v) {}
+  constexpr bool operator==(const SlotId& o) const { return value == o.value; }
+  constexpr bool operator!=(const SlotId& o) const { return value != o.value; }
+  constexpr bool operator<(const SlotId& o) const { return value < o.value; }
 };
 
 inline constexpr int kProtocolVersion = 1;

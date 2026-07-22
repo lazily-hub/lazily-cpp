@@ -34,6 +34,22 @@ add_executable(test_computed_ripple_when test_computed_ripple_when.cpp)
 target_link_libraries(test_computed_ripple_when PRIVATE lazily)
 add_test(NAME computed_ripple_when COMMAND test_computed_ripple_when)
 
+# The fortified compute view (`#lzcellkernel`): value-threaded tracking, the
+# untracked escape, effect tracking, the nesting barrier, and the non-copyable
+# static_asserts. Mirrors lazily-rs tests/compute_fortification.rs.
+add_executable(compute_fortification compute_fortification.cpp)
+target_link_libraries(compute_fortification PRIVATE lazily)
+add_test(NAME compute_fortification COMMAND compute_fortification)
+
+# Compile-fail proof: a `Compute` view must NOT be copyable (non-escapable).
+# WILL_FAIL — a successful build fails the test (fortification lost).
+add_executable(compile_fail_compute_escape EXCLUDE_FROM_ALL compile_fail_compute_escape.cpp)
+target_link_libraries(compile_fail_compute_escape PRIVATE lazily)
+add_test(NAME compute_escape_is_a_compile_error
+  COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+          --target compile_fail_compute_escape --config $<CONFIG>)
+set_tests_properties(compute_escape_is_a_compile_error PROPERTIES WILL_FAIL TRUE)
+
 # Compile-fail proof: `formula.set(...)` must NOT compile. Built on demand and
 # asserted to FAIL — a successful build fails the test (write protection lost).
 add_executable(compile_fail_formula_set EXCLUDE_FROM_ALL compile_fail_formula_set.cpp)

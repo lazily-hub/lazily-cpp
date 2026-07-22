@@ -84,22 +84,27 @@ class Source {
   SlotId id() const { return id_; }
 
   // Read the current converged value, registering a dependency in a computation.
-  // Routes through the unified `Context::get` (`#lzcellkernel`).
-  T get(Context& ctx) const { return ctx.get(*this); }
+  // Genericized over the `ComputeOps` surface (`#lzcellkernel`): `cx` may be a
+  // `Context` (untracked) or a `Compute` (tracks against the recomputing node).
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  T get(C& cx) const { return cx.get(*this); }
 
-  std::shared_ptr<T> get_rc(Context& ctx) const { return ctx.get_rc(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  std::shared_ptr<T> get_rc(C& cx) const { return cx.get_rc(*this); }
 
   // Replace the value outright (the keep-latest write). Only a `Source` has
   // this — `computed.set(...)` does not compile. Routes through the unified
-  // `Context::set`.
-  void set(Context& ctx, T value) const { ctx.set(*this, std::move(value)); }
+  // `set` on either compute-ops surface.
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  void set(C& cx, T value) const { cx.set(*this, std::move(value)); }
 
   // Fold `op` into the current value under policy `M`. For `KeepLatest` this is
   // a replace (`Source ≡ Source<T, KeepLatest>`). Routes through the ==-guarded
   // unified `set`, so an idempotent policy's no-op merge fires no cascade.
-  void merge(Context& ctx, T op) const {
-    T old = ctx.peek_cell(*this).value();
-    ctx.set(*this, M::template merge<T>(old, std::move(op)));
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  void merge(C& cx, T op) const {
+    T old = cx.peek_cell(*this).value();
+    cx.set(*this, M::template merge<T>(old, std::move(op)));
   }
 
   // The policy-erased keep-latest view of this cell, for wiring derived readers
@@ -114,7 +119,8 @@ class Source {
   }
 
   // Tear this source down (detaches dependents, recycles the id). Kind-checked.
-  void dispose(Context& ctx) const { ctx.dispose_cell(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  void dispose(C& cx) const { cx.dispose_cell(*this); }
 
   bool operator==(const Source& o) const { return id_ == o.id_; }
   bool operator!=(const Source& o) const { return !(*this == o); }
@@ -140,11 +146,14 @@ class Computed {
   SlotId id() const { return id_; }
 
   // Read the current value, registering a dependency inside a computation.
-  // Routes through the unified `Context::get` (`#lzcellkernel`).
-  T get(Context& ctx) const { return ctx.get(*this); }
+  // Genericized over the `ComputeOps` surface (`#lzcellkernel`): tracked through
+  // a `Compute`, untracked through a `Context`.
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  T get(C& cx) const { return cx.get(*this); }
 
   // Read the current value as a shared_ptr, avoiding a deep clone.
-  std::shared_ptr<T> get_rc(Context& ctx) const { return ctx.get_rc(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  std::shared_ptr<T> get_rc(C& cx) const { return cx.get_rc(*this); }
 
   // Transition this computed cell to **eager**: attach a puller `Effect` that
   // re-materializes it after every invalidation. Idempotent (a second `eager`
@@ -171,7 +180,8 @@ class Computed {
 
   // Tear this computed cell down (detaches edges, tears down its puller if
   // eager, recycles the id). Kind-checked: a stale/recycled id is a no-op.
-  void dispose(Context& ctx) const { ctx.dispose_slot(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
+  void dispose(C& cx) const { cx.dispose_slot(*this); }
 
   bool operator==(const Computed& o) const { return id_ == o.id_; }
   bool operator!=(const Computed& o) const { return !(*this == o); }

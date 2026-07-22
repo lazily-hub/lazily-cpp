@@ -7,10 +7,12 @@
 #include <lazily/rc_ptr.hpp>
 
 #include <cassert>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
@@ -25,6 +27,32 @@ class ContextImpl;
 
 template <typename Traits = RcTraits>
 class TeardownScopeImpl;
+
+// The fortified per-recompute compute view (defined below, after ContextImpl).
+// It carries the recomputing node id AS A VALUE and is the sole tracking-read
+// surface passed to every compute/effect closure (#lzcellkernel, spec
+// cell-model.md §"Dependency tracking (the fortified compute view)").
+template <typename Traits = RcTraits>
+class ComputeImpl;
+
+// ── ComputeOps — the compute-time operations subset (#lzcellkernel) ──
+//
+// The C++17 spelling of lazily-rs's `ComputeOps` trait: the operations subset a
+// compute/effect closure may reach, implemented by exactly two types — the
+// owning `ContextImpl` (ambient / untracked read surface) and the per-recompute
+// `ComputeImpl` view (reads register a dependency edge against the recomputing
+// node). C++17 has no `concept`, so the "concept" is a trait plus `enable_if`:
+// handle methods (`Source::get(cx)` etc.) are genericized over any `C` for which
+// `is_compute_ops_v<C>` holds, so they accept a `Context` or a `Compute` alike.
+template <typename C>
+struct is_compute_ops : std::false_type {};
+template <typename Traits>
+struct is_compute_ops<ContextImpl<Traits>> : std::true_type {};
+template <typename Traits>
+struct is_compute_ops<ComputeImpl<Traits>> : std::true_type {};
+template <typename C>
+inline constexpr bool is_compute_ops_v =
+    is_compute_ops<std::remove_cv_t<std::remove_reference_t<C>>>::value;
 
 // The Cell kernel handles (defined in cell.hpp). Forward declared here so
 // `Context`'s constructor surface (`source`/`computed`) can name the return
@@ -41,6 +69,10 @@ class Computed;
 
 /// Default Context — uses non-atomic RcPtr (≈ Rust Rc).
 using Context = ContextImpl<RcTraits>;
+
+/// Default fortified compute view (≈ lazily-rs `Compute`) — the sole
+/// tracking-read surface handed to a value-threaded compute/effect closure.
+using Compute = ComputeImpl<RcTraits>;
 
 /// Default teardown scope — the RAII handle returned by `Context::scope()`.
 using TeardownScope = TeardownScopeImpl<RcTraits>;
@@ -469,14 +501,21 @@ template <typename Traits>
 class ContextImpl {
  public:
   using AnyValue = typename Traits::AnyValue;
-  using ComputeFn = SmallFn<AnyValue(ContextImpl&)>;
+  using Compute = ComputeImpl<Traits>;
+  // The stored compute/effect closures now receive the fortified `Compute` view
+  // (value-threaded tracking), NOT the ambient `ContextImpl&` (#lzcellkernel).
+  // The two authoring shapes are bridged at construction (`slot_with_equals` /
+  // `effect`): a closure that takes `Compute&` is the primary, value-threaded
+  // surface; a closure that takes `ContextImpl&` (every pre-existing cell/kernel
+  // closure) is adapted onto the narrow ambient bridge — see `slot_with_equals`.
+  using ComputeFn = SmallFn<AnyValue(Compute&)>;
   // Non-atomic ref counting for the compute/effect closures (≈ Rust Rc).
   // Safe: Context is single-threaded; ThreadSafeContext guards it with a mutex.
   // Each slot/effect creation previously paid an atomic control-block via
   // std::shared_ptr; RcPtr<RcBox<...>> drops that to a plain integer inc/dec.
   using ComputeFnPtr = RcPtr<RcBox<ComputeFn>>;
   using EqualsFn = bool (*)(const void*, const void*);
-  using EffectFn = SmallFn<CleanupFn(ContextImpl&)>;
+  using EffectFn = SmallFn<CleanupFn(Compute&)>;
   using EffectFnPtr = RcPtr<RcBox<EffectFn>>;
 
  private:
@@ -554,6 +593,11 @@ class ContextImpl {
   ContextImpl() = default;
   ContextImpl(const ContextImpl&) = delete;
   ContextImpl& operator=(const ContextImpl&) = delete;
+
+  // The fortified compute view reaches `register_dependency` and
+  // `node_generation` to thread tracking by value (#lzcellkernel).
+  template <typename>
+  friend class ComputeImpl;
 
   // -- Derived (Computed) constructors (`#lzcellkernel`) --
   //
@@ -720,8 +764,14 @@ class ContextImpl {
   Effect effect(F&& run) {
     auto id = alloc_id();
     EffectNode node;
-    auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
-      return f(ctx);
+    auto run_fn = EffectFn([f = std::forward<F>(run)](Compute& cv) -> CleanupFn {
+      if constexpr (std::is_invocable_v<F&, Compute&>) {
+        return f(cv);  // fortified: effect tracks through its compute view
+      } else {
+        ContextImpl* c = &cv.untracked();
+        TrackingFrame frame(c, cv.node());
+        return f(*c);  // ambient bridge
+      }
     });
     node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
                            typename EffectFnPtr::adopt_t{});
@@ -736,9 +786,16 @@ class ContextImpl {
   Effect effect_void(F&& run) {
     auto id = alloc_id();
     EffectNode node;
-    auto run_fn = EffectFn([f = std::forward<F>(run)](ContextImpl& ctx) -> CleanupFn {
-      f(ctx);
-      return CleanupFn{};
+    auto run_fn = EffectFn([f = std::forward<F>(run)](Compute& cv) -> CleanupFn {
+      if constexpr (std::is_invocable_v<F&, Compute&>) {
+        f(cv);
+        return CleanupFn{};
+      } else {
+        ContextImpl* c = &cv.untracked();
+        TrackingFrame frame(c, cv.node());
+        f(*c);
+        return CleanupFn{};
+      }
     });
     node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
                            typename EffectFnPtr::adopt_t{});
@@ -766,6 +823,7 @@ class ContextImpl {
       remove_pending_effect(handle.id);
       old_deps = std::move(eff->dependencies);
       cleanup = std::move(eff->cleanup);
+      bump_generation(handle.id);
       nodes_[*idx] = EmptyNode{};
       free_ids_.push_back(handle.id.value);
     }
@@ -1119,6 +1177,9 @@ class ContextImpl {
   BatchSet batched_cell_clears_;
   BatchSet batched_slots_;
   std::vector<SlotId> tracking_stack_;
+  // Per-node generation stamp (see `node_generation`/`bump_generation`). Grows
+  // lazily; only ever touched by a dispose or by a `Compute`'s tracked read.
+  std::vector<uint32_t> generations_;
 
   static std::optional<size_t> node_index(SlotId id) {
     if (id.value > static_cast<uint64_t>(SIZE_MAX)) return std::nullopt;
@@ -1212,6 +1273,7 @@ class ContextImpl {
     // Clear the node last: it owns the compute closure, and anything that
     // closure captured is destroyed here.
     auto idx = node_index(id);
+    bump_generation(id);  // a Compute stamped at the old generation stops tracking
     nodes_[*idx] = EmptyNode{};
     free_ids_.push_back(id.value);
   }
@@ -1229,6 +1291,7 @@ class ContextImpl {
     for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);
     invalidate_disposed_dependents(dependents);
     auto idx = node_index(id);
+    bump_generation(id);  // a Compute stamped at the old generation stops tracking
     nodes_[*idx] = EmptyNode{};
     free_ids_.push_back(id.value);
   }
@@ -1241,13 +1304,50 @@ class ContextImpl {
     nodes_[*idx] = std::move(node);
   }
 
+  // ── Ambient tracking bridge + untracked barrier (#lzcellkernel) ──
+  //
+  // Primary dependency tracking is value-threaded through `ComputeImpl` and
+  // touches this stack not at all. The stack survives ONLY as the narrow
+  // compatibility bridge for the pre-existing `Fn(ContextImpl&)` compute/effect
+  // closures — the shape shared with the ThreadSafe/Async contexts, exactly as
+  // lazily-rs keeps a thread-local frame for its `SyncReactiveGraph` closures.
+  //
+  // The engine pushes a `kNoTrack` BARRIER around every recompute, so that a
+  // value-threaded closure's `Compute::untracked()` reads (which route through
+  // this ambient surface) attribute to nothing even when nested inside an
+  // ambient-bridge recompute whose real frame is further down the stack. A
+  // bridge closure then pushes its own REAL frame on top of the barrier for the
+  // duration of `f(ctx)`, so its ambient reads track correctly.
+  static constexpr SlotId kNoTrack{UINT64_MAX};
+
   std::optional<SlotId> current_tracking_frame() {
     if (tracking_stack_.empty()) return std::nullopt;
-    return tracking_stack_.back();
+    SlotId top = tracking_stack_.back();
+    if (top == kNoTrack) return std::nullopt;  // untracked barrier
+    return top;
   }
 
   void push_tracking_frame(SlotId id) { tracking_stack_.push_back(id); }
   void pop_tracking_frame() { tracking_stack_.pop_back(); }
+
+  // ── Node generation stamps (#lzcellkernel fortification) ──
+  //
+  // A `Compute` captures the recomputing node's generation at construction and
+  // refuses to register an edge once it changes — the node was disposed (and its
+  // id perhaps recycled) mid-recompute, so an edge against it would misattribute
+  // to an unrelated node. `generations_` is grown lazily and bumped on every
+  // dispose; a never-disposed node stays at generation 0 and pays nothing.
+  uint32_t node_generation(SlotId id) const {
+    auto idx = node_index(id);
+    if (!idx || *idx >= generations_.size()) return 0;
+    return generations_[*idx];
+  }
+  void bump_generation(SlotId id) {
+    auto idx = node_index(id);
+    if (!idx) return;
+    if (*idx >= generations_.size()) generations_.resize(*idx + 1, 0);
+    ++generations_[*idx];
+  }
 
   // Balances the tracking stack on the unwind path (#lzspecedgeindex).
   //
@@ -1349,8 +1449,19 @@ class ContextImpl {
     node.type_id = std::type_index(typeid(T));
 #endif
     auto compute_fn =
-        ComputeFn([f = std::forward<F>(compute)](ContextImpl& ctx) -> AnyValue {
-          return Traits::template make<T>(f(ctx));
+        ComputeFn([f = std::forward<F>(compute)](Compute& cv) -> AnyValue {
+          if constexpr (std::is_invocable_v<F&, Compute&>) {
+            // Primary, fortified path: the closure reads through the value-
+            // threaded compute view, so every edge attributes to `cv.node()`.
+            return Traits::template make<T>(f(cv));
+          } else {
+            // Compatibility bridge for a pre-existing `Fn(ContextImpl&)` closure:
+            // push the real ambient frame for the recomputing node (on top of
+            // the engine's untracked barrier), then run against the raw context.
+            ContextImpl* c = &cv.untracked();
+            TrackingFrame frame(c, cv.node());
+            return Traits::template make<T>(f(*c));
+          }
         });
     node.compute = ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)),
                                  typename ComputeFnPtr::adopt_t{});
@@ -1472,8 +1583,11 @@ class ContextImpl {
 
     AnyValue result;
     {
-      TrackingFrame frame(this, id);
-      result = (*compute).value(*this);
+      // Untracked barrier under the compute: value-threaded reads track via the
+      // Compute view; any ambient (untracked) read attributes to nothing.
+      TrackingFrame barrier(this, kNoTrack);
+      Compute cv(*this, id, node_generation(id));
+      result = (*compute).value(cv);
     }
 
     bool changed;
@@ -1695,8 +1809,9 @@ class ContextImpl {
 
     CleanupFn next_cleanup;
     {
-      TrackingFrame frame(this, id);
-      next_cleanup = (*run).value(*this);
+      TrackingFrame barrier(this, kNoTrack);
+      Compute cv(*this, id, node_generation(id));
+      next_cleanup = (*run).value(cv);
     }
 
     auto* node = get_node(id);
@@ -1750,6 +1865,156 @@ class ContextImpl {
     batched_slots_.order.clear();
     flush_effects();
   }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Compute — the fortified per-recompute compute view (#lzcellkernel)
+//
+// The C++ analog of lazily-rs's `Compute`: dependency tracking is threaded as a
+// VALUE (the recomputing node id), not ambient. A `Compute` is constructed by
+// the engine for one recompute, carries `{context, node, generation}`, and is
+// the SOLE tracking-read surface handed to a value-threaded compute/effect
+// closure. A read through it (`get`/`get_rc`) registers a dependency edge
+// against `node_`; a read through `untracked()` (the owning `Context`) registers
+// none. It implements the same `ComputeOps` operation subset as `Context`
+// (`is_compute_ops` is specialized for it above), so the handle methods
+// (`Source::get(cx)` …) accept a `Compute` or a `Context` interchangeably.
+//
+// ## Fortification (misattribution prevented by construction, not convention)
+//
+// - **Sole tracking surface** — the only way to register an edge from inside a
+//   value-threaded closure is a read on the `Compute`; the untracked escape is
+//   the explicit `untracked()`.
+// - **Non-escapable** — copy, move, AND heap allocation are all deleted, and the
+//   engine only ever creates one as a named local in the recompute frame. It
+//   therefore cannot be copied out, moved out, `new`-ed onto the heap, or
+//   otherwise stored to be replayed against the wrong node after the recompute
+//   ends. This is the C++ spelling of lazily-rs binding it by lifetime + `!Send`.
+//   `tests/compute_fortification.cpp` locks the non-copyability with a
+//   `static_assert`, and `compile_fail_compute_escape.cpp` is a WILL_FAIL build.
+// - **Generation-stamped** — a read after the recomputing node was disposed (and
+//   perhaps its id recycled) mid-recompute registers no edge, so it can never
+//   misattribute to the node that inherited the id.
+// ═══════════════════════════════════════════════════════════════════════════
+
+template <typename Traits>
+class ComputeImpl {
+ public:
+  using ContextType = ContextImpl<Traits>;
+
+  // Constructed by the engine (`recompute_slot_now` / `run_effect`) only.
+  ComputeImpl(ContextType& ctx, SlotId node, uint32_t generation)
+      : ctx_(&ctx), node_(node), gen_(generation) {}
+
+  // Non-escapable by construction — see the fortification note above.
+  ComputeImpl(const ComputeImpl&) = delete;
+  ComputeImpl& operator=(const ComputeImpl&) = delete;
+  ComputeImpl(ComputeImpl&&) = delete;
+  ComputeImpl& operator=(ComputeImpl&&) = delete;
+  static void* operator new(std::size_t) = delete;
+  static void* operator new[](std::size_t) = delete;
+  static void operator delete(void*) = delete;
+  static void operator delete[](void*) = delete;
+
+  /// The explicit untracked escape: the owning context, whose reads register no
+  /// dependency edge (the spec's "reading through the owning context registers
+  /// no edge").
+  ContextType& untracked() const noexcept { return *ctx_; }
+
+  /// The node this view attributes reads to.
+  SlotId node() const noexcept { return node_; }
+
+  // ── Tracked reads (register an edge against `node_`) ──
+  template <typename T, typename M>
+  T get(const Source<T, M>& h) const {
+    track(h.id());
+    return ctx_->get(h);
+  }
+  template <typename T>
+  T get(const Computed<T>& h) const {
+    track(h.id());
+    return ctx_->get(h);
+  }
+  template <typename T, typename M>
+  std::shared_ptr<T> get_rc(const Source<T, M>& h) const {
+    track(h.id());
+    return ctx_->get_rc(h);
+  }
+  template <typename T>
+  std::shared_ptr<T> get_rc(const Computed<T>& h) const {
+    track(h.id());
+    return ctx_->get_rc(h);
+  }
+  template <typename T, typename M>
+  std::optional<T> peek_cell(const Source<T, M>& h) const {
+    return ctx_->peek_cell(h);
+  }
+
+  // ── Untracked compute-time ops (writes/constructors never track) ──
+  template <typename T, typename M>
+  void set(const Source<T, M>& h, T v) const {
+    ctx_->set(h, std::move(v));
+  }
+  template <typename T>
+  Source<T, KeepLatest> source(T v) const {
+    return ctx_->template source<T>(std::move(v));
+  }
+  template <typename M, typename T>
+  Source<T, M> source_with(T v) const {
+    return ctx_->template source_with<M>(std::move(v));
+  }
+  template <typename T, typename F>
+  Computed<T> computed(F&& f) const {
+    return ctx_->template computed<T>(std::forward<F>(f));
+  }
+  template <typename T, typename F, typename C>
+  Computed<T> computed_ripple_when(F&& f, C&& changed) const {
+    return ctx_->template computed_ripple_when<T>(std::forward<F>(f),
+                                                  std::forward<C>(changed));
+  }
+  template <typename T, typename F>
+  Computed<T> slot(F&& f) const {
+    return ctx_->template slot<T>(std::forward<F>(f));
+  }
+  template <typename T, typename F>
+  Computed<T> signal(F&& f) const {
+    return ctx_->template signal<T>(std::forward<F>(f));
+  }
+  template <typename F>
+  Effect effect(F&& f) const {
+    return ctx_->effect(std::forward<F>(f));
+  }
+  template <typename F>
+  Effect effect_void(F&& f) const {
+    return ctx_->effect_void(std::forward<F>(f));
+  }
+  template <typename F>
+  auto batch(F&& f) const {
+    return ctx_->batch(std::forward<F>(f));
+  }
+  template <typename T>
+  void dispose_slot(const Computed<T>& h) const {
+    ctx_->dispose_slot(h);
+  }
+  template <typename T, typename M>
+  void dispose_cell(const Source<T, M>& h) const {
+    ctx_->dispose_cell(h);
+  }
+  void dispose_id(SlotId id) const { ctx_->dispose_id(id); }
+  void dispose_effect(const Effect& h) const { ctx_->dispose_effect(h); }
+
+ private:
+  /// Register a dependency edge `dep -> node_`, unless the recomputing node was
+  /// disposed mid-recompute (its generation moved), in which case an edge would
+  /// misattribute to whatever inherited the id.
+  void track(SlotId dep) const {
+    if (ctx_->node_generation(node_) != gen_) return;
+    ctx_->register_dependency(dep, node_);
+  }
+
+  ContextType* ctx_;
+  SlotId node_;
+  uint32_t gen_;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
