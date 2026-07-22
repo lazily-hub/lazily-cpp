@@ -160,6 +160,10 @@ add_executable(test_lossless_tree_conformance test_lossless_tree_conformance.cpp
 target_link_libraries(test_lossless_tree_conformance PRIVATE lazily)
 add_test(NAME LosslessTreeConformance COMMAND test_lossless_tree_conformance)
 
+add_executable(test_command_conformance test_command_conformance.cpp)
+target_link_libraries(test_command_conformance PRIVATE lazily)
+add_test(NAME CommandConformance COMMAND test_command_conformance)
+
 # Reactive-graph disposal/teardown + invalidation corpus (#lzspecedgeindex).
 # Replays ../lazily-spec/conformance/reactive-graph/. lazily-cpp replayed NONE
 # of this corpus until now — only lazily-rs did, family-wide, which is why an
@@ -201,6 +205,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_seqcrdt_conformance
   test_topic_conformance
   test_lossless_tree_conformance
+  test_command_conformance
   test_reactive_graph_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)

@@ -144,6 +144,9 @@ class CommandProjection {
 
   CommandApplyStatus submit(const CommandSubmit& cmd) {
     if (entries_.count(cmd.command_id)) return CommandStatusDuplicate{};
+    // The projection folds up to the max authority generation it has seen
+    // (matches lazily-rs `submit`). #lzcellkernel
+    generation_ = std::max<int64_t>(generation_, cmd.authority_generation);
     entries_[cmd.command_id] = {
       cmd.command_id, CommandStatus::Submitted, false, cmd.authority_generation,
       std::nullopt, std::nullopt, std::nullopt
@@ -155,32 +158,45 @@ class CommandProjection {
     auto it = entries_.find(cmd.command_id);
     if (it == entries_.end()) return CommandStatusUnknown{};
     if (is_terminal_status(it->second.status)) return CommandStatusRecorded{};
-    if (cmd.authority_generation < it->second.generation)
+    // A cancel from any generation other than the command's current one is stale
+    // (matches lazily-rs `cancel` — `!=`, not `<`). #lzcellkernel
+    if (cmd.authority_generation != it->second.generation)
       return CommandStatusStaleGeneration{it->second.generation, cmd.authority_generation};
     return CommandStatusRecorded{};
   }
 
   CommandApplyStatus apply_events(const CommandEvents& events) {
+    // Per-event fold matching lazily-rs `event`: an event whose generation
+    // differs from the command's current generation is STALE and is not applied
+    // (the status reports StaleGeneration). #lzcellkernel
+    CommandApplyStatus last = CommandStatusRecorded{};
     for (auto& evt : events.events) {
       auto it = entries_.find(evt.command_id);
-      if (it == entries_.end()) continue;
-      if (seen_event_ids_.count(evt.event_id)) continue;
-      seen_event_ids_.insert(evt.event_id);
-
-      auto new_status = progress_status_of(evt.kind);
-      if (new_status == CommandStatus::Submitted) continue;  // no-op
-      if (phase_rank(new_status) >= phase_rank(it->second.status)) {
-        it->second.status = new_status;
-        it->second.last_event_id = evt.event_id;
+      if (it == entries_.end()) { last = CommandStatusUnknown{}; continue; }
+      if (seen_event_ids_.count(evt.event_id)) { last = CommandStatusDuplicate{}; continue; }
+      if (evt.generation != it->second.generation) {
+        last = CommandStatusStaleGeneration{it->second.generation, evt.generation};
+        continue;  // stale-generation event: ignore
       }
+      seen_event_ids_.insert(evt.event_id);
+      it->second.last_event_id = evt.event_id;
+      auto new_status = progress_status_of(evt.kind);
+      if (!it->second.terminal && new_status != CommandStatus::Submitted &&
+          phase_rank(new_status) >= phase_rank(it->second.status)) {
+        it->second.status = new_status;
+      }
+      last = CommandStatusRecorded{};
     }
-    return CommandStatusRecorded{};
+    return last;
   }
 
   void observe_receipt(const CausalReceipt& receipt) {
     auto it = entries_.find(receipt.causation_id);
     if (it == entries_.end()) return;
     if (seen_receipt_ids_.count(receipt.receipt_id)) return;
+    // A receipt from a generation other than the command's current one is stale
+    // and is ignored (matches lazily-rs `observe_receipt`). #lzcellkernel
+    if (receipt.generation != it->second.generation) return;
     seen_receipt_ids_.insert(receipt.receipt_id);
 
     if (is_terminal(receipt.outcome)) {
@@ -197,7 +213,7 @@ class CommandProjection {
   }
 
   CommandApplyStatus apply_projection(const CommandProjectionImage& image) {
-    generation_ = image.generation;
+    generation_ = std::max<int64_t>(generation_, image.generation);
     for (auto& entry : image.commands) {
       entries_[entry.command_id] = entry;
     }
