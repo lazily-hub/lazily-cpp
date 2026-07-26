@@ -3,6 +3,9 @@
 
 #include <lazily/types.hpp>
 
+// std::sort (roster ordering) — the header was not self-contained before a test
+// included it in a translation unit that did not already pull in <algorithm>.
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -163,22 +166,28 @@ class SignalingRoom {
       PeerId from = *it->second.peer;
       PeerId target = 0;
 
+      bool delivered = true;
       if (std::holds_alternative<ClientOffer>(msg)) {
         auto& m = std::get<ClientOffer>(msg);
         target = m.to;
-        forward(target, ServerOffer{from, m.sdp});
+        delivered = forward(target, ServerOffer{from, m.sdp});
       } else if (std::holds_alternative<ClientAnswer>(msg)) {
         auto& m = std::get<ClientAnswer>(msg);
         target = m.to;
-        forward(target, ServerAnswer{from, m.sdp});
+        delivered = forward(target, ServerAnswer{from, m.sdp});
       } else if (std::holds_alternative<ClientIce>(msg)) {
         auto& m = std::get<ClientIce>(msg);
         target = m.to;
-        forward(target, ServerIce{from, m.candidate});
+        delivered = forward(target, ServerIce{from, m.candidate});
       } else if (std::holds_alternative<ClientRelay>(msg)) {
         auto& m = std::get<ClientRelay>(msg);
         target = m.to;
-        forward(target, ServerRelay{from, m.payload});
+        delivered = forward(target, ServerRelay{from, m.payload});
+      }
+      if (!delivered) {
+        // Answer the sender rather than dropping the frame.
+        results.push_back(ServerError{
+            "unknown_target", "peer " + std::to_string(target) + " is not in this session"});
       }
     }
     return results;
@@ -200,10 +209,15 @@ class SignalingRoom {
     std::vector<ServerMessage> outbound;
   };
 
-  void forward(PeerId target, ServerMessage msg) {
+  // Returns false when `target` is not in the session, so the caller can answer the
+  // SENDER instead of dropping the frame. Silently discarding it leaves the sender
+  // waiting forever on an answer that will never come, and the canonical
+  // `signaling/anti_spoof_session.json` requires an `unknown_target` error frame.
+  [[nodiscard]] bool forward(PeerId target, ServerMessage msg) {
     auto it = peer_to_conn_.find(target);
-    if (it == peer_to_conn_.end()) return;
+    if (it == peer_to_conn_.end()) return false;
     conns_[it->second].outbound.push_back(std::move(msg));
+    return true;
   }
 
   mutable std::mutex mutex_;

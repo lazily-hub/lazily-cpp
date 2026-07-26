@@ -63,10 +63,9 @@ MIN_FIXTURES="${MIN_FIXTURES:-86}"
 # does read would let that runner vanish unnoticed — which is the whole point.
 #
 # Deliberately ABSENT, with reasons (open gaps, not oversights):
-#   signaling  (2)  no runner. SignalingRoom::forward drops frames addressed to
-#                   an unknown peer instead of returning the `unknown_target`
-#                   error frame anti_spoof_session.json requires, so a faithful
-#                   runner is red until the library is fixed.
+#   signaling  (1)  anti_spoof_session.json IS replayed by
+#                   test_signaling_conformance.cpp. frames.json is not: it needs
+#                   signaling wire serde, which this binding does not have.
 #   familysync (1)  test_family_sync.cpp mirrors materialize_on_ingest.json by
 #                   hand; it never opens the file.
 #   agent-doc  (2)  IPC wire snapshots of the agent-doc state projection — an
