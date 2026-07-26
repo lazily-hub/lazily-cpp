@@ -335,9 +335,11 @@ inline void pack_crdt_sync(MsgPacker& p, const CrdtSync& c) {
   p.str("frontier"); {
     p.array_header(static_cast<uint32_t>(c.frontier.size()));
     for (auto& e : c.frontier) {
-      p.map_header(2);
-      p.str("peer"); p.i64(e.peer);
-      p.str("stamp"); pack_wire_stamp(p, e.stamp);
+      // schemas/distributed.json#/$defs/StampFrontierEntry is the tuple
+      // [peer, WireStamp], matching lazily-rs's Vec<(u64, WireStamp)> serde.
+      p.array_header(2);
+      p.i64(e.peer);
+      pack_wire_stamp(p, e.stamp);
     }
   }
   p.str("ops"); {
@@ -360,14 +362,13 @@ inline CrdtSync unpack_crdt_sync(MsgUnpacker& u) {
       uint32_t m = u.read_array_header();
       c.frontier.reserve(m);
       for (uint32_t j = 0; j < m; ++j) {
+        uint32_t fn = u.read_array_header();
+        if (fn != 2)
+          throw std::runtime_error(
+              "codec: StampFrontierEntry must be a 2-element array");
         StampFrontierEntry e{};
-        uint32_t fn = u.read_map_header();
-        for (uint32_t f = 0; f < fn; ++f) {
-          std::string_view fk = u.read_str_view();
-          if (fk == "peer") e.peer = u.read_i64();
-          else if (fk == "stamp") e.stamp = unpack_wire_stamp(u);
-          else u.skip();
-        }
+        e.peer = u.read_i64();
+        e.stamp = unpack_wire_stamp(u);
         c.frontier.push_back(e);
       }
     } else if (k == "ops") {

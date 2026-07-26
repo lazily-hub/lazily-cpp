@@ -126,6 +126,70 @@ TEST(test_crdt_sync_roundtrip) {
   assert(reencode_equal(m));
 }
 
+// A round-trip alone cannot distinguish the canonical [peer, stamp] frontier
+// tuple from a self-consistent but incompatible {peer, stamp} implementation.
+// Inspect the encoder shape independently, then feed the decoder a separately
+// constructed canonical frame. The keyless op also pins required `key: nil`.
+TEST(test_crdt_sync_canonical_wire_shape) {
+  CrdtSync c;
+  c.frontier.push_back({7, {100, 2, 7}});
+  c.ops.push_back({30, std::nullopt, {150, 1, 7}, IpcValueInline{{1, 2}}});
+
+  MsgPacker encoded;
+  pack_crdt_sync(encoded, c);
+  MsgUnpacker wire(encoded.bytes());
+  assert(wire.read_map_header() == 2);
+  assert(wire.read_str() == "frontier");
+  assert(wire.read_array_header() == 1);
+  assert(wire.peek_kind() == MsgUnpacker::Kind::Array);
+  assert(wire.read_array_header() == 2);
+  assert(wire.read_i64() == 7);
+  wire.skip();  // WireStamp
+  assert(wire.read_str() == "ops");
+  assert(wire.read_array_header() == 1);
+  assert(wire.read_map_header() == 4);
+  assert(wire.read_str() == "node");
+  assert(wire.read_i64() == 30);
+  assert(wire.read_str() == "key");
+  assert(wire.peek_kind() == MsgUnpacker::Kind::Nil);
+  wire.expect_nil();
+  assert(wire.read_str() == "stamp");
+  wire.skip();
+  assert(wire.read_str() == "state");
+  wire.skip();
+  assert(wire.eof());
+
+  MsgPacker canonical;
+  canonical.map_header(2);
+  canonical.str("frontier");
+  canonical.array_header(1);
+  canonical.array_header(2);
+  canonical.i64(9);
+  pack_wire_stamp(canonical, {200, 3, 9});
+  canonical.str("ops");
+  canonical.array_header(1);
+  canonical.map_header(4);
+  canonical.str("node");
+  canonical.i64(31);
+  canonical.str("key");
+  canonical.nil();
+  canonical.str("stamp");
+  pack_wire_stamp(canonical, {210, 4, 9});
+  canonical.str("state");
+  pack_ipc_value(canonical, IpcValueInline{{3, 4}});
+
+  MsgUnpacker input(canonical.bytes());
+  CrdtSync decoded = unpack_crdt_sync(input);
+  assert(input.eof());
+  assert(decoded.frontier.size() == 1);
+  assert(decoded.frontier[0].peer == 9);
+  assert(decoded.frontier[0].stamp.wall_time == 200);
+  assert(decoded.ops.size() == 1);
+  assert(decoded.ops[0].node == 31);
+  assert(!decoded.ops[0].key.has_value());
+  assert((ipc_value_equal(decoded.ops[0].state, IpcValueInline{{3, 4}})));
+}
+
 // ── Positional codec (#lzcpppositionalcodec) ──
 
 TEST(test_positional_snapshot_roundtrip) {
