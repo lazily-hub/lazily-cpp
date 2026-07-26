@@ -113,21 +113,11 @@ KNOWN_UNCOVERED=(
   "collections/textcrdt_delta_sync.json"
   "collections/workqueue_competing_delivery.json"
   "collections/workqueue_lease_deadletter.json"
-  # collections — mirrored by hand in test_merge.cpp / test_queue.cpp, which
-  # never open the canonical bytes.
-  #
-  # The queuecell_* entries below are now OPENED and structurally validated by
-  # test_queue_family_conformance.cpp (the flavor ledger), which is why the
-  # replayed count rose. They stay listed because opening is not replaying: the
-  # BEHAVIOURAL assertions still live in test_queue.cpp as a hand transcription
-  # that can drift from the bytes it mirrors. Shrinking this list means making
-  # test_queue.cpp drive the fixture, not merely reading it elsewhere.
+  # collections — mergecell_algebra is still mirrored by hand in test_merge.cpp,
+  # which never opens the canonical bytes. The five queuecell_* fixtures used to
+  # be listed here for the same reason; test_queue_conformance.cpp now replays
+  # them from the canonical bytes (#lzqfcppfx), so they are gone from this list.
   "collections/mergecell_algebra.json"
-  "collections/queuecell_bounded_backpressure.json"
-  "collections/queuecell_closure_lifecycle.json"
-  "collections/queuecell_mpsc_multi_writer.json"
-  "collections/queuecell_popped_head_observation.json"
-  "collections/queuecell_spsc_push_pop.json"
   # distributed — CrdtSync wire-serde frames; lazily-cpp has no JSON codec for
   # the IpcMessage envelope, so replaying `wire` needs an encoder first.
   "distributed/crdt_sync_frames.json"

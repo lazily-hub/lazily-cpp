@@ -146,6 +146,10 @@ add_executable(test_collections_family_conformance test_collections_family_confo
 target_link_libraries(test_collections_family_conformance PRIVATE lazily)
 add_test(NAME CollectionsFamilyConformance COMMAND test_collections_family_conformance)
 
+add_executable(test_queue_conformance test_queue_conformance.cpp)
+target_link_libraries(test_queue_conformance PRIVATE lazily)
+add_test(NAME QueueConformance COMMAND test_queue_conformance)
+
 add_executable(test_queue_family_conformance test_queue_family_conformance.cpp)
 target_link_libraries(test_queue_family_conformance PRIVATE lazily)
 add_test(NAME QueueFamilyConformance COMMAND test_queue_family_conformance)
@@ -259,6 +263,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_command_conformance
   test_materialization_conformance
   test_collections_family_conformance
+  test_queue_conformance
   test_queue_family_conformance
   test_reactive_graph_conformance
   test_statechart_conformance
