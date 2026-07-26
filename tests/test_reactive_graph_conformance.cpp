@@ -70,7 +70,7 @@
 // An absence guard proves the corpus is on disk; it cannot prove this binary
 // read any of it. Every fixture — including the skipped ones, which are parsed
 // to discover their ops — is opened through `spec_fixture_text`, so
-// `REQUIRE_FIXTURES_LOADED(20)` is a positive assertion that all twenty
+// `REQUIRE_FIXTURES_LOADED(21)` is a positive assertion that all twenty-one
 // distinct canonical files were actually read. The runner additionally asserts (a) the
 // on-disk fixture set matches `FIXTURES` exactly, so an upstream addition
 // cannot arrive unexecuted, and (b) a non-zero number of ops and expectations
@@ -118,6 +118,7 @@ const std::vector<std::string> FIXTURES = {
     "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
     "dispose_signal_reverts_to_lazy.json",
+    "failed_compute_is_never_cached.json",
     "exact_fold_paths_stay_exact.json",
     "feedback_drain_bound_reports_exhaustion.json",
     "merge_cell_acquires_no_dependency_edge.json",
@@ -147,7 +148,8 @@ const std::set<std::string> SUPPORTED_OPS = {
     "dispose",     "dispose_fanout", "dispose_signal",
     "dispose_stale_handle", "eager",  "effect",
     "end_scope",   "fanout",         "lazy",
-    "read",        "set_cell",       "signal"};
+    "fail_next",   "read",           "set_cell",
+    "signal"};
 
 // Fixture shapes this runner can replay.
 const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
@@ -411,8 +413,32 @@ struct Report {
   Observation observation;
 };
 
+// The failure a `fail_next`-armed compute body throws. A runner-owned sentinel,
+// not a library error: the contract under test is that the library does not
+// CACHE it, so what it is matters less than that the same body throws it once
+// per armed run and the node still re-runs afterwards.
+struct ComputeFailed {
+  explicit ComputeFailed(std::string node_id) : id(std::move(node_id)) {}
+  std::string id;
+};
+
 struct World {
   Context ctx;
+  // How many upcoming compute bodies must fail, per node id (`fail_next`).
+  std::map<std::string, int> armed;
+
+  void fail_next(const std::string& id, int count) {
+    armed[id] += count > 0 ? count : 1;
+  }
+
+  // Consume one arming. Called from inside the compute body, AFTER the count.
+  bool take_armed(const std::string& id) {
+    auto it = armed.find(id);
+    if (it == armed.end() || it->second <= 0) return false;
+    --it->second;
+    return true;
+  }
+
   // Live bindings. A disposed id is NOT erased: it stays readable-as-an-error,
   // and disposing it again must be a no-op.
   std::map<std::string, Ref> nodes;
@@ -480,6 +506,11 @@ ReadOut try_read(World& w, const std::string& id) {
   try {
     return {true, w.read_ref(w.ctx, ref)};
   } catch (const DisposedError&) {
+    return {false, 0};
+  } catch (const ComputeFailed&) {
+    // Both are "this read failed", but they are different contracts: disposal
+    // is permanent, a `fail_next` compute failure is recoverable -- the next
+    // read re-runs the body. Nothing is latched here for either.
     return {false, 0};
   }
 }
@@ -561,6 +592,10 @@ auto counting_body(World& w, const std::string& id, std::vector<Ref> sources,
   World* wp = &w;
   return [wp, id, sources, offset](Compute& c) -> long long {
     ++wp->computes[id];
+    // The count moves FIRST, so a `fail_next`-armed run is counted exactly like
+    // a successful one -- which is what lets the fixture assert the retry on
+    // `computes_of` rather than on the error a caching binding also throws.
+    if (wp->take_armed(id)) throw ComputeFailed(id);
     long long sum = offset;
     for (const auto& source : sources) sum += wp->read_ref(c, source);
     return sum;
@@ -793,6 +828,12 @@ void replay(const std::string& fixture, World& w,
       op_error = !out.ok;
       have_value = out.ok;
       op_value = out.value;
+    } else if (kind == "fail_next") {
+      // Arms the next N computes of an existing node to throw. It creates
+      // nothing and touches no dependency set.
+      const Json* count = op->find("count");
+      w.fail_next(op->find("id")->str,
+                  count ? static_cast<int>(count->as_int()) : 1);
     } else if (kind == "set_cell") {
       const Json* value = op->find("value");
       REQUIRE(value != nullptr, "set_cell op has no value");
@@ -941,10 +982,11 @@ void replay(const std::string& fixture, World& w,
                 dependencies_of(w, e.first),
                 static_cast<std::size_t>(e.second->as_int()), report);
       } else if (key == "error") {
+        // Any non-null error code means "this op must fail"; null means "must
+        // not". The runner does not model error identity -- the fixtures carry
+        // the code so the contract is legible, and this binding's own tests pin
+        // which exception it throws.
         const bool wants_error = want.type == Json::Type::String;
-        if (wants_error)
-          REQUIRE(want.str == "read_after_dispose",
-                  "fixture expects an error kind this runner does not know");
         check(fixture, i, "error", op_error, wants_error, report);
       } else if (key == "value") {
         // Skipped when the same step expects an error — there is no value then.
@@ -1346,7 +1388,7 @@ int main() {
       << std::endl;
 
   // All canonical fixtures were actually opened and parsed.
-  REQUIRE_FIXTURES_LOADED(20);
+  REQUIRE_FIXTURES_LOADED(21);
 
   std::cout << "reactive-graph conformance: " << replayed << "/"
             << FIXTURES.size() << " fixtures replayed against Context ("
