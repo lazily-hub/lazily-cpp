@@ -17,29 +17,29 @@ namespace lazily {
 
 // `SourceMap` / `ComputedMap` / `ReactiveMap` are defined in reactive_family.hpp.
 
-// -- CellTree: ordered keyed reactive tree --
+// -- SourceTree: ordered keyed reactive tree --
 
 template <typename Id, typename V>
-struct CellTreeNode {
+struct SourceTreeNode {
   Id id;
   Source<V> value;
   std::optional<SourceMap<Id, bool>> order;
   std::unordered_map<Id, size_t> child_index;
-  std::vector<std::shared_ptr<CellTreeNode<Id, V>>> children;
+  std::vector<std::shared_ptr<SourceTreeNode<Id, V>>> children;
 };
 
 template <typename Id, typename V>
-class CellTree {
+class SourceTree {
  public:
-  CellTree(Context& ctx, Id id, V value)
-      : inner_(std::make_shared<CellTreeNode<Id, V>>()) {
+  SourceTree(Context& ctx, Id id, V value)
+      : inner_(std::make_shared<SourceTreeNode<Id, V>>()) {
     inner_->id = std::move(id);
     inner_->value = ctx.source(std::move(value));
     inner_->order.emplace(ctx);
   }
 
-  static CellTree leaf(Context& ctx, Id id, V value) {
-    return CellTree(ctx, std::move(id), std::move(value));
+  static SourceTree leaf(Context& ctx, Id id, V value) {
+    return SourceTree(ctx, std::move(id), std::move(value));
   }
 
   const Id& id() const { return inner_->id; }
@@ -48,12 +48,12 @@ class CellTree {
   V get(Context& ctx) { return ctx.get(inner_->value); }
   void set(Context& ctx, V value) { ctx.set(inner_->value, std::move(value)); }
 
-  CellTree insert_child(Context& ctx, Id child_id, V value) {
+  SourceTree insert_child(Context& ctx, Id child_id, V value) {
     auto it = inner_->child_index.find(child_id);
     if (it != inner_->child_index.end())
-      return CellTree(inner_->children[it->second]);
+      return SourceTree(inner_->children[it->second]);
 
-    auto child = std::make_shared<CellTreeNode<Id, V>>();
+    auto child = std::make_shared<SourceTreeNode<Id, V>>();
     child->id = child_id;
     child->value = ctx.source(std::move(value));
     child->order.emplace(ctx);
@@ -62,7 +62,7 @@ class CellTree {
     inner_->child_index[child_id] = idx;
     inner_->children.push_back(child);
     inner_->order->entry(ctx, child_id, true);
-    return CellTree(child);
+    return SourceTree(child);
   }
 
   bool remove_child(Context& ctx, const Id& child_id) {
@@ -114,16 +114,16 @@ class CellTree {
     return inner_->child_index.count(child_id) > 0;
   }
 
-  std::optional<CellTree> child(const Id& child_id) const {
+  std::optional<SourceTree> child(const Id& child_id) const {
     auto it = inner_->child_index.find(child_id);
     if (it == inner_->child_index.end()) return std::nullopt;
-    return CellTree(inner_->children[it->second]);
+    return SourceTree(inner_->children[it->second]);
   }
 
  private:
-  std::shared_ptr<CellTreeNode<Id, V>> inner_;
+  std::shared_ptr<SourceTreeNode<Id, V>> inner_;
 
-  explicit CellTree(std::shared_ptr<CellTreeNode<Id, V>> node)
+  explicit SourceTree(std::shared_ptr<SourceTreeNode<Id, V>> node)
       : inner_(std::move(node)) {}
 };
 
@@ -261,7 +261,7 @@ void apply_to_map(Context& ctx, SourceMap<K, V>& map,
 }
 
 template <typename K, typename V>
-void apply_to_tree(Context& ctx, CellTree<K, V>& tree,
+void apply_to_tree(Context& ctx, SourceTree<K, V>& tree,
                    const std::vector<DiffOp<K, V>>& ops) {
   for (auto& op : ops) {
     switch (op.kind) {
@@ -294,6 +294,17 @@ void SourceMap<K, V>::reconcile(Context& ctx,
   auto ops = lazily::reconcile(old_seq, new_seq);
   apply_to_map(ctx, *this, ops);
 }
+
+// -- Deprecated pre-v2 tree names --
+//
+// The v2 kernel renamed the node kinds to `Source` and `Computed`; the tree
+// names followed. The old names remain as alias templates so existing callers
+// keep compiling — they are not removed.
+template <typename Id, typename V>
+using CellTreeNode [[deprecated("renamed to SourceTreeNode")]] =
+    SourceTreeNode<Id, V>;
+template <typename Id, typename V>
+using CellTree [[deprecated("renamed to SourceTree")]] = SourceTree<Id, V>;
 
 }  // namespace lazily
 

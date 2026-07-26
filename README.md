@@ -76,7 +76,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `SourceTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -452,7 +452,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `rc_ptr.hpp` | RcPtr/ArcPtr smart pointers (closures), RcTraits/ArcTraits value-storage traits |
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
-| `collections.hpp` | CellTree, keyed reconciliation (LIS) (re-exports `SourceMap` / `ComputedMap` / `ReactiveMap`) |
+| `collections.hpp` | SourceTree, keyed reconciliation (LIS) (re-exports `SourceMap` / `ComputedMap` / `ReactiveMap`) |
 | `reactive_family.hpp` | `ReactiveMap<K, V, H>` — unified keyed cell/slot collection with reactive membership + order; `SourceMap` (`set` + eager `entry`) and `ComputedMap` (`get_or_insert_with` lazy mint / `materialize_all` eager pre-mint) specializations (`#reactivemap`) |
 | `thread_safe_reactive_family.hpp` | `ThreadSafeReactiveMap` — `Send + Sync` keyed collection over ThreadSafeContext (mutex-guarded present set); `ThreadSafeSourceMap` / `ThreadSafeComputedMap` (`#reactivemap`) |
 | `async_reactive_family.hpp` | `AsyncReactiveMap` — keyed collection over AsyncContext (`observe` → `std::optional<V>`, eventual transparency); `AsyncSourceMap` / `AsyncComputedMap` (`#reactivemap`) |

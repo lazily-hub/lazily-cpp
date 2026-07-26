@@ -121,11 +121,11 @@ TEST(test_sourcemap_move_before_after) {
   assert(keys == std::vector<int>({3, 1, 2, 0}));
 }
 
-// -- CellTree --
+// -- SourceTree --
 
-TEST(test_celltree_basic) {
+TEST(test_sourcetree_basic) {
   Context ctx;
-  auto root = CellTree<std::string, std::string>::leaf(ctx, "root", "doc");
+  auto root = SourceTree<std::string, std::string>::leaf(ctx, "root", "doc");
   auto a = root.insert_child(ctx, "a", "alpha");
   root.insert_child(ctx, "b", "bravo");
 
@@ -140,9 +140,9 @@ TEST(test_celltree_basic) {
   assert(ids.size() == 2 && ids[0] == "b" && ids[1] == "a");
 }
 
-TEST(test_celltree_remove) {
+TEST(test_sourcetree_remove) {
   Context ctx;
-  auto root = CellTree<int, int>::leaf(ctx, 0, 0);
+  auto root = SourceTree<int, int>::leaf(ctx, 0, 0);
   root.insert_child(ctx, 1, 10);
   root.insert_child(ctx, 2, 20);
   root.insert_child(ctx, 3, 30);
@@ -217,7 +217,7 @@ TEST(test_reconcile_apply_to_map) {
 
 TEST(test_reconcile_apply_to_tree) {
   Context ctx;
-  auto root = CellTree<std::string, int>::leaf(ctx, "root", 0);
+  auto root = SourceTree<std::string, int>::leaf(ctx, "root", 0);
   root.insert_child(ctx, "a", 1);
   root.insert_child(ctx, "b", 2);
   root.insert_child(ctx, "c", 3);
