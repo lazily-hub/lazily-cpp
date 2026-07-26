@@ -1,0 +1,232 @@
+// Keyed-map materialization conformance, replayed from the canonical
+// lazily-spec fixture bytes.
+//
+// `tests/test_reactive_family.cpp` mirrors the same three
+// `conformance/materialization/*` fixtures by hand, which keeps the unit suite
+// runnable without the sibling spec checkout but cannot detect drift: a hand
+// transcription agrees with whatever it was transcribed from. This runner opens
+// `conformance/materialization/entry_kind_orthogonal_to_mode.json` and replays
+// its ACTUAL bytes -- entry kinds, canonical values, reads, and the expected
+// present-sets -- through `SourceMap` / `ComputedMap`.
+//
+// ## Entry-kind spellings (forward compatibility)
+//
+// The fixture's `spec.entries[key].kind` is wire data shared by every binding
+// runner. It spells the two kinds `"cell"` / `"slot"` today; the v2 kernel
+// renamed the node kinds to `Source` / `Computed` and the fixture is expected to
+// follow. `entry_kind_of` therefore accepts BOTH spellings so this binding does
+// not go red on the day the corpus flips, and neither spelling is privileged.
+//
+// Anything else is a hard abort, not a default: a silently-defaulted kind is the
+// exact failure that lets a runner report green while replaying the wrong shape.
+// `main` asserts all four accepted spellings directly, so the forward-compatible
+// half is exercised even while the on-disk fixture still says `"cell"`/`"slot"`.
+// (The reject path aborts by design and so is not asserted here.)
+//
+// ## Positive assertion
+//
+// `REQUIRE_FIXTURES_LOADED(1)` asserts the canonical file was actually opened --
+// an absence guard proves the corpus is on disk, not that this binary read it.
+
+#include <lazily/lazily.hpp>
+
+#include <algorithm>
+#include <cstdint>
+#include <iostream>
+#include <map>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "test_json.hpp"
+#include "test_require.hpp"
+#include "test_spec_fixture.hpp"
+
+using namespace lazily;
+using lazily_test::Json;
+using lazily_test::JsonParser;
+using lazily_test::JsonPtr;
+
+namespace {
+
+constexpr const char* kArea = "materialization";
+constexpr const char* kFixture = "entry_kind_orthogonal_to_mode.json";
+
+// Fixture entry-kind string -> `EntryKind`.
+//
+// `"cell"`/`"slot"` are the pre-v2 wire spellings; `"source"`/`"computed"` are
+// the v2 kernel names the corpus is moving to. Both are accepted; anything else
+// aborts.
+EntryKind entry_kind_of(const std::string& kind) {
+  if (kind == "cell" || kind == "source") return EntryKind::Source;
+  if (kind == "slot" || kind == "computed") return EntryKind::Computed;
+  REQUIRE(false,
+          "fixture entry kind '" + kind +
+              "' is neither an input (cell/source) nor a derived "
+              "(slot/computed) spelling");
+  return EntryKind::Source;  // unreachable: REQUIRE aborts
+}
+
+std::vector<std::string> strings_of(const Json* array, const char* what) {
+  REQUIRE(array != nullptr && array->is_array(), what);
+  std::vector<std::string> out;
+  for (const auto& element : array->array) out.push_back(element->str);
+  return out;
+}
+
+std::vector<std::string> sorted(std::vector<std::string> keys) {
+  std::sort(keys.begin(), keys.end());
+  return keys;
+}
+
+}  // namespace
+
+int main() {
+  // Both spellings of each kind resolve to the same `EntryKind`, so a corpus
+  // flip from cell/slot to source/computed is a no-op for this runner.
+  REQUIRE(entry_kind_of("cell") == EntryKind::Source &&
+              entry_kind_of("source") == EntryKind::Source,
+          "cell and source must both name the input entry kind");
+  REQUIRE(entry_kind_of("slot") == EntryKind::Computed &&
+              entry_kind_of("computed") == EntryKind::Computed,
+          "slot and computed must both name the derived entry kind");
+
+  const std::string text = lazily_test::spec_fixture_text(kArea, kFixture);
+  JsonParser parser(text);
+  const JsonPtr fixture = parser.parse();
+
+  const Json* model = fixture->find("model");
+  REQUIRE(model != nullptr && model->str == "ComputedMap",
+          "fixture is not a ComputedMap materialization corpus");
+
+  const Json* spec = fixture->find("spec");
+  REQUIRE(spec != nullptr, "fixture has no spec block");
+  const Json* entries = spec->find("entries");
+  REQUIRE(entries != nullptr && entries->is_object(),
+          "fixture spec has no entries object");
+
+  // Partition the fixture's entries by kind. Input entries are modelled by a
+  // `SourceMap`, derived entries by a `ComputedMap` -- the two handle kinds the
+  // one keyed primitive abstracts over.
+  std::vector<std::pair<std::string, uint32_t>> cell_entries;
+  std::vector<std::pair<std::string, uint32_t>> slot_entries;
+  for (const auto& kv : entries->object) {
+    const Json* kind = kv.second->find("kind");
+    const Json* val = kv.second->find("val");
+    REQUIRE(kind != nullptr && val != nullptr,
+            "fixture entry needs both a kind and a val");
+    const auto value = static_cast<uint32_t>(val->as_int());
+    switch (entry_kind_of(kind->str)) {
+      case EntryKind::Source:
+        cell_entries.emplace_back(kv.first, value);
+        break;
+      case EntryKind::Computed:
+        slot_entries.emplace_back(kv.first, value);
+        break;
+    }
+  }
+  REQUIRE(!cell_entries.empty() && !slot_entries.empty(),
+          "the entry-kind fixture must exercise both entry kinds");
+
+  const std::map<std::string, uint32_t> slot_val(slot_entries.begin(),
+                                                 slot_entries.end());
+  auto factory = [&slot_val](const std::string& key) -> uint32_t {
+    auto it = slot_val.find(key);
+    REQUIRE(it != slot_val.end(),
+            "fixture reads a key that is not a derived entry");
+    return it->second;
+  };
+
+  const Json* expected = fixture->find("expected");
+  REQUIRE(expected != nullptr, "fixture has no expected block");
+  const auto reads = strings_of(fixture->find("reads"), "fixture has no reads");
+  const auto eager_present =
+      strings_of(expected->find("eager_present"), "expected.eager_present");
+  const auto lazy_at_build = strings_of(expected->find("lazy_present_at_build"),
+                                        "expected.lazy_present_at_build");
+  const auto lazy_after_reads =
+      strings_of(expected->find("lazy_present_after_reads"),
+                 "expected.lazy_present_after_reads");
+  const Json* observe = expected->find("observe");
+  REQUIRE(observe != nullptr && observe->is_object(),
+          "expected.observe must be an object");
+
+  // -- Lazy strategy --
+
+  Context ctx;
+  SourceMap<std::string, uint32_t> cells(ctx);
+  for (const auto& kv : cell_entries) cells.set(ctx, kv.first, kv.second);
+  REQUIRE(cells.entry_kind() == EntryKind::Source,
+          "a SourceMap must report the input entry kind");
+
+  ComputedMap<std::string, uint32_t> slots(ctx);
+  REQUIRE(slots.entry_kind() == EntryKind::Computed,
+          "a ComputedMap must report the derived entry kind");
+
+  auto present_keys = [&cells, &slots]() {
+    std::vector<std::string> keys = cells.present_keys();
+    for (const auto& key : slots.present_keys()) keys.push_back(key);
+    return sorted(std::move(keys));
+  };
+
+  // Input entries are materialized at build in every strategy; derived entries
+  // are deferred until read.
+  REQUIRE(
+      present_keys() == sorted(lazy_at_build),
+      "lazy build present-set does not match expected.lazy_present_at_build");
+
+  for (const auto& key : reads) {
+    REQUIRE(slots.get_or_insert_with(ctx, key, factory) == factory(key),
+            "a lazily-minted derived entry read back its canonical value");
+  }
+  REQUIRE(present_keys() == sorted(lazy_after_reads),
+          "lazy present-set after reads does not match "
+          "expected.lazy_present_after_reads");
+
+  // Reads are strategy-independent: every key observes its canonical value,
+  // whether it was present at build or minted on access.
+  for (const auto& kv : observe->object) {
+    const auto want = static_cast<uint32_t>(kv.second->as_int());
+    if (cells.is_present(kv.first)) {
+      REQUIRE(cells.get(ctx, kv.first) == std::optional<uint32_t>(want),
+              "an input entry did not observe its canonical value");
+    } else {
+      REQUIRE(slots.get_or_insert_with(ctx, kv.first, factory) == want,
+              "a derived entry did not observe its canonical value");
+    }
+  }
+
+  // -- Eager strategy --
+
+  Context eager_ctx;
+  SourceMap<std::string, uint32_t> eager_cells(eager_ctx);
+  for (const auto& kv : cell_entries)
+    eager_cells.set(eager_ctx, kv.first, kv.second);
+
+  std::vector<std::string> slot_keys;
+  for (const auto& kv : slot_entries) slot_keys.push_back(kv.first);
+  ComputedMap<std::string, uint32_t> eager_slots(eager_ctx);
+  eager_slots.materialize_all(eager_ctx, slot_keys, factory);
+
+  std::vector<std::string> eager_keys = eager_cells.present_keys();
+  for (const auto& key : eager_slots.present_keys()) eager_keys.push_back(key);
+  REQUIRE(sorted(std::move(eager_keys)) == sorted(eager_present),
+          "eager present-set does not match expected.eager_present");
+
+  for (const auto& kv : observe->object) {
+    const auto want = static_cast<uint32_t>(kv.second->as_int());
+    const bool is_input = eager_cells.is_present(kv.first);
+    const std::optional<uint32_t> got =
+        is_input ? eager_cells.get(eager_ctx, kv.first)
+                 : eager_slots.get(eager_ctx, kv.first);
+    REQUIRE(got == std::optional<uint32_t>(want),
+            "an eagerly-materialized entry did not observe its canonical value");
+  }
+
+  REQUIRE_FIXTURES_LOADED(1);
+  std::cout << "materialization conformance: " << kFixture << " replayed ("
+            << cell_entries.size() << " input + " << slot_entries.size()
+            << " derived entries)" << std::endl;
+  return 0;
+}
