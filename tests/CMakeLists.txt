@@ -142,6 +142,10 @@ add_executable(test_materialization_conformance test_materialization_conformance
 target_link_libraries(test_materialization_conformance PRIVATE lazily)
 add_test(NAME MaterializationConformance COMMAND test_materialization_conformance)
 
+add_executable(test_collections_family_conformance test_collections_family_conformance.cpp)
+target_link_libraries(test_collections_family_conformance PRIVATE lazily)
+add_test(NAME CollectionsFamilyConformance COMMAND test_collections_family_conformance)
+
 add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
 add_test(NAME family_sync COMMAND test_family_sync)
@@ -250,6 +254,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_lossless_tree_conformance
   test_command_conformance
   test_materialization_conformance
+  test_collections_family_conformance
   test_reactive_graph_conformance
   test_statechart_conformance
   test_receipts_conformance

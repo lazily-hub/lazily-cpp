@@ -49,6 +49,7 @@
 
 #include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/keyed_order.hpp>
 
 namespace lazily {
 
@@ -122,10 +123,9 @@ struct MapHandleTraits<Computed<V>> {
 
 template <typename K, typename H>
 struct ReactiveMapInner {
-  // Per-key reactive nodes. Each entry is its own reactive node.
-  std::unordered_map<K, H> entries;
-  // Insertion-ordered authoritative key list (snapshot returned by `keys`).
-  std::vector<K> order;
+  // Present set + key order + the move algebra. Graph-agnostic and shared with
+  // the thread-safe and async flavors; see `keyed_order.hpp`.
+  KeyedOrder<K, H> keyed;
   // Reactive *set-membership* signal, bumped only when the set of keys changes.
   Source<uint64_t> membership;
   // Untracked mirror of the membership version.
@@ -167,8 +167,7 @@ class ReactiveMap {
   // membership only on insert.
   V get_or_insert_with(Context& ctx, const K& key,
                        std::function<V(const K&)> factory) {
-    auto it = inner_->entries.find(key);
-    if (it != inner_->entries.end()) return Traits::observe(it->second, ctx);
+    if (auto warm = inner_->keyed.get(key)) return Traits::observe(*warm, ctx);
     K k = key;
     H handle =
         mint_with(ctx, key, [factory, k](auto&) -> V { return factory(k); });
@@ -177,30 +176,23 @@ class ReactiveMap {
 
   // Return the existing entry handle for `key`, or `std::nullopt`. Non-reactive.
   std::optional<H> handle(const K& key) const {
-    auto it = inner_->entries.find(key);
-    if (it == inner_->entries.end()) return std::nullopt;
-    return it->second;
+    return inner_->keyed.get(key);
   }
 
   // Read the value at `key` if present. Reactive on that entry only.
   template <typename Cx>
   std::optional<V> get(Cx& ctx, const K& key) {
-    auto it = inner_->entries.find(key);
-    if (it == inner_->entries.end()) return std::nullopt;
-    return Traits::observe(it->second, ctx);
+    auto h = inner_->keyed.get(key);
+    if (!h) return std::nullopt;
+    return Traits::observe(*h, ctx);
   }
 
   // Remove `key`'s entry. Bumps reactive membership and clears the removed
   // entry's dependents. Returns whether the key was present.
   bool remove(Context& ctx, const K& key) {
-    auto it = inner_->entries.find(key);
-    if (it == inner_->entries.end()) return false;
-    H handle = it->second;
-    inner_->entries.erase(it);
-    inner_->order.erase(
-        std::remove(inner_->order.begin(), inner_->order.end(), key),
-        inner_->order.end());
-    Traits::clear_dependents(handle, ctx);
+    auto [handle, mutation] = inner_->keyed.remove(key);
+    if (!mutation_changed(mutation)) return false;
+    Traits::clear_dependents(*handle, ctx);
     bump_membership(ctx);
     return true;
   }
@@ -211,70 +203,48 @@ class ReactiveMap {
   template <typename Cx>
   std::vector<K> keys(Cx& ctx) {
     (void)ctx.get(inner_->order_signal);
-    return inner_->order;
+    return inner_->keyed.keys();
   }
 
   // The currently-materialized (present) keys, in first-materialization order.
   // Non-reactive; the present set only grows.
-  std::vector<K> present_keys() const { return inner_->order; }
+  std::vector<K> present_keys() const { return inner_->keyed.keys(); }
 
   // Number of currently-materialized (present) entries. Non-reactive.
-  size_t present_count() const { return inner_->order.size(); }
+  size_t present_count() const { return inner_->keyed.len(); }
 
   // Whether `key` is currently materialized (present in the allocated set).
   // Non-reactive.
-  bool is_present(const K& key) const {
-    return inner_->entries.count(key) > 0;
-  }
+  bool is_present(const K& key) const { return inner_->keyed.contains(key); }
 
   // Current 0-based position of `key` in the order, or `std::nullopt` if absent.
   // Non-reactive.
   std::optional<size_t> position(const K& key) const {
-    for (size_t i = 0; i < inner_->order.size(); ++i) {
-      if (inner_->order[i] == key) return i;
-    }
-    return std::nullopt;
+    return inner_->keyed.position(key);
   }
 
   // Atomically move `key` to `index` in the order (`#lzcellmove`). The entry
   // keeps the same node, its dependents, and its CRDT lineage. Only the order
   // signal is bumped. `index` is clamped to `[0, len)`.
   bool move_to(Context& ctx, const K& key, size_t index) {
-    auto from_opt = position(key);
-    if (!from_opt) return false;
-    size_t from = *from_opt;
-    size_t to = std::min(index, inner_->order.size() - 1);
-    if (from == to) return true;
-    K k = std::move(inner_->order[from]);
-    inner_->order.erase(inner_->order.begin() + from);
-    inner_->order.insert(inner_->order.begin() + to, std::move(k));
-    bump_order(ctx);
-    return true;
+    return apply_move(ctx, inner_->keyed.move_to(key, index));
   }
 
   // Atomically move `key` to just before `anchor` in the order (`#lzcellmove`).
   bool move_before(Context& ctx, const K& key, const K& anchor) {
-    auto anchor_idx = position(anchor);
-    auto from = position(key);
-    if (!anchor_idx || !from) return false;
-    size_t target = (*from < *anchor_idx) ? *anchor_idx - 1 : *anchor_idx;
-    return move_to(ctx, key, target);
+    return apply_move(ctx, inner_->keyed.move_before(key, anchor));
   }
 
   // Atomically move `key` to just after `anchor` in the order (`#lzcellmove`).
   bool move_after(Context& ctx, const K& key, const K& anchor) {
-    auto anchor_idx = position(anchor);
-    auto from = position(key);
-    if (!anchor_idx || !from) return false;
-    size_t target = (*from <= *anchor_idx) ? *anchor_idx : *anchor_idx + 1;
-    return move_to(ctx, key, target);
+    return apply_move(ctx, inner_->keyed.move_after(key, anchor));
   }
 
   // Reactive entry count. Subscribes the caller to membership changes only.
   template <typename Cx>
   size_t len(Cx& ctx) {
     (void)ctx.get(inner_->membership);
-    return inner_->order.size();
+    return inner_->keyed.len();
   }
 
   // Reactive emptiness check. Subscribes the caller to membership changes.
@@ -286,11 +256,11 @@ class ReactiveMap {
   template <typename Cx>
   bool contains_key(Cx& ctx, const K& key) {
     (void)ctx.get(inner_->membership);
-    return inner_->entries.count(key) > 0;
+    return inner_->keyed.contains(key);
   }
 
   // Non-reactive count. Does not subscribe the caller to anything.
-  size_t len_untracked() const { return inner_->order.size(); }
+  size_t len_untracked() const { return inner_->keyed.len(); }
 
   // This map's entry kind (`EntryKind::Source` for a `SourceMap`, `EntryKind::Computed`
   // for a `ComputedMap`).
@@ -309,13 +279,19 @@ class ReactiveMap {
   // evaluated once eagerly against the `Context&` to seed the input cell.
   template <typename ComputeFn>
   H mint_with(Context& ctx, const K& key, ComputeFn compute) {
-    auto it = inner_->entries.find(key);
-    if (it != inner_->entries.end()) return it->second;  // warm.
+    if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
     H handle = Traits::materialize(ctx, compute);
-    inner_->entries.emplace(key, handle);
-    inner_->order.push_back(key);
-    bump_membership(ctx);
-    return handle;
+    auto [stored, mutation] = inner_->keyed.insert(key, handle);
+    if (mutation_changed(mutation)) bump_membership(ctx);
+    return stored;
+  }
+
+  // Bump the order signal only when the order actually changed. A no-op move
+  // still reports success to the caller but must invalidate no reader.
+  bool apply_move(Context& ctx, MapMove outcome) {
+    if (!move_applied(outcome)) return false;
+    if (move_changed(outcome)) bump_order(ctx);
+    return true;
   }
 
   // Bump the *order* signal (invalidates `keys` readers).

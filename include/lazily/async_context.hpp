@@ -61,6 +61,17 @@ struct AsyncSlotHandle {
     return std::nullopt;
   }
 
+  // Teardown on removal from a keyed collection. An async slot node is not
+  // registered in the sync `Context` graph, so there are no graph dependents to
+  // clear; what must not survive is the *cached value*. Without this a removed
+  // entry keeps serving its last resolved value to any holder of the handle —
+  // the defect lazily-cs's `AsyncComputedMap.Remove` still has.
+  void clear_dependents() {
+    node->value.value.reset();
+    node->value.error.reset();
+    node->value.state = AsyncSlotState::Empty;
+  }
+
   std::future<T> get_async() {
     return std::async(std::launch::async, [this]() -> T {
       node->value.state = AsyncSlotState::Computing;
@@ -93,6 +104,9 @@ struct AsyncCellHandle {
   T peek() { return ctx->get(cell); }
   T get() { return ctx->get(cell); }
   void set(T value) { ctx->set(cell, std::move(value)); }
+  // An async cell IS a `Source` on the underlying graph, so its teardown is the
+  // ordinary node teardown.
+  void clear_dependents() { cell.clear_dependents(*ctx); }
 };
 
 struct AsyncEffectHandle {

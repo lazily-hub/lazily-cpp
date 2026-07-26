@@ -29,6 +29,7 @@
 #include <vector>
 
 #include <lazily/async_context.hpp>
+#include <lazily/keyed_order.hpp>
 #include <lazily/reactive_family.hpp>
 
 namespace lazily {
@@ -54,6 +55,10 @@ struct AsyncMapHandleTraits<AsyncCellHandle<V>> {
   static std::optional<V> observe(AsyncCellHandle<V> h, AsyncContext&) {
     return std::optional<V>(h.get());
   }
+
+  static void clear_dependents(AsyncCellHandle<V> h, AsyncContext&) {
+    h.clear_dependents();
+  }
 };
 
 template <typename V>
@@ -75,13 +80,23 @@ struct AsyncMapHandleTraits<AsyncSlotHandle<V>> {
   static std::optional<V> observe(AsyncSlotHandle<V> h, AsyncContext&) {
     return h.get();
   }
+
+  static void clear_dependents(AsyncSlotHandle<V> h, AsyncContext&) {
+    h.clear_dependents();
+  }
 };
 
 template <typename K, typename H>
 struct AsyncReactiveMapInner {
-  std::mutex state_mutex;
-  std::unordered_map<K, H> materialized;
-  std::vector<K> order;
+  mutable std::mutex state_mutex;
+  KeyedOrder<K, H> keyed;
+  // Membership and order signals minted on THIS flavor's graph. Ordering is not
+  // async-coloured — the move algebra awaits nothing — so the async map carries
+  // the same Core surface as the other two flavors.
+  Source<uint64_t> membership;
+  Source<uint64_t> order_signal;
+  uint64_t version = 0;
+  uint64_t order_version = 0;
 };
 
 // The async keyed reactive collection (`#reactivemap`) generic over the entry
@@ -97,8 +112,11 @@ class AsyncReactiveMap {
   using Traits = AsyncMapHandleTraits<H>;
 
   // Create an empty map bound to `ctx`.
-  explicit AsyncReactiveMap(AsyncContext&)
-      : inner_(std::make_shared<AsyncReactiveMapInner<K, H>>()) {}
+  explicit AsyncReactiveMap(AsyncContext& ctx)
+      : inner_(std::make_shared<AsyncReactiveMapInner<K, H>>()) {
+    inner_->membership = ctx.context().source(uint64_t(0));
+    inner_->order_signal = ctx.context().source(uint64_t(0));
+  }
 
   // -- Shared surface --
 
@@ -113,12 +131,7 @@ class AsyncReactiveMap {
   // Non-blocking observe: a value for a cell or resolved slot, `std::nullopt` for
   // a pending or absent slot. Non-minting.
   std::optional<V> observe(AsyncContext& ctx, const K& key) {
-    std::optional<H> h;
-    {
-      std::lock_guard<std::mutex> g(inner_->state_mutex);
-      auto it = inner_->materialized.find(key);
-      if (it != inner_->materialized.end()) h = it->second;
-    }
+    auto h = handle(key);
     if (!h) return std::nullopt;
     return Traits::observe(*h, ctx);
   }
@@ -126,24 +139,106 @@ class AsyncReactiveMap {
   // Return the existing entry handle for `key`, or `std::nullopt`. Non-minting.
   std::optional<H> handle(const K& key) const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    auto it = inner_->materialized.find(key);
-    if (it == inner_->materialized.end()) return std::nullopt;
-    return it->second;
+    return inner_->keyed.get(key);
   }
 
   bool is_present(const K& key) const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    return inner_->materialized.count(key) > 0;
+    return inner_->keyed.contains(key);
   }
 
   std::vector<K> present_keys() const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    return inner_->order;
+    return inner_->keyed.keys();
   }
 
   size_t present_count() const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    return inner_->order.size();
+    return inner_->keyed.len();
+  }
+
+  // -- Core surface: ordering, atomic move, and reactive membership --
+
+  // Reactive snapshot of the keys in their current order. Generic over the read
+  // surface for the same reason the other two flavors are: only a `Compute&`
+  // registers the edge.
+  template <typename Cx>
+  std::vector<K> keys(Cx& ctx) {
+    (void)ctx.get(inner_->order_signal);
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.keys();
+  }
+
+  // Reactive entry count. Subscribes to membership changes only.
+  template <typename Cx>
+  size_t len(Cx& ctx) {
+    (void)ctx.get(inner_->membership);
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.len();
+  }
+
+  template <typename Cx>
+  bool is_empty(Cx& ctx) { return len(ctx) == 0; }
+
+  // Reactive membership test for `key`.
+  template <typename Cx>
+  bool contains_key(Cx& ctx, const K& key) {
+    (void)ctx.get(inner_->membership);
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.contains(key);
+  }
+
+  size_t len_untracked() const { return present_count(); }
+
+  std::optional<size_t> position(const K& key) const {
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.position(key);
+  }
+
+  // Atomically move `key` to `index` (`#lzcellmove`). The entry keeps the same
+  // node and its lineage; only the order signal is bumped.
+  bool move_to(AsyncContext& ctx, const K& key, size_t index) {
+    MapMove outcome;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      outcome = inner_->keyed.move_to(key, index);
+    }
+    return apply_move(ctx, outcome);
+  }
+
+  bool move_before(AsyncContext& ctx, const K& key, const K& anchor) {
+    MapMove outcome;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      outcome = inner_->keyed.move_before(key, anchor);
+    }
+    return apply_move(ctx, outcome);
+  }
+
+  bool move_after(AsyncContext& ctx, const K& key, const K& anchor) {
+    MapMove outcome;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      outcome = inner_->keyed.move_after(key, anchor);
+    }
+    return apply_move(ctx, outcome);
+  }
+
+  // Remove `key`'s entry, disposing the removed node so a stale cached value
+  // cannot outlive the removal.
+  bool remove(AsyncContext& ctx, const K& key) {
+    std::optional<H> h;
+    MapMutation mutation;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      auto removed = inner_->keyed.remove(key);
+      h = removed.first;
+      mutation = removed.second;
+    }
+    if (!mutation_changed(mutation)) return false;
+    Traits::clear_dependents(*h, ctx);
+    bump_membership(ctx);
+    return true;
   }
 
   EntryKind entry_kind() const { return Traits::kind; }
@@ -155,17 +250,49 @@ class AsyncReactiveMap {
               const std::function<V(const K&)>& factory) {
     {
       std::lock_guard<std::mutex> g(inner_->state_mutex);
-      auto it = inner_->materialized.find(key);
-      if (it != inner_->materialized.end()) return it->second;  // warm.
+      if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
     }
     H handle = Traits::materialize(ctx, key, factory);
-    std::lock_guard<std::mutex> g(inner_->state_mutex);
-    // First writer wins on a race so the key keeps a stable handle.
-    auto it = inner_->materialized.find(key);
-    if (it != inner_->materialized.end()) return it->second;
-    inner_->materialized.emplace(key, handle);
-    inner_->order.push_back(key);
-    return handle;
+    // `H` is not required to be default-constructible (an `AsyncCellHandle`
+    // needs a context), so the race outcome is carried in an optional.
+    std::optional<H> stored;
+    MapMutation mutation;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      // First writer wins on a race so the key keeps a stable handle.
+      auto inserted = inner_->keyed.insert(key, handle);
+      stored.emplace(inserted.first);
+      mutation = inserted.second;
+    }
+    // Bump with the map lock released: a set can drive a dependent recompute
+    // that re-enters this map.
+    if (mutation_changed(mutation)) bump_membership(ctx);
+    return *stored;
+  }
+
+  bool apply_move(AsyncContext& ctx, MapMove outcome) {
+    if (!move_applied(outcome)) return false;
+    if (move_changed(outcome)) bump_order(ctx);
+    return true;
+  }
+
+  void bump_order(AsyncContext& ctx) {
+    uint64_t next;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      next = ++inner_->order_version;
+    }
+    ctx.context().set(inner_->order_signal, next);
+  }
+
+  void bump_membership(AsyncContext& ctx) {
+    uint64_t next;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      next = ++inner_->version;
+    }
+    ctx.context().set(inner_->membership, next);
+    bump_order(ctx);
   }
 };
 

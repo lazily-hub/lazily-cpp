@@ -60,6 +60,14 @@ struct ThreadSafeMapHandleTraits<Source<V>> {
   static V observe(const Source<V>& h, ThreadSafeContext& ctx) {
     return ctx.get(h);
   }
+
+  // Disposal on removal. The thread-safe context projects onto a real `Context`
+  // (`BasicThreadSafeContext` holds one), so the same node-level teardown the
+  // single-threaded map uses is available here — there was never a missing
+  // primitive, only a missing hook.
+  static void clear_dependents(const Source<V>& h, ThreadSafeContext& ctx) {
+    h.clear_dependents(ctx.context());
+  }
 };
 
 template <typename V>
@@ -80,14 +88,26 @@ struct ThreadSafeMapHandleTraits<Computed<V>> {
   static V observe(const Computed<V>& h, ThreadSafeContext& ctx) {
     return ctx.get(h);
   }
+
+  static void clear_dependents(const Computed<V>& h, ThreadSafeContext& ctx) {
+    h.clear(ctx.context());
+  }
 };
 
 template <typename K, typename H>
 struct ThreadSafeReactiveMapInner {
   // Present-set state guarded by `state_mutex`.
-  std::mutex state_mutex;
-  std::unordered_map<K, H> materialized;
-  std::vector<K> order;
+  mutable std::mutex state_mutex;
+  KeyedOrder<K, H> keyed;
+  // Reactive *set-membership* signal, minted on THIS flavor's graph. A shared
+  // graph-agnostic core cannot supply reactivity — each flavor must own its own
+  // version cells and route bumps through its own `set`.
+  Source<uint64_t> membership;
+  Source<uint64_t> order_signal;
+  // Untracked mirrors, guarded by `state_mutex`, so a bump never has to read a
+  // cell back through the graph while holding the map lock.
+  uint64_t version = 0;
+  uint64_t order_version = 0;
 };
 
 // The thread-safe keyed reactive collection (`#reactivemap`) generic over the
@@ -104,8 +124,11 @@ class ThreadSafeReactiveMap {
   using Traits = ThreadSafeMapHandleTraits<H>;
 
   // Create an empty map bound to `ctx`.
-  explicit ThreadSafeReactiveMap(ThreadSafeContext&)
-      : inner_(std::make_shared<ThreadSafeReactiveMapInner<K, H>>()) {}
+  explicit ThreadSafeReactiveMap(ThreadSafeContext& ctx)
+      : inner_(std::make_shared<ThreadSafeReactiveMapInner<K, H>>()) {
+    inner_->membership = ctx.template source<uint64_t>(0);
+    inner_->order_signal = ctx.template source<uint64_t>(0);
+  }
 
   // -- Shared surface --
 
@@ -126,12 +149,7 @@ class ThreadSafeReactiveMap {
   // Observe `key`'s value if the entry is present, else `std::nullopt`.
   // Non-minting.
   std::optional<V> observe(ThreadSafeContext& ctx, const K& key) {
-    std::optional<H> h;
-    {
-      std::lock_guard<std::mutex> g(inner_->state_mutex);
-      auto it = inner_->materialized.find(key);
-      if (it != inner_->materialized.end()) h = it->second;
-    }
+    auto h = handle(key);
     if (!h) return std::nullopt;
     return Traits::observe(*h, ctx);
   }
@@ -139,28 +157,126 @@ class ThreadSafeReactiveMap {
   // Return the existing entry handle for `key`, or `std::nullopt`. Non-minting.
   std::optional<H> handle(const K& key) const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    auto it = inner_->materialized.find(key);
-    if (it == inner_->materialized.end()) return std::nullopt;
-    return it->second;
+    return inner_->keyed.get(key);
   }
 
   // Whether `key` is currently materialized (present in the allocated set).
   bool is_present(const K& key) const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    return inner_->materialized.count(key) > 0;
+    return inner_->keyed.contains(key);
   }
 
   // The currently-materialized keys, in first-materialization order. The present
-  // set only grows.
+  // set only grows. Non-reactive — see `keys` for the tracked read.
   std::vector<K> present_keys() const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    return inner_->order;
+    return inner_->keyed.keys();
   }
 
-  // Number of currently-materialized entries.
+  // Number of currently-materialized entries. Non-reactive.
   size_t present_count() const {
     std::lock_guard<std::mutex> g(inner_->state_mutex);
-    return inner_->order.size();
+    return inner_->keyed.len();
+  }
+
+  // -- Core surface: ordering, atomic move, and reactive membership --
+  //
+  // These bind every flavor. The move algebra touches no entry handle and
+  // awaits nothing, so it is neither thread- nor async-coloured; the membership
+  // and order signals are minted on this flavor's own graph.
+
+  // Reactive snapshot of the keys in their current order. Subscribes the caller
+  // to order changes (add/remove and move/reorder), not to per-entry values.
+  //
+  // Generic over the read surface, exactly as the single-threaded map is: a
+  // `Compute&` registers a dependency edge, a bare `ThreadSafeContext&` does
+  // not. A reader that could only be spelled with the context would never be
+  // able to subscribe from inside a derived node.
+  template <typename Cx>
+  std::vector<K> keys(Cx& ctx) {
+    (void)ctx.get(inner_->order_signal);
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.keys();
+  }
+
+  // Reactive entry count. Subscribes the caller to membership changes only.
+  template <typename Cx>
+  size_t len(Cx& ctx) {
+    (void)ctx.get(inner_->membership);
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.len();
+  }
+
+  // Reactive emptiness check.
+  template <typename Cx>
+  bool is_empty(Cx& ctx) { return len(ctx) == 0; }
+
+  // Reactive membership test for `key`. Subscribes to membership changes
+  // (add/remove of any key), not to value changes.
+  template <typename Cx>
+  bool contains_key(Cx& ctx, const K& key) {
+    (void)ctx.get(inner_->membership);
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.contains(key);
+  }
+
+  // Non-reactive count.
+  size_t len_untracked() const { return present_count(); }
+
+  // Current 0-based position of `key` in the order. Non-reactive.
+  std::optional<size_t> position(const K& key) const {
+    std::lock_guard<std::mutex> g(inner_->state_mutex);
+    return inner_->keyed.position(key);
+  }
+
+  // Atomically move `key` to `index` (`#lzcellmove`). The entry keeps the same
+  // node, its dependents, and its CRDT lineage; only the order signal is bumped.
+  bool move_to(ThreadSafeContext& ctx, const K& key, size_t index) {
+    MapMove outcome;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      outcome = inner_->keyed.move_to(key, index);
+    }
+    return apply_move(ctx, outcome);
+  }
+
+  // Atomically move `key` to just before `anchor`.
+  bool move_before(ThreadSafeContext& ctx, const K& key, const K& anchor) {
+    MapMove outcome;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      outcome = inner_->keyed.move_before(key, anchor);
+    }
+    return apply_move(ctx, outcome);
+  }
+
+  // Atomically move `key` to just after `anchor`.
+  bool move_after(ThreadSafeContext& ctx, const K& key, const K& anchor) {
+    MapMove outcome;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      outcome = inner_->keyed.move_after(key, anchor);
+    }
+    return apply_move(ctx, outcome);
+  }
+
+  // Remove `key`'s entry, disposing the removed node so a reader cannot be left
+  // on a stale cached value. Returns whether the key was present.
+  bool remove(ThreadSafeContext& ctx, const K& key) {
+    std::optional<H> handle;
+    MapMutation mutation;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      auto removed = inner_->keyed.remove(key);
+      handle = removed.first;
+      mutation = removed.second;
+    }
+    if (!mutation_changed(mutation)) return false;
+    // Off the map lock: teardown and the membership bump can both drive a
+    // dependent recompute that re-enters this map.
+    Traits::clear_dependents(*handle, ctx);
+    bump_membership(ctx);
+    return true;
   }
 
   // This map's entry kind (`EntryKind::Source` / `EntryKind::Computed`).
@@ -175,19 +291,55 @@ class ThreadSafeReactiveMap {
     // a slot recompute triggered later can never re-enter this lock.
     {
       std::lock_guard<std::mutex> g(inner_->state_mutex);
-      auto it = inner_->materialized.find(key);
-      if (it != inner_->materialized.end()) return it->second;  // warm.
+      if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
     }
     H handle = Traits::materialize(ctx, key, factory);
-    std::lock_guard<std::mutex> g(inner_->state_mutex);
-    // Lost a materialization race for this key: first writer wins so the key keeps
-    // a stable handle (cell-identity). Our freshly-allocated node is orphaned in
-    // `ctx` (unreferenced, never observed) — a rare, harmless cost.
-    auto it = inner_->materialized.find(key);
-    if (it != inner_->materialized.end()) return it->second;
-    inner_->materialized.emplace(key, handle);
-    inner_->order.push_back(key);
-    return handle;
+    // `H` is not required to be default-constructible (an `AsyncCellHandle`
+    // needs a context), so the race outcome is carried in an optional.
+    std::optional<H> stored;
+    MapMutation mutation;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      // Lost a materialization race for this key: first writer wins so the key
+      // keeps a stable handle (cell-identity). Our freshly-allocated node is
+      // orphaned in `ctx` (unreferenced, never observed) — a rare, harmless cost.
+      auto inserted = inner_->keyed.insert(key, handle);
+      stored.emplace(inserted.first);
+      mutation = inserted.second;
+    }
+    // Bump with the map lock released: `ctx.set` can drive a dependent recompute
+    // that re-enters this map.
+    if (mutation_changed(mutation)) bump_membership(ctx);
+    return *stored;
+  }
+
+  // Bump the order signal only when the order actually changed.
+  bool apply_move(ThreadSafeContext& ctx, MapMove outcome) {
+    if (!move_applied(outcome)) return false;
+    if (move_changed(outcome)) bump_order(ctx);
+    return true;
+  }
+
+  // Bump the *order* signal (invalidates `keys` readers).
+  void bump_order(ThreadSafeContext& ctx) {
+    uint64_t next;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      next = ++inner_->order_version;
+    }
+    ctx.set(inner_->order_signal, next);
+  }
+
+  // Bump set-membership (invalidates `len` / `contains_key` readers). Always
+  // paired with an order bump because add/remove change order too.
+  void bump_membership(ThreadSafeContext& ctx) {
+    uint64_t next;
+    {
+      std::lock_guard<std::mutex> g(inner_->state_mutex);
+      next = ++inner_->version;
+    }
+    ctx.set(inner_->membership, next);
+    bump_order(ctx);
   }
 };
 
