@@ -115,6 +115,13 @@ KNOWN_UNCOVERED=(
   "collections/workqueue_lease_deadletter.json"
   # collections — mirrored by hand in test_merge.cpp / test_queue.cpp, which
   # never open the canonical bytes.
+  #
+  # The queuecell_* entries below are now OPENED and structurally validated by
+  # test_queue_family_conformance.cpp (the flavor ledger), which is why the
+  # replayed count rose. They stay listed because opening is not replaying: the
+  # BEHAVIOURAL assertions still live in test_queue.cpp as a hand transcription
+  # that can drift from the bytes it mirrors. Shrinking this list means making
+  # test_queue.cpp drive the fixture, not merely reading it elsewhere.
   "collections/mergecell_algebra.json"
   "collections/queuecell_bounded_backpressure.json"
   "collections/queuecell_closure_lifecycle.json"
