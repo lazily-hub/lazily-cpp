@@ -1,7 +1,7 @@
 # lazily-cpp — build, test, and verification targets.
 
-.PHONY: all configure build test check fmt tidy clean conformance \
-        conformance-coverage bench
+.PHONY: all configure build test test-interop-peer check fmt tidy clean \
+	conformance conformance-coverage bench
 
 BUILD_DIR ?= build
 
@@ -36,6 +36,9 @@ conformance: build
 conformance-coverage:
 	./scripts/check-conformance-coverage.sh $(CONFORMANCE_MANIFEST)
 
+test-interop-peer: build
+	./$(BUILD_DIR)/lazily_interop_peer --self-check
+
 bench: configure
 	cmake --build $(BUILD_DIR) --target lazily_bench --parallel
 	./$(BUILD_DIR)/benches/lazily_bench
@@ -54,5 +57,5 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Full local gate — run before committing.
-check: build test conformance-coverage
+check: build test test-interop-peer conformance-coverage
 	@echo "lazily-cpp: check OK"

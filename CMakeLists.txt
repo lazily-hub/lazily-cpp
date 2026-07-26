@@ -32,6 +32,19 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(lazily INTERFACE _GNU_SOURCE)
 endif()
 
+add_executable(lazily_interop_peer src/interop_peer.cpp)
+target_include_directories(lazily_interop_peer PRIVATE tests)
+target_link_libraries(lazily_interop_peer PRIVATE lazily)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(lazily_interop_peer PRIVATE
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+  )
+  target_link_options(lazily_interop_peer PRIVATE
+    -fsanitize=address,undefined
+  )
+endif()
+
 if(LAZILY_BUILD_FFI)
   add_library(lazily_ffi SHARED
     src/ffi.cpp
