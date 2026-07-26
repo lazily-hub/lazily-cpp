@@ -41,7 +41,7 @@ TEST(test_eager_source_map_resolves_immediately) {
   AsyncContext ctx;
   AsyncSourceMap<uint32_t, bool> fam(ctx);
   for (uint32_t k : {1u, 2u, 3u}) fam.set(ctx, k, true);
-  assert(fam.entry_kind() == EntryKind::Cell);
+  assert(fam.entry_kind() == EntryKind::Source);
   assert(fam.present_count() == 3);
   assert(fam.observe(ctx, 2) == std::optional<bool>(true));
   assert((fam.present_keys() == std::vector<uint32_t>{1, 2, 3}));

@@ -114,9 +114,15 @@ static void run_fixture(const std::string& name) {
     } else if (type == "advance") {
       topic.advance(ctx, subscriber());
     } else if (type == "subscribe") {
+      // `durability` is the discriminator the ephemeral-lifecycle fixture exists
+      // to pin. An ABSENT key used to default to Durable, so a renamed key would
+      // have replayed the ephemeral start-at-tail/auto-removal scenario as a
+      // durable-replay one and stayed green. `durability_of` already hard-fails
+      // on a bad string; absence is now a hard failure too.
       const Json* dur = op->find("durability");
-      topic.subscribe(ctx, subscriber(),
-                      dur ? durability_of(dur->str) : TopicDurability::Durable);
+      REQUIRE(dur != nullptr && dur->type == Json::Type::String,
+              ("subscribe op has no durability: " + tag).c_str());
+      topic.subscribe(ctx, subscriber(), durability_of(dur->str));
       all_ids.insert(subscriber());
     } else if (type == "disconnect") {
       topic.disconnect(ctx, subscriber());
@@ -132,6 +138,17 @@ static void run_fixture(const std::string& name) {
 
     const Json* expected = step->find("expected");
     REQUIRE(expected != nullptr, "topic step missing expected");
+
+    // `invalidates` and `reads` -- the two properties this runner exists for --
+    // were checked only when their key was present, with no catch-all. A rename
+    // dropped them silently while base_offset/elements/subscriptions kept the
+    // test green. Reject unknown keys instead.
+    for (const auto& kv : expected->object)
+      REQUIRE(kv.first == "invalidates" || kv.first == "reads" ||
+                  kv.first == "base_offset" || kv.first == "elements" ||
+                  kv.first == "subscriptions",
+              ("unrecognised topic expected key -- it would be silently "
+               "ignored: " + tag).c_str());
 
     // Per-subscriber reader invalidation.
     if (const Json* inval = expected->find("invalidates")) {
@@ -158,9 +175,15 @@ static void run_fixture(const std::string& name) {
     }
 
     // Topic state: base_offset + elements.
-    REQUIRE(topic.base_offset() == static_cast<size_t>(expected->find("base_offset")->as_int()),
+    const Json* want_base = expected->find("base_offset");
+    const Json* want_elements = expected->find("elements");
+    // `str_array(nullptr)` returns {}, so a renamed `elements` key degraded to
+    // "assert the topic is empty" rather than to a failure.
+    REQUIRE(want_base != nullptr && want_elements != nullptr,
+            ("topic step is missing base_offset or elements: " + tag).c_str());
+    REQUIRE(topic.base_offset() == static_cast<size_t>(want_base->as_int()),
             ("base_offset mismatch: " + tag).c_str());
-    REQUIRE(topic.elements() == str_array(expected->find("elements")),
+    REQUIRE(topic.elements() == str_array(want_elements),
             ("elements mismatch: " + tag).c_str());
 
     // Subscriptions: every expected entry matches; any known id absent from

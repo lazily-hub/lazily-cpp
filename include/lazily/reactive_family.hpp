@@ -54,12 +54,23 @@ namespace lazily {
 
 // Which kind of reactive node a `ReactiveMap` entry is — the handle-kind axis the
 // map abstracts over. Mirrors `EntryKind` in lazily-formal.
+//
+// The members carry the v2 kernel's node-kind names. There is deliberately NO
+// deprecated alias for the pre-v2 spellings `EntryKind::Cell` / `EntryKind::Slot`:
+// C++ has no way to add a name inside a scoped enum's scope after the fact, so
+// keeping those spellings compiling would mean turning `EntryKind` from an
+// `enum class` into a wrapper class — which would break `switch`, break
+// `static_cast` to the underlying type, and change the very values this rename
+// must leave alone. A one-line compile error naming the new member is strictly
+// better than that. (lazily-rs can keep `EntryKind::Cell` as a deprecated
+// associated const because Rust allows constants in a type's namespace; C++
+// enum classes have no equivalent.)
 enum class EntryKind {
   // An **input** cell (`Source`) — always materialized on `get`.
-  Cell,
+  Source,
   // A **derived** slot (`Computed`) — materialized eagerly (pre-mint) or lazily
   // on first read.
-  Slot,
+  Computed,
 };
 
 // Traits abstracting over the two map handle kinds — `Source<V>` (input
@@ -71,7 +82,7 @@ struct MapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
 struct MapHandleTraits<Source<V>> {
-  static constexpr EntryKind kind = EntryKind::Cell;
+  static constexpr EntryKind kind = EntryKind::Source;
 
   // An input has no derivation: materialize by setting its value directly.
   template <typename Compute>
@@ -92,7 +103,7 @@ struct MapHandleTraits<Source<V>> {
 
 template <typename V>
 struct MapHandleTraits<Computed<V>> {
-  static constexpr EntryKind kind = EntryKind::Slot;
+  static constexpr EntryKind kind = EntryKind::Computed;
 
   // A derived node: the same node an eager pre-mint would allocate. `compute` is
   // stored as the slot's recomputation.
@@ -281,7 +292,7 @@ class ReactiveMap {
   // Non-reactive count. Does not subscribe the caller to anything.
   size_t len_untracked() const { return inner_->order.size(); }
 
-  // This map's entry kind (`EntryKind::Cell` for a `SourceMap`, `EntryKind::Slot`
+  // This map's entry kind (`EntryKind::Source` for a `SourceMap`, `EntryKind::Computed`
   // for a `ComputedMap`).
   EntryKind entry_kind() const { return Traits::kind; }
 

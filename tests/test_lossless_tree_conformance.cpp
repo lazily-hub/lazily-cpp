@@ -145,6 +145,17 @@ static void apply_step(World& w, const Json* step) {
 }
 
 static void assert_expect(World& w, const Json* expect, const std::string& scen) {
+  // Four independent optional lookups with no catch-all: a renamed or added
+  // expect key made the whole scenario assert NOTHING and still report PASS
+  // (the scenario counter is independent of whether any expectation ran).
+  // Reject unknown keys the way the step dispatcher above already does.
+  for (const auto& kv : expect->object)
+    REQUIRE(kv.first == "render" || kv.first == "render_on" ||
+                kv.first == "live_nodes" || kv.first == "converged",
+            ("unrecognised lossless-tree expect key — it would be silently "
+             "ignored: " + scen).c_str());
+  REQUIRE(!expect->object.empty(),
+          ("a lossless-tree scenario asserts nothing: " + scen).c_str());
   if (const Json* text = expect->find("render"))
     REQUIRE(w.replicas.at("a").render() == text->str, ("render on a: " + scen).c_str());
   if (const Json* per = expect->find("render_on"))

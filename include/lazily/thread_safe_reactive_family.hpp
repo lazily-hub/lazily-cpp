@@ -48,7 +48,7 @@ struct ThreadSafeMapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
 struct ThreadSafeMapHandleTraits<Source<V>> {
-  static constexpr EntryKind kind = EntryKind::Cell;
+  static constexpr EntryKind kind = EntryKind::Source;
 
   // An input has no derivation: materialize by setting its value directly.
   template <typename K>
@@ -64,7 +64,7 @@ struct ThreadSafeMapHandleTraits<Source<V>> {
 
 template <typename V>
 struct ThreadSafeMapHandleTraits<Computed<V>> {
-  static constexpr EntryKind kind = EntryKind::Slot;
+  static constexpr EntryKind kind = EntryKind::Computed;
 
   // A derived node: the same node an eager pre-mint would allocate. The factory
   // is captured as the slot's recomputation; it runs on first read, off the map
@@ -163,7 +163,7 @@ class ThreadSafeReactiveMap {
     return inner_->order.size();
   }
 
-  // This map's entry kind (`EntryKind::Cell` / `EntryKind::Slot`).
+  // This map's entry kind (`EntryKind::Source` / `EntryKind::Computed`).
   EntryKind entry_kind() const { return Traits::kind; }
 
  protected:

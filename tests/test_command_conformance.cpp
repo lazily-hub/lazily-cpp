@@ -135,6 +135,19 @@ static CommandCancel decode_cancel(const Json* j) {
   c.reason = opt_str(j, "reason");
   return c;
 }
+// A required numeric field. `find(...)->as_int()` segfaults on a renamed or
+// missing key instead of reporting which field went missing, and `generation`
+// in particular is the stale discriminator `stale_generation_ignored.json`
+// exists to pin — a defaulted or crashed read there is a false negative dressed
+// as a crash. Fail with the field name instead.
+static long long req_int(const Json* j, const char* key) {
+  const Json* node = j->find(key);
+  REQUIRE(node != nullptr && node->type == Json::Type::Number,
+          (std::string("fixture is missing required numeric field `") + key +
+           "`").c_str());
+  return node->as_int();
+}
+
 static CommandEvents decode_events(const Json* j) {
   CommandEvents out;
   for (const auto& e : j->find("events")->array) {
@@ -142,7 +155,7 @@ static CommandEvents decode_events(const Json* j) {
     ev.event_id = e->find("event_id")->str;
     ev.command_id = e->find("command_id")->str;
     ev.kind = event_kind_of(e->find("kind")->str);
-    ev.generation = e->find("generation")->as_int();
+    ev.generation = req_int(e.get(), "generation");
     ev.detail = opt_str(e.get(), "detail");
     out.events.push_back(std::move(ev));
   }
@@ -150,13 +163,13 @@ static CommandEvents decode_events(const Json* j) {
 }
 static CommandProjectionImage decode_projection_image(const Json* j) {
   CommandProjectionImage img;
-  img.generation = j->find("generation")->as_int();
+  img.generation = req_int(j, "generation");
   for (const auto& c : j->find("commands")->array) {
     CommandProjectionEntry e;
     e.command_id = c->find("command_id")->str;
     e.status = status_of(c->find("status")->str);
     e.terminal = c->find("terminal")->as_bool();
-    e.generation = c->find("generation")->as_int();
+    e.generation = req_int(c.get(), "generation");
     e.reason = opt_str(c.get(), "reason");
     e.terminal_receipt_id = opt_str(c.get(), "terminal_receipt_id");
     e.last_event_id = opt_str(c.get(), "last_event_id");
@@ -169,7 +182,10 @@ static CausalReceipt decode_receipt(const Json* j) {
   r.receipt_id = j->find("receipt_id")->str;
   r.causation_id = j->find("causation_id")->str;
   r.observer = j->find("observer") ? j->find("observer")->str : std::string();
-  r.generation = j->find("generation") ? j->find("generation")->as_int() : 0;
+  // `generation` is the stale discriminator `stale_generation_ignored.json`
+  // exists to pin. Defaulting an absent/renamed key to 0 made the receipt look
+  // stale, so the "ignored frames" expectations passed for the wrong reason.
+  r.generation = req_int(j, "generation");
   r.outcome = outcome_of(j->find("outcome")->str);
   r.reason = opt_str(j, "reason");
   r.payload_hash = opt_str(j, "payload_hash");

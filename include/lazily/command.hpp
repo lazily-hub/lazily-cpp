@@ -290,6 +290,17 @@ class CrdtPlaneRuntime {
 
   PeerId peer() const { return peer_; }
 
+  // Returns the number of NEW ops accepted into the op log — ops not already
+  // present under the (node, stamp) dedup key. That is the spec's
+  // `applied_count` (`conformance/distributed/anti_entropy_converge.json`) and
+  // what every other binding returns: state-based CvRDT idempotence is stated as
+  // "re-delivering a frame applies 0 new ops", which is a statement about the
+  // log, not about the winner.
+  //
+  // This previously counted only the ops that CHANGED the winner, so a frame
+  // carrying a superseded-but-new op reported fewer applied than it accepted
+  // (5 ops in, 4 reported for lww_last_writer_wins). Nothing caught it because
+  // the fixture had no runner in this binding.
   int ingest_ops(const std::vector<CrdtOp>& ops) {
     int applied = 0;
     for (auto& op : ops) {
@@ -301,6 +312,7 @@ class CrdtPlaneRuntime {
       if (log_.count(dedup_key)) continue;
       log_.insert(dedup_key);
       ops_log_.push_back(op);
+      applied++;
 
       // Observe stamp in frontier
       HlcStamp stamp = from_wire(op.stamp);
@@ -328,7 +340,6 @@ class CrdtPlaneRuntime {
       auto it = winning_.find(op.node);
       if (it == winning_.end() || stamp > from_wire(it->second.stamp)) {
         winning_[op.node] = op;
-        applied++;
       }
     }
     return applied;

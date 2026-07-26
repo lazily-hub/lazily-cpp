@@ -40,10 +40,44 @@
 
 namespace lazily_test {
 
-// Distinct canonical fixture paths opened by this binary.
+// Distinct canonical fixture ids opened by this binary, spelled relative to the
+// conformance root (`statechart/flat_cycle.json`, `snapshot_minimal.json`).
 inline std::set<std::string>& loaded_fixtures() {
   static std::set<std::string> loaded;
   return loaded;
+}
+
+// Cross-binary coverage manifest.
+//
+// REQUIRE_FIXTURES_LOADED is per-binary: it proves *this* executable read what
+// it claims to. It cannot see the suite as a whole, so an entire area losing its
+// runner — deleted, renamed, dropped from tests/CMakeLists.txt, filtered out by
+// a `ctest -R` selector — leaves every surviving binary green. lazily-kt closes
+// that hole with a manifest of fixtures actually read, flushed at JVM shutdown
+// and audited by scripts/check-conformance-coverage.sh; this is the same
+// mechanism for a suite of independent C++ executables. Every binary APPENDS the
+// fixtures it opened to the file named by LAZILY_CONFORMANCE_MANIFEST, and the
+// script asserts the union covers every required area.
+//
+// The append happens at static-destruction time. `ensure_manifest_flusher()`
+// touches `loaded_fixtures()` before constructing the flusher so the set is
+// created first and therefore destroyed last — the flusher's destructor is
+// guaranteed to see a live set. A run that aborts (REQUIRE failure) skips the
+// flush, which is correct: an aborted run has already failed.
+struct ManifestFlusher {
+  ~ManifestFlusher() {
+    const char* out = std::getenv("LAZILY_CONFORMANCE_MANIFEST");
+    if (out == nullptr || *out == '\0') return;
+    std::ofstream manifest(out, std::ios::app);
+    if (!manifest) return;
+    for (const auto& id : loaded_fixtures()) manifest << id << "\n";
+  }
+};
+
+inline void ensure_manifest_flusher() {
+  loaded_fixtures();               // constructed first => destroyed last
+  static ManifestFlusher flusher;  // destroyed before `loaded_fixtures()`
+  (void)flusher;
 }
 
 // Root of the canonical conformance corpus (sibling lazily-spec checkout).
@@ -77,7 +111,8 @@ inline std::string spec_fixture_text(const std::string& area,
   REQUIRE(input,
           "canonical conformance fixture missing from the lazily-spec sibling "
           "— a conformance test must not pass without its fixture");
-  loaded_fixtures().insert(path.string());
+  ensure_manifest_flusher();
+  loaded_fixtures().insert(area.empty() ? name : area + "/" + name);
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
 }

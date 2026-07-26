@@ -118,7 +118,7 @@ TEST(test_computed_map_materialize_all_is_eager) {
   assert(fam.present_count() == 5);
   for (uint32_t k : {0u, 1u, 2u, 5u, 9u}) assert(fam.is_present(k));
   assert(fam.get(ctx, 5) == std::optional<uint32_t>(15));
-  assert(fam.entry_kind() == EntryKind::Slot);
+  assert(fam.entry_kind() == EntryKind::Computed);
 }
 
 // -- move_* (order/membership separation) --
@@ -243,14 +243,14 @@ TEST(test_conformance_entry_kind) {
   SourceMap<std::string, uint32_t> cells(ctx);
   cells.set(ctx, "in_a", cell_val("in_a"));
   cells.set(ctx, "in_b", cell_val("in_b"));
-  assert(cells.entry_kind() == EntryKind::Cell);
+  assert(cells.entry_kind() == EntryKind::Source);
   assert(cells.present_count() == 2);
   assert(cells.get(ctx, "in_a") == std::optional<uint32_t>(5));
   assert(cells.get(ctx, "in_b") == std::optional<uint32_t>(7));
 
   // Slots deferred until read.
   ComputedMap<std::string, uint32_t> slots(ctx);
-  assert(slots.entry_kind() == EntryKind::Slot);
+  assert(slots.entry_kind() == EntryKind::Computed);
   assert(slots.present_count() == 0);
   assert(slots.get_or_insert_with(ctx, "der_x", slot_val) == 12);
   assert(slots.is_present("der_x") && !slots.is_present("der_y"));

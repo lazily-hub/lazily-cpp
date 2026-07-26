@@ -161,11 +161,34 @@ static void run_scenario(const Json* scenario, size_t idx) {
   REQUIRE(expect != nullptr, "scenario missing expect");
   const std::string tag = "scenario " + std::to_string(idx);
 
-  // `len`/`contains_all` target: first element of first `orders_equal` pair, else "a".
+  // Eight independent optional lookups with no catch-all: a renamed or added
+  // expect key ran the whole op schedule and asserted zero properties while the
+  // scenario still counted as passed. The STEP dispatcher above hard-fails on an
+  // unknown op; the expectation side did not. It does now.
+  for (const auto& kv : expect->object)
+    REQUIRE(kv.first == "order" || kv.first == "get" || kv.first == "len" ||
+                kv.first == "orders_equal" || kv.first == "order_on" ||
+                kv.first == "get_on" || kv.first == "contains_all" ||
+                kv.first == "not_contains_on",
+            ("unrecognised seqcrdt expect key — it would be silently ignored: " +
+             tag).c_str());
+  REQUIRE(!expect->object.empty(),
+          ("a seqcrdt scenario asserts nothing: " + tag).c_str());
+
+  // `len`/`contains_all` target: first element of the first `orders_equal` pair,
+  // else replica "a". The fallback is correct for the single-replica scenarios
+  // (which never merge), but it used to be reachable by ACCIDENT too: a renamed
+  // `orders_equal` key silently retargeted a post-merge convergence assertion at
+  // replica "a", the seed that never received the merges. The unknown-key
+  // rejection added above is what closes that — a renamed key now fails before
+  // this lambda is ever called — so the fallback below is only reached when the
+  // fixture genuinely asserts nothing about multi-replica convergence.
   auto converged_target = [&]() -> std::string {
-    if (const Json* oe = expect->find("orders_equal"))
-      if (!oe->array.empty() && !oe->array[0]->array.empty())
-        return oe->array[0]->array[0]->str;
+    if (const Json* oe = expect->find("orders_equal")) {
+      REQUIRE(!oe->array.empty() && !oe->array[0]->array.empty(),
+              ("orders_equal must name a replica pair: " + tag).c_str());
+      return oe->array[0]->array[0]->str;
+    }
     return "a";
   };
 

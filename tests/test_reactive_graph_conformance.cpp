@@ -389,6 +389,27 @@ struct Ref {
   Ref(Kind k, SlotId i, SlotId e) : kind(k), id(i), effect_id(e) {}
 };
 
+// `handle_kind` (dispose_stale_handle) names the kind a recycled handle must
+// have had. This was a ternary chain ending in a bare `: Kind::Effect`, so ANY
+// spelling other than "cell"/"slot" — a typo, "signal", or the v2 kernel's
+// "source"/"computed" rename landing upstream — silently resolved to Effect and
+// the assertion that pins the recycled handle's kind became vacuous (it passed
+// outright whenever the recorded handle happened to be an effect). Unknown
+// spellings are now a hard abort, which is how every sibling mapper in this file
+// already behaves.
+//
+// Both the current spellings and the v2 kernel's names are accepted, and neither
+// is privileged, so the day the corpus flips this runner does not go red for the
+// wrong reason.
+inline Kind handle_kind_of(const std::string& spelling) {
+  if (spelling == "cell" || spelling == "source") return Kind::Cell;
+  if (spelling == "slot" || spelling == "computed") return Kind::Slot;
+  if (spelling == "effect") return Kind::Effect;
+  if (spelling == "signal") return Kind::Signal;
+  REQUIRE(false, "unknown handle_kind spelling in fixture");
+  return Kind::Cell;  // unreachable
+}
+
 // Everything a scenario leaves behind that `observationally_equal` compares.
 struct Observation {
   std::vector<std::string> cleanup_order;
@@ -926,10 +947,7 @@ void replay(const std::string& fixture, World& w,
               "dispose_stale_handle op needs handle_of and handle_kind");
       auto it = w.stale.find(of->str);
       REQUIRE(it != w.stale.end(), "no recorded handle for handle_of");
-      const Kind expected_kind = want_kind->str == "cell"   ? Kind::Cell
-                                 : want_kind->str == "slot" ? Kind::Slot
-                                                            : Kind::Effect;
-      REQUIRE(it->second.kind == expected_kind,
+      REQUIRE(it->second.kind == handle_kind_of(want_kind->str),
               "handle_kind does not match the recorded handle");
       dispose_ref(w, it->second);
     } else {
@@ -982,10 +1000,18 @@ void replay(const std::string& fixture, World& w,
                 dependencies_of(w, e.first),
                 static_cast<std::size_t>(e.second->as_int()), report);
       } else if (key == "error") {
-        // Any non-null error code means "this op must fail"; null means "must
-        // not". The runner does not model error identity -- the fixtures carry
-        // the code so the contract is legible, and this binding's own tests pin
+        // A string error code means "this op must fail"; null means "must not".
+        // The runner does not model error identity -- the fixtures carry the
+        // code so the contract is legible, and this binding's own tests pin
         // which exception it throws.
+        //
+        // Any OTHER JSON type is rejected rather than read as "no error": if the
+        // corpus ever spelled this `true` or `{"code": ...}`, treating it as
+        // not-a-string would silently INVERT the assertion into "this op must
+        // succeed" and both this check and the `value` guard below would flip
+        // together.
+        REQUIRE(want.type == Json::Type::String || want.type == Json::Type::Null,
+                "`error` must be an error-code string or null");
         const bool wants_error = want.type == Json::Type::String;
         check(fixture, i, "error", op_error, wants_error, report);
       } else if (key == "value") {
@@ -1061,7 +1087,23 @@ void replay(const std::string& fixture, World& w,
   if (!tail) return;
 
   const std::size_t tail_step = steps.size();
+  // The per-step loop above ends in `REQUIRE(false, "unrecognised expectation
+  // key")`; this tail did not, so a `final_state` or `after_publish` block that
+  // gained a key (or had one renamed) dropped every assertion in it and stayed
+  // green. Both blocks now reject unknown keys the same way.
+  // `observationally_equal` is a whole-fixture key handled by the caller, not a
+  // per-scenario one; it is listed so this loop does not reject it.
+  for (const auto& kv : tail->object)
+    REQUIRE(kv.first == "final_state" || kv.first == "after_publish" ||
+                kv.first == "observationally_equal",
+            "unrecognised scenario-tail key in fixture — it would be silently "
+            "ignored");
   if (const Json* fin = tail->find("final_state")) {
+    for (const auto& kv : fin->object)
+      REQUIRE(kv.first == "dependents_of" || kv.first == "readable" ||
+                  kv.first == "read",
+              "unrecognised final_state key in fixture — it would be silently "
+              "ignored");
     if (const Json* deps = fin->find("dependents_of")) {
       for (const auto& e : deps->object) {
         const std::size_t got = dependents_of(w, e.first);
@@ -1092,8 +1134,15 @@ void replay(const std::string& fixture, World& w,
 
   const Json* publish = tail->find("after_publish");
   if (!publish) return;
+  for (const auto& kv : publish->object)
+    REQUIRE(kv.first == "op" || kv.first == "observed_by" || kv.first == "read" ||
+                kv.first == "dependents_of",
+            "unrecognised after_publish key in fixture — it would be silently "
+            "ignored");
+  // A missing `op` used to `return` here, silently dropping `observed_by` — the
+  // fan-out observable this block exists to assert.
   const Json* pop = publish->find("op");
-  if (!pop) return;
+  REQUIRE(pop != nullptr, "after_publish block has no op to publish");
 
   const Json* pid = pop->find("id");
   const Json* pvalue = pop->find("value");

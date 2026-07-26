@@ -67,9 +67,28 @@ add_executable(test_statechart test_statechart.cpp)
 target_link_libraries(test_statechart PRIVATE lazily)
 add_test(NAME statechart COMMAND test_statechart)
 
+# Replays ../lazily-spec/conformance/statechart/ — seven canonical fixtures the
+# binding had no runner for at all (test_statechart.cpp builds its charts by hand
+# and never opens the corpus).
+add_executable(test_statechart_conformance test_statechart_conformance.cpp)
+target_link_libraries(test_statechart_conformance PRIVATE lazily)
+add_test(NAME StatechartConformance COMMAND test_statechart_conformance)
+
 add_executable(test_collections test_collections.cpp)
 target_link_libraries(test_collections PRIVATE lazily)
 add_test(NAME collections COMMAND test_collections)
+
+# Replays ../lazily-spec/conformance/receipts/ — one canonical fixture the
+# binding had no runner for in any form.
+add_executable(test_receipts_conformance test_receipts_conformance.cpp)
+target_link_libraries(test_receipts_conformance PRIVATE lazily)
+add_test(NAME ReceiptsConformance COMMAND test_receipts_conformance)
+
+# Replays ../lazily-spec/conformance/distributed/anti_entropy_converge.json —
+# CRDT-plane convergence, applied-op accounting, idempotence, order independence.
+add_executable(test_distributed_conformance test_distributed_conformance.cpp)
+target_link_libraries(test_distributed_conformance PRIVATE lazily)
+add_test(NAME DistributedConformance COMMAND test_distributed_conformance)
 
 add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
@@ -114,6 +133,14 @@ add_test(NAME thread_safe_reactive_family COMMAND test_thread_safe_reactive_fami
 add_executable(test_async_reactive_family test_async_reactive_family.cpp)
 target_link_libraries(test_async_reactive_family PRIVATE lazily)
 add_test(NAME async_reactive_family COMMAND test_async_reactive_family)
+
+# Replays the canonical materialization fixture bytes (the hand-mirrored copies
+# in test_reactive_family cannot detect drift). Reads the sibling lazily-spec
+# checkout, so it lives in the LAZILY_SPEC_CONFORMANCE_TESTS list below and
+# skips (77) when that checkout is absent.
+add_executable(test_materialization_conformance test_materialization_conformance.cpp)
+target_link_libraries(test_materialization_conformance PRIVATE lazily)
+add_test(NAME MaterializationConformance COMMAND test_materialization_conformance)
 
 add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
@@ -222,7 +249,11 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_topic_conformance
   test_lossless_tree_conformance
   test_command_conformance
-  test_reactive_graph_conformance)
+  test_materialization_conformance
+  test_reactive_graph_conformance
+  test_statechart_conformance
+  test_receipts_conformance
+  test_distributed_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
   target_compile_definitions(${_target} PRIVATE
@@ -240,7 +271,18 @@ set_tests_properties(
   WindowingConformance
   ResilienceConformance
   ServiceConformance
+  MaterializationConformance
   ReactiveGraphConformance
+  # These four read the sibling checkout exactly like the rest but were missing
+  # from this list, so an absent lazily-spec turned their exit-77 SKIP into a
+  # hard ctest FAILURE instead of a skip.
+  SeqCrdtConformance
+  TopicConformance
+  LosslessTreeConformance
+  CommandConformance
+  StatechartConformance
+  ReceiptsConformance
+  DistributedConformance
   PROPERTIES SKIP_RETURN_CODE 77)
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake

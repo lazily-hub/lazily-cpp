@@ -41,7 +41,7 @@ struct AsyncMapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
 struct AsyncMapHandleTraits<AsyncCellHandle<V>> {
-  static constexpr EntryKind kind = EntryKind::Cell;
+  static constexpr EntryKind kind = EntryKind::Source;
 
   template <typename K>
   static AsyncCellHandle<V> materialize(
@@ -58,7 +58,7 @@ struct AsyncMapHandleTraits<AsyncCellHandle<V>> {
 
 template <typename V>
 struct AsyncMapHandleTraits<AsyncSlotHandle<V>> {
-  static constexpr EntryKind kind = EntryKind::Slot;
+  static constexpr EntryKind kind = EntryKind::Computed;
 
   // A derived node whose async recompute yields the sync factory value. Resolve
   // it with `get_async()` on the returned handle.

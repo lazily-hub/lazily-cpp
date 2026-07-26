@@ -38,7 +38,7 @@ TEST(test_eager_source_map_materializes_all_via_set) {
   ThreadSafeContext ctx;
   ThreadSafeSourceMap<uint32_t, bool> fam(ctx);
   for (uint32_t k : {1u, 2u, 3u}) fam.set(ctx, k, true);
-  assert(fam.entry_kind() == EntryKind::Cell);
+  assert(fam.entry_kind() == EntryKind::Source);
   assert(fam.present_count() == 3);
   assert(fam.is_present(1) && fam.is_present(2) && fam.is_present(3));
   assert((fam.present_keys() == std::vector<uint32_t>{1, 2, 3}));
@@ -180,11 +180,11 @@ TEST(test_conformance_entry_kind) {
   cells.set(ctx, "in_a", cell_val("in_a"));
   cells.set(ctx, "in_b", cell_val("in_b"));
   assert(cells.present_count() == 2);
-  assert(cells.entry_kind() == EntryKind::Cell);
+  assert(cells.entry_kind() == EntryKind::Source);
 
   ThreadSafeComputedMap<std::string, uint32_t> slots(ctx);
   assert(slots.present_count() == 0);
-  assert(slots.entry_kind() == EntryKind::Slot);
+  assert(slots.entry_kind() == EntryKind::Computed);
   assert(slots.get_or_insert_with(ctx, "der_x", slot_val) == 12);
   assert(slots.is_present("der_x") && !slots.is_present("der_y"));
   assert(cells.observe(ctx, "in_a") == std::optional<uint32_t>(5));
