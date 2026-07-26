@@ -68,15 +68,15 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ | C# |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: | :--: |
 | Reactive graph — two cell kinds (nodes `SourceCell` / `ComputedCell`; handles `Source<T, M>` / `Computed<T>`) + `Effect` sink + eager `Computed` (`computed().eager()`) / all cells guarded / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed-map materialization (`ComputedMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Thread-safe keyed map (`ThreadSafeComputedMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Async keyed map (`AsyncComputedMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed reactive maps (`ReactiveMap`: `CellMap` / `SlotMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -281,16 +281,16 @@ reactive nodes of a single handle kind — `CellHandle<V>` (input cells) or
 `SlotHandle<V>` (derived slots) — with **reactive membership and order**. It has
 two specializations (`#reactivemap`):
 
-- **`CellMap<K, V>`** — input-cell entries. Adds cell-only `set` and eager
+- **`SourceMap<K, V>`** — input-cell entries. Adds cell-only `set` and eager
   value-minting (`entry` / `entry_with`).
-- **`SlotMap<K, V>`** — derived-slot entries. `get_or_insert_with` mints a slot on
+- **`ComputedMap<K, V>`** — derived-slot entries. `get_or_insert_with` mints a slot on
   first access (**lazy materialization**); `materialize_all` pre-mints the keyset
-  (**eager**). A slot's value is derived, so `SlotMap` has no `set`. There is no
+  (**eager**). A slot's value is derived, so `ComputedMap` has no `set`. There is no
   eager/lazy mode flag — lazy is mint-on-access, eager is the pre-mint loop.
 
 ```cpp
 lazily::Context ctx;
-lazily::SlotMap<uint32_t, uint32_t> slots(ctx);
+lazily::ComputedMap<uint32_t, uint32_t> slots(ctx);
 
 // Lazy: a slot is minted on first access ("materialize on pull").
 assert(slots.present_count() == 0);
@@ -298,7 +298,7 @@ assert(slots.get_or_insert_with(ctx, 5, [](const uint32_t& k) { return k * 3; })
 assert(slots.present_count() == 1);
 
 // Eager: pre-mint the whole keyset up front — observationally identical.
-lazily::SlotMap<uint32_t, uint32_t> eager(ctx);
+lazily::ComputedMap<uint32_t, uint32_t> eager(ctx);
 eager.materialize_all(ctx, {0, 1, 2}, [](const uint32_t& k) { return k * 3; });
 assert(eager.present_count() == 3);
 ```
@@ -310,7 +310,7 @@ readers recompute only on add/remove (or reorder for `keys`), never on a per-ent
 value change. The contract is proved in lazily-formal (`Materialization.lean`) and
 exercised against the shared lazily-spec `conformance/materialization/*` fixtures.
 The `Send + Sync` (`ThreadSafeReactiveMap`) and async (`AsyncReactiveMap`) flavors
-carry the same `CellMap` / `SlotMap` specializations.
+carry the same `SourceMap` / `ComputedMap` specializations.
 
 ### State charts
 
@@ -452,10 +452,10 @@ target_link_libraries(your_target PRIVATE lazily)
 | `rc_ptr.hpp` | RcPtr/ArcPtr smart pointers (closures), RcTraits/ArcTraits value-storage traits |
 | `state_machine.hpp` | Flat state machine (Cell-backed FSM) |
 | `statechart.hpp` | Full Harel/SCXML state charts (compound, parallel, history, actions, guards) |
-| `collections.hpp` | CellTree, keyed reconciliation (LIS) (re-exports `CellMap` / `SlotMap` / `ReactiveMap`) |
-| `reactive_family.hpp` | `ReactiveMap<K, V, H>` — unified keyed cell/slot collection with reactive membership + order; `CellMap` (`set` + eager `entry`) and `SlotMap` (`get_or_insert_with` lazy mint / `materialize_all` eager pre-mint) specializations (`#reactivemap`) |
-| `thread_safe_reactive_family.hpp` | `ThreadSafeReactiveMap` — `Send + Sync` keyed collection over ThreadSafeContext (mutex-guarded present set); `ThreadSafeCellMap` / `ThreadSafeSlotMap` (`#reactivemap`) |
-| `async_reactive_family.hpp` | `AsyncReactiveMap` — keyed collection over AsyncContext (`observe` → `std::optional<V>`, eventual transparency); `AsyncCellMap` / `AsyncSlotMap` (`#reactivemap`) |
+| `collections.hpp` | CellTree, keyed reconciliation (LIS) (re-exports `SourceMap` / `ComputedMap` / `ReactiveMap`) |
+| `reactive_family.hpp` | `ReactiveMap<K, V, H>` — unified keyed cell/slot collection with reactive membership + order; `SourceMap` (`set` + eager `entry`) and `ComputedMap` (`get_or_insert_with` lazy mint / `materialize_all` eager pre-mint) specializations (`#reactivemap`) |
+| `thread_safe_reactive_family.hpp` | `ThreadSafeReactiveMap` — `Send + Sync` keyed collection over ThreadSafeContext (mutex-guarded present set); `ThreadSafeSourceMap` / `ThreadSafeComputedMap` (`#reactivemap`) |
+| `async_reactive_family.hpp` | `AsyncReactiveMap` — keyed collection over AsyncContext (`observe` → `std::optional<V>`, eventual transparency); `AsyncSourceMap` / `AsyncComputedMap` (`#reactivemap`) |
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `work_queue.hpp` | WorkQueueCell competing-consumer claims, leases, retries, and dead letters |
 | `relay.hpp` | RelayCell conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` (InProc/Framed) + Outbox/Inbox roles + Rate/Window/Expiry/Priority/`KeyedRelay` policies (`#relaycell`) |

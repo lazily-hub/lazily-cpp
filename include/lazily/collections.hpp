@@ -15,7 +15,7 @@
 
 namespace lazily {
 
-// `CellMap` / `SlotMap` / `ReactiveMap` are defined in reactive_family.hpp.
+// `SourceMap` / `ComputedMap` / `ReactiveMap` are defined in reactive_family.hpp.
 
 // -- CellTree: ordered keyed reactive tree --
 
@@ -23,7 +23,7 @@ template <typename Id, typename V>
 struct CellTreeNode {
   Id id;
   Source<V> value;
-  std::optional<CellMap<Id, bool>> order;
+  std::optional<SourceMap<Id, bool>> order;
   std::unordered_map<Id, size_t> child_index;
   std::vector<std::shared_ptr<CellTreeNode<Id, V>>> children;
 };
@@ -239,7 +239,7 @@ std::vector<DiffOp<K, V>> reconcile(const std::vector<std::pair<K, V>>& old_seq,
 }
 
 template <typename K, typename V>
-void apply_to_map(Context& ctx, CellMap<K, V>& map,
+void apply_to_map(Context& ctx, SourceMap<K, V>& map,
                    const std::vector<DiffOp<K, V>>& ops) {
   for (auto& op : ops) {
     switch (op.kind) {
@@ -284,7 +284,7 @@ void apply_to_tree(Context& ctx, CellTree<K, V>& tree,
 }
 
 template <typename K, typename V>
-void CellMap<K, V>::reconcile(Context& ctx,
+void SourceMap<K, V>::reconcile(Context& ctx,
                                const std::vector<std::pair<K, V>>& new_seq) {
   std::vector<std::pair<K, V>> old_seq;
   for (auto& k : this->keys(ctx)) {

@@ -2,13 +2,13 @@
 //
 // Mirrors the Rust reference tests in `lazily-rs/src/cell_family.rs` and the
 // shared lazily-spec conformance fixtures in `conformance/materialization/*`
-// (now `"model": "SlotMap"`):
+// (now `"model": "ComputedMap"`):
 //   - observational_transparency.json
 //   - deferral_not_deallocation.json
 //   - entry_kind_orthogonal_to_mode.json
 //
 // The unified primitive is `ReactiveMap<K, V, H>` with two specializations:
-// `CellMap<K, V>` (input cells, `set` + eager `entry`) and `SlotMap<K, V>`
+// `SourceMap<K, V>` (input cells, `set` + eager `entry`) and `ComputedMap<K, V>`
 // (derived slots, `get_or_insert_with` lazy mint + `materialize_all` eager
 // pre-mint). There is no eager/lazy mode flag.
 
@@ -34,12 +34,12 @@ static int test_passed = 0;
   } name##_instance;                                      \
   static void name()
 
-// -- CellMap: eager value-minting + set --
+// -- SourceMap: eager value-minting + set --
 
 // `entry_caches_one_cell_per_key`: same key -> same cell; second default ignored.
 TEST(test_entry_caches_one_cell_per_key) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a1 = map.entry(ctx, "a", 1);
   auto a2 = map.entry(ctx, "a", 999);
   assert(a1.id() == a2.id());
@@ -50,7 +50,7 @@ TEST(test_entry_caches_one_cell_per_key) {
 // `get_or_insert_with_mints_once_then_returns_existing`.
 TEST(test_get_or_insert_with_mints_once) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   int calls = 0;
   assert(map.get_or_insert_with(ctx, "a", [&](const std::string&) {
     ++calls;
@@ -72,7 +72,7 @@ TEST(test_get_or_insert_with_mints_once) {
 // `membership_is_reactive_but_value_changes_are_not`.
 TEST(test_membership_reactive_value_not) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
@@ -92,12 +92,12 @@ TEST(test_membership_reactive_value_not) {
   assert((keys == std::vector<std::string>{"a", "c"}));
 }
 
-// -- SlotMap: lazy mint-on-access + eager materialize_all --
+// -- ComputedMap: lazy mint-on-access + eager materialize_all --
 
-// `slot_map_mints_lazily_and_caches`.
-TEST(test_slot_map_mints_lazily_and_caches) {
+// `computed_map_mints_lazily_and_caches`.
+TEST(test_computed_map_mints_lazily_and_caches) {
   Context ctx;
-  SlotMap<uint32_t, uint32_t> fam(ctx);
+  ComputedMap<uint32_t, uint32_t> fam(ctx);
   assert(fam.present_count() == 0);
   assert(fam.get_or_insert_with(ctx, 7, [](const uint32_t& k) { return k * 2; }) ==
          14);
@@ -110,10 +110,10 @@ TEST(test_slot_map_mints_lazily_and_caches) {
          14);
 }
 
-// `slot_map_materialize_all_is_eager`.
-TEST(test_slot_map_materialize_all_is_eager) {
+// `computed_map_materialize_all_is_eager`.
+TEST(test_computed_map_materialize_all_is_eager) {
   Context ctx;
-  SlotMap<uint32_t, uint32_t> fam(ctx);
+  ComputedMap<uint32_t, uint32_t> fam(ctx);
   fam.materialize_all(ctx, {0, 1, 2, 5, 9}, [](const uint32_t& k) { return k * 3; });
   assert(fam.present_count() == 5);
   for (uint32_t k : {0u, 1u, 2u, 5u, 9u}) assert(fam.is_present(k));
@@ -125,7 +125,7 @@ TEST(test_slot_map_materialize_all_is_eager) {
 
 TEST(test_move_to_reorders_and_keeps_identity) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
@@ -141,7 +141,7 @@ TEST(test_move_to_reorders_and_keeps_identity) {
 
 TEST(test_pure_move_spares_membership) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
@@ -163,7 +163,7 @@ TEST(test_pure_move_spares_membership) {
 
 TEST(test_move_before_and_after) {
   Context ctx;
-  CellMap<int, int> map(ctx);
+  SourceMap<int, int> map(ctx);
   for (int k = 0; k < 4; ++k) map.entry(ctx, k, k * 10);
   assert((map.keys(ctx) == std::vector<int>{0, 1, 2, 3}));
 
@@ -177,7 +177,7 @@ TEST(test_move_before_and_after) {
   assert(!map.move_after(ctx, 99, 2));
 }
 
-// -- Spec conformance fixtures (model: SlotMap) --
+// -- Spec conformance fixtures (model: ComputedMap) --
 
 // conformance/materialization/observational_transparency.json
 TEST(test_conformance_observational_transparency) {
@@ -186,9 +186,9 @@ TEST(test_conformance_observational_transparency) {
   std::vector<uint32_t> keys{0, 1, 2, 5, 9};
 
   // Eager pre-mints all; lazy (untouched map) has none present.
-  SlotMap<uint32_t, uint32_t> eager(ctx);
+  ComputedMap<uint32_t, uint32_t> eager(ctx);
   eager.materialize_all(ctx, keys, factory);
-  SlotMap<uint32_t, uint32_t> lazy(ctx);
+  ComputedMap<uint32_t, uint32_t> lazy(ctx);
   assert(eager.present_count() == 5);
   assert(lazy.present_count() == 0);
 
@@ -199,7 +199,7 @@ TEST(test_conformance_observational_transparency) {
   assert(eager.present_keys() == keys);
 
   // Lazy reads [1,5] -> present set exactly {1,5}.
-  SlotMap<uint32_t, uint32_t> lazy2(ctx);
+  ComputedMap<uint32_t, uint32_t> lazy2(ctx);
   for (uint32_t k : {1u, 5u}) lazy2.get_or_insert_with(ctx, k, factory);
   assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
 }
@@ -210,13 +210,13 @@ TEST(test_conformance_deferral_not_deallocation) {
   auto factory = [](const uint32_t& k) { return k * 2; };  // spec.val = k*2
   std::vector<uint32_t> keys{1, 2, 3, 4, 5};
 
-  SlotMap<uint32_t, uint32_t> eager(ctx);
+  ComputedMap<uint32_t, uint32_t> eager(ctx);
   eager.materialize_all(ctx, keys, factory);
   assert(eager.present_keys() == keys);
   for (uint32_t k : keys) assert(eager.get(ctx, k) == std::optional<uint32_t>(k * 2));
 
   // reads = [2,4,2,5]; present_after_each_read is monotone [1,2,2,3].
-  SlotMap<uint32_t, uint32_t> lazy(ctx);
+  ComputedMap<uint32_t, uint32_t> lazy(ctx);
   std::vector<size_t> present_after_each_read;
   for (uint32_t k : {2u, 4u, 2u, 5u}) {
     assert(lazy.get_or_insert_with(ctx, k, factory) == k * 2);
@@ -231,7 +231,7 @@ TEST(test_conformance_deferral_not_deallocation) {
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
 TEST(test_conformance_entry_kind) {
   // Entries: in_a/in_b are cells (val 5/7); der_x/der_y are slots (val 12/35).
-  // A CellMap models the input side; a SlotMap models the derived side.
+  // A SourceMap models the input side; a ComputedMap models the derived side.
   Context ctx;
   auto cell_val = [](const std::string& k) -> uint32_t {
     return k == "in_a" ? 5 : 7;
@@ -240,7 +240,7 @@ TEST(test_conformance_entry_kind) {
     return k == "der_x" ? 12 : 35;
   };
 
-  CellMap<std::string, uint32_t> cells(ctx);
+  SourceMap<std::string, uint32_t> cells(ctx);
   cells.set(ctx, "in_a", cell_val("in_a"));
   cells.set(ctx, "in_b", cell_val("in_b"));
   assert(cells.entry_kind() == EntryKind::Cell);
@@ -249,7 +249,7 @@ TEST(test_conformance_entry_kind) {
   assert(cells.get(ctx, "in_b") == std::optional<uint32_t>(7));
 
   // Slots deferred until read.
-  SlotMap<std::string, uint32_t> slots(ctx);
+  ComputedMap<std::string, uint32_t> slots(ctx);
   assert(slots.entry_kind() == EntryKind::Slot);
   assert(slots.present_count() == 0);
   assert(slots.get_or_insert_with(ctx, "der_x", slot_val) == 12);

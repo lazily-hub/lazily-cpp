@@ -4,7 +4,7 @@
 // Mirrors the Rust reference tests in
 // `lazily-rs/src/thread_safe_reactive_family.rs` and replays the shared
 // lazily-spec materialization conformance fixtures (`conformance/materialization/*`,
-// `"model": "SlotMap"`) through the `Send + Sync` map: eager pre-mint
+// `"model": "ComputedMap"`) through the `Send + Sync` map: eager pre-mint
 // (`materialize_all`) vs. lazy mint-on-access (`get_or_insert_*`), observational
 // transparency, and present-set monotonicity across threads. There is no
 // eager/lazy mode flag.
@@ -34,9 +34,9 @@ static int test_passed = 0;
 
 // -- Rust-parity unit tests --
 
-TEST(test_eager_cell_map_materializes_all_via_set) {
+TEST(test_eager_source_map_materializes_all_via_set) {
   ThreadSafeContext ctx;
-  ThreadSafeCellMap<uint32_t, bool> fam(ctx);
+  ThreadSafeSourceMap<uint32_t, bool> fam(ctx);
   for (uint32_t k : {1u, 2u, 3u}) fam.set(ctx, k, true);
   assert(fam.entry_kind() == EntryKind::Cell);
   assert(fam.present_count() == 3);
@@ -44,9 +44,9 @@ TEST(test_eager_cell_map_materializes_all_via_set) {
   assert((fam.present_keys() == std::vector<uint32_t>{1, 2, 3}));
 }
 
-TEST(test_lazy_slot_map_defers_until_read) {
+TEST(test_lazy_computed_map_defers_until_read) {
   ThreadSafeContext ctx;
-  ThreadSafeSlotMap<uint32_t, uint32_t> fam(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> fam(ctx);
   assert(fam.present_count() == 0);
   assert(!fam.is_present(2));
   assert(fam.get_or_insert_with(ctx, 2, [](const uint32_t& k) { return k * 10; }) ==
@@ -55,19 +55,19 @@ TEST(test_lazy_slot_map_defers_until_read) {
   assert(fam.present_count() == 1);
 }
 
-TEST(test_eager_slot_map_materializes_all_up_front) {
+TEST(test_eager_computed_map_materializes_all_up_front) {
   ThreadSafeContext ctx;
-  ThreadSafeSlotMap<uint32_t, uint32_t> fam(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> fam(ctx);
   fam.materialize_all(ctx, {7, 8}, [](const uint32_t& k) { return k; });
   assert(fam.present_count() == 2);
 }
 
 TEST(test_observational_transparency_eager_equals_lazy) {
   ThreadSafeContext ctx_e;
-  ThreadSafeSlotMap<uint32_t, uint32_t> eager(ctx_e);
+  ThreadSafeComputedMap<uint32_t, uint32_t> eager(ctx_e);
   eager.materialize_all(ctx_e, {1, 2, 3}, [](const uint32_t& k) { return k * 2; });
   ThreadSafeContext ctx_l;
-  ThreadSafeSlotMap<uint32_t, uint32_t> lazy(ctx_l);
+  ThreadSafeComputedMap<uint32_t, uint32_t> lazy(ctx_l);
   for (uint32_t k : {1u, 2u, 3u}) {
     auto ve = eager.observe(ctx_e, k);
     auto vl = lazy.get_or_insert_with(ctx_l, k, [](const uint32_t& kk) { return kk * 2; });
@@ -77,7 +77,7 @@ TEST(test_observational_transparency_eager_equals_lazy) {
 
 TEST(test_present_set_grows_monotonically) {
   ThreadSafeContext ctx;
-  ThreadSafeSlotMap<uint32_t, uint32_t> fam(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> fam(ctx);
   auto id = [](const uint32_t& k) { return k; };
   (void)fam.get_or_insert_with(ctx, 5, id);
   (void)fam.get_or_insert_with(ctx, 5, id);  // repeat: no growth
@@ -90,7 +90,7 @@ TEST(test_present_set_grows_monotonically) {
 // reactively when a cell flips.
 TEST(test_derived_count_reacts_to_cell_writes) {
   ThreadSafeContext ctx;
-  ThreadSafeCellMap<uint32_t, bool> liveness(ctx);
+  ThreadSafeSourceMap<uint32_t, bool> liveness(ctx);
   for (uint32_t k : {10u, 20u, 30u}) liveness.set(ctx, k, true);
   std::vector<Source<bool>> handles;
   for (uint32_t k : {10u, 20u, 30u}) handles.push_back(*liveness.handle(k));
@@ -110,7 +110,7 @@ TEST(test_derived_count_reacts_to_cell_writes) {
 // The whole point of the thread-safe flavor: a map shared across threads.
 TEST(test_shared_across_threads) {
   ThreadSafeContext ctx;
-  ThreadSafeCellMap<uint32_t, bool> fam(ctx);
+  ThreadSafeSourceMap<uint32_t, bool> fam(ctx);
   for (uint32_t k : {1u, 2u, 3u, 4u}) fam.set(ctx, k, true);
   std::vector<std::thread> threads;
   std::vector<char> results(4, 0);
@@ -130,9 +130,9 @@ TEST(test_conformance_observational_transparency) {
   ThreadSafeContext ctx;
   auto factory = [](const uint32_t& k) { return k * 3; };
   std::vector<uint32_t> keys{0, 1, 2, 5, 9};
-  ThreadSafeSlotMap<uint32_t, uint32_t> eager(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> eager(ctx);
   eager.materialize_all(ctx, keys, factory);
-  ThreadSafeSlotMap<uint32_t, uint32_t> lazy(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> lazy(ctx);
   assert(eager.present_count() == 5);
   assert(lazy.present_count() == 0);
   for (uint32_t k : keys)
@@ -140,7 +140,7 @@ TEST(test_conformance_observational_transparency) {
            std::optional<uint32_t>(lazy.get_or_insert_with(ctx, k, factory)));
   assert(eager.present_keys() == keys);
 
-  ThreadSafeSlotMap<uint32_t, uint32_t> lazy2(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> lazy2(ctx);
   for (uint32_t k : {1u, 5u}) lazy2.get_or_insert_with(ctx, k, factory);
   assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
 }
@@ -150,12 +150,12 @@ TEST(test_conformance_deferral_not_deallocation) {
   ThreadSafeContext ctx;
   auto factory = [](const uint32_t& k) { return k * 2; };
   std::vector<uint32_t> keys{1, 2, 3, 4, 5};
-  ThreadSafeSlotMap<uint32_t, uint32_t> eager(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> eager(ctx);
   eager.materialize_all(ctx, keys, factory);
   assert(eager.present_keys() == keys);
   for (uint32_t k : keys) assert(eager.observe(ctx, k) == std::optional<uint32_t>(k * 2));
 
-  ThreadSafeSlotMap<uint32_t, uint32_t> lazy(ctx);
+  ThreadSafeComputedMap<uint32_t, uint32_t> lazy(ctx);
   std::vector<size_t> present_after_each_read;
   for (uint32_t k : {2u, 4u, 2u, 5u}) {
     assert(lazy.get_or_insert_with(ctx, k, factory) == k * 2);
@@ -176,13 +176,13 @@ TEST(test_conformance_entry_kind) {
     return k == "der_x" ? 12 : 35;
   };
 
-  ThreadSafeCellMap<std::string, uint32_t> cells(ctx);
+  ThreadSafeSourceMap<std::string, uint32_t> cells(ctx);
   cells.set(ctx, "in_a", cell_val("in_a"));
   cells.set(ctx, "in_b", cell_val("in_b"));
   assert(cells.present_count() == 2);
   assert(cells.entry_kind() == EntryKind::Cell);
 
-  ThreadSafeSlotMap<std::string, uint32_t> slots(ctx);
+  ThreadSafeComputedMap<std::string, uint32_t> slots(ctx);
   assert(slots.present_count() == 0);
   assert(slots.entry_kind() == EntryKind::Slot);
   assert(slots.get_or_insert_with(ctx, "der_x", slot_val) == 12);

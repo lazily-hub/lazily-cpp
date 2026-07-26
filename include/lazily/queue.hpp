@@ -163,7 +163,7 @@ private:
 //
 // The head reader observes the *current* head value — after a pop it sees the
 // next element (or empty), not a stale value. There is no random-access
-// `queue[N]` reader; per-position reactivity is the domain of `CellMap`.
+// `queue[N]` reader; per-position reactivity is the domain of `SourceMap`.
 
 template <typename T, typename Storage = VecDequeStorage<T>>
 struct QueueCellInner {

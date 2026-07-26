@@ -20,11 +20,11 @@ static int test_passed = 0;
   } name##_instance;                                      \
   static void name()
 
-// -- CellMap basics --
+// -- SourceMap basics --
 
-TEST(test_cellmap_entry_caches) {
+TEST(test_sourcemap_entry_caches) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a1 = map.entry(ctx, "a", 1);
   auto a2 = map.entry(ctx, "a", 999);
   assert(a1.id() == a2.id());
@@ -32,9 +32,9 @@ TEST(test_cellmap_entry_caches) {
   assert(map.len_untracked() == 1);
 }
 
-TEST(test_cellmap_membership_reactive) {
+TEST(test_sourcemap_membership_reactive) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
@@ -53,9 +53,9 @@ TEST(test_cellmap_membership_reactive) {
   assert(ctx.get(count) == 2);
 }
 
-TEST(test_cellmap_per_entry_independent) {
+TEST(test_sourcemap_per_entry_independent) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a = map.entry(ctx, "a", 1);
   auto b = map.entry(ctx, "b", 2);
 
@@ -71,9 +71,9 @@ TEST(test_cellmap_per_entry_independent) {
   assert(ctx.get(view_a) == 50);
 }
 
-TEST(test_cellmap_move_preserves_identity) {
+TEST(test_sourcemap_move_preserves_identity) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
@@ -86,9 +86,9 @@ TEST(test_cellmap_move_preserves_identity) {
   assert(a_handle && a_handle->id() == a.id());
 }
 
-TEST(test_cellmap_pure_move_spares_membership) {
+TEST(test_sourcemap_pure_move_spares_membership) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
@@ -107,9 +107,9 @@ TEST(test_cellmap_pure_move_spares_membership) {
   assert(ctx.is_set(has_b) && "contains_key must stay cached on pure move");
 }
 
-TEST(test_cellmap_move_before_after) {
+TEST(test_sourcemap_move_before_after) {
   Context ctx;
-  CellMap<int, int> map(ctx);
+  SourceMap<int, int> map(ctx);
   for (int k = 0; k < 4; ++k) map.entry(ctx, k, k * 10);
 
   assert(map.move_before(ctx, 3, 1));
@@ -195,7 +195,7 @@ TEST(test_reconcile_full_reversal) {
 
 TEST(test_reconcile_apply_to_map) {
   Context ctx;
-  CellMap<std::string, int> map(ctx);
+  SourceMap<std::string, int> map(ctx);
   map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);

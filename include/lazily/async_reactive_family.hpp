@@ -172,7 +172,7 @@ class AsyncReactiveMap {
 // An async **input-cell** map: every entry is an always-resolved
 // `AsyncCellHandle<V>`. Adds cell-only `set`.
 template <typename K, typename V>
-class AsyncCellMap : public AsyncReactiveMap<K, V, AsyncCellHandle<V>> {
+class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncCellHandle<V>> {
  public:
   using Base = AsyncReactiveMap<K, V, AsyncCellHandle<V>>;
   using Base::Base;
@@ -192,7 +192,7 @@ class AsyncCellMap : public AsyncReactiveMap<K, V, AsyncCellHandle<V>> {
 // An async **derived-slot** map: entries are `AsyncSlotHandle<V>` minted lazily
 // on access or eagerly via `materialize_all`, resolved via `get_async()`.
 template <typename K, typename V>
-class AsyncSlotMap : public AsyncReactiveMap<K, V, AsyncSlotHandle<V>> {
+class AsyncComputedMap : public AsyncReactiveMap<K, V, AsyncSlotHandle<V>> {
  public:
   using Base = AsyncReactiveMap<K, V, AsyncSlotHandle<V>>;
   using Base::Base;
@@ -208,6 +208,18 @@ class AsyncSlotMap : public AsyncReactiveMap<K, V, AsyncSlotHandle<V>> {
     materialize_all(ctx, std::vector<K>(keys), std::move(factory));
   }
 };
+
+// -- Deprecated pre-v2 spellings --
+//
+// The v2 kernel renamed the node kinds to `Source` and `Computed`; the map names
+// followed. The old names remain as alias templates so existing callers keep
+// compiling — they are not removed.
+template <typename K, typename V>
+using AsyncCellMap [[deprecated("renamed to AsyncSourceMap")]] =
+    AsyncSourceMap<K, V>;
+template <typename K, typename V>
+using AsyncSlotMap [[deprecated("renamed to AsyncComputedMap")]] =
+    AsyncComputedMap<K, V>;
 
 }  // namespace lazily
 

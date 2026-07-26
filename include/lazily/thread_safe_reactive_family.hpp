@@ -20,8 +20,8 @@
 //   - Present-set monotonicity: the materialized set only grows (deferral, never
 //     de-allocation).
 //
-// Its two specializations are `ThreadSafeCellMap` (input cells) and
-// `ThreadSafeSlotMap` (derived slots). Rust reference:
+// Its two specializations are `ThreadSafeSourceMap` (input cells) and
+// `ThreadSafeComputedMap` (derived slots). Rust reference:
 // `lazily-rs/src/thread_safe_reactive_family.rs`.
 
 #include <cstddef>
@@ -117,7 +117,7 @@ class ThreadSafeReactiveMap {
   }
 
   // Get the value at `key`, minting the entry via `factory(key)` first if absent.
-  // For a `ThreadSafeSlotMap` this is the lazy materialization pull.
+  // For a `ThreadSafeComputedMap` this is the lazy materialization pull.
   V get_or_insert_with(ThreadSafeContext& ctx, const K& key,
                        std::function<V(const K&)> factory) {
     return Traits::observe(get_or_insert_handle(ctx, key, factory), ctx);
@@ -192,9 +192,9 @@ class ThreadSafeReactiveMap {
 };
 
 // A thread-safe **input-cell** map: every entry is an always-materialized
-// `Source<V>`. Adds cell-only `set`. The `Send + Sync` analog of `CellMap`.
+// `Source<V>`. Adds cell-only `set`. The `Send + Sync` analog of `SourceMap`.
 template <typename K, typename V>
-class ThreadSafeCellMap
+class ThreadSafeSourceMap
     : public ThreadSafeReactiveMap<K, V, Source<V>> {
  public:
   using Base = ThreadSafeReactiveMap<K, V, Source<V>>;
@@ -215,7 +215,7 @@ class ThreadSafeCellMap
 // A thread-safe **derived-slot** map: entries are `Computed<V>` minted lazily
 // on access or eagerly via `materialize_all`.
 template <typename K, typename V>
-class ThreadSafeSlotMap
+class ThreadSafeComputedMap
     : public ThreadSafeReactiveMap<K, V, Computed<V>> {
  public:
   using Base = ThreadSafeReactiveMap<K, V, Computed<V>>;
@@ -233,6 +233,18 @@ class ThreadSafeSlotMap
     materialize_all(ctx, std::vector<K>(keys), std::move(factory));
   }
 };
+
+// -- Deprecated pre-v2 spellings --
+//
+// The v2 kernel renamed the node kinds to `Source` and `Computed`; the map names
+// followed. The old names remain as alias templates so existing callers keep
+// compiling — they are not removed.
+template <typename K, typename V>
+using ThreadSafeCellMap [[deprecated("renamed to ThreadSafeSourceMap")]] =
+    ThreadSafeSourceMap<K, V>;
+template <typename K, typename V>
+using ThreadSafeSlotMap [[deprecated("renamed to ThreadSafeComputedMap")]] =
+    ThreadSafeComputedMap<K, V>;
 
 }  // namespace lazily
 

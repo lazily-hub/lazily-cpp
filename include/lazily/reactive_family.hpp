@@ -2,7 +2,7 @@
 #define LAZILY_REACTIVE_FAMILY_HPP
 
 // The unified keyed reactive collection `ReactiveMap<K, V, H>` and its
-// `CellMap` / `SlotMap` specializations (`#reactivemap`).
+// `SourceMap` / `ComputedMap` specializations (`#reactivemap`).
 //
 // `Context` addresses nodes by opaque `SlotId`. `ReactiveMap` adds a *keyed*
 // layer on top: a hash collection whose **membership is itself reactive**, with
@@ -14,20 +14,20 @@
 // `H` (the `MapHandleTraits` trait, implemented for `Source<V>` input cells
 // and `Computed<V>` derived slots):
 //
-//   - `CellMap<K, V>` = `ReactiveMap<K, V, Source<V>>` — **input-cell**
+//   - `SourceMap<K, V>` = `ReactiveMap<K, V, Source<V>>` — **input-cell**
 //     entries. Adds cell-only `set` and eager value-minting (`entry` /
 //     `entry_with`).
-//   - `SlotMap<K, V>` = `ReactiveMap<K, V, Computed<V>>` — **derived-slot**
+//   - `ComputedMap<K, V>` = `ReactiveMap<K, V, Computed<V>>` — **derived-slot**
 //     entries. `get_or_insert_with` mints a slot on first access (**lazy
-//     materialization**); a slot's value is derived, so `SlotMap` has **no
+//     materialization**); a slot's value is derived, so `ComputedMap` has **no
 //     `set`**. Eager materialization is a pre-mint loop over the keyset
 //     (`materialize_all`); lazy is mint-on-access. There is **no eager/lazy mode
 //     flag**.
 //
 // The shared surface — `get_or_insert_with` / `remove` / `move_*` / membership /
 // order / `keys` / `len` / `contains_key` — lives on the generic `ReactiveMap`.
-// `set` and eager value-minting are the `CellMap`-only specialization; the
-// pre-mint eager helper is the `SlotMap`-only specialization.
+// `set` and eager value-minting are the `SourceMap`-only specialization; the
+// pre-mint eager helper is the `ComputedMap`-only specialization.
 //
 // Each entry is its own reactive node, so a reader that depends on entry `a` is
 // not invalidated when entry `b` changes. Membership (the set of keys) is
@@ -131,8 +131,8 @@ struct ReactiveMapInner {
 // Cheap to copy (a `shared_ptr` to shared inner state) so it can be captured by
 // compute/effect closures. Operations run against the owning `Context`.
 //
-// The two specializations a binding exposes are `CellMap` (input cells) and
-// `SlotMap` (derived slots).
+// The two specializations a binding exposes are `SourceMap` (input cells) and
+// `ComputedMap` (derived slots).
 template <typename K, typename V, typename H>
 class ReactiveMap {
  public:
@@ -151,8 +151,8 @@ class ReactiveMap {
   // -- Shared surface --
 
   // Get the value at `key`, minting the entry via `factory(key)` first if the key
-  // is absent — the mint-on-access recipe. For a `SlotMap` this is the lazy
-  // materialization pull; for a `CellMap` it seeds an input cell. Bumps reactive
+  // is absent — the mint-on-access recipe. For a `ComputedMap` this is the lazy
+  // materialization pull; for a `SourceMap` it seeds an input cell. Bumps reactive
   // membership only on insert.
   V get_or_insert_with(Context& ctx, const K& key,
                        std::function<V(const K&)> factory) {
@@ -281,8 +281,8 @@ class ReactiveMap {
   // Non-reactive count. Does not subscribe the caller to anything.
   size_t len_untracked() const { return inner_->order.size(); }
 
-  // This map's entry kind (`EntryKind::Cell` for a `CellMap`, `EntryKind::Slot`
-  // for a `SlotMap`).
+  // This map's entry kind (`EntryKind::Cell` for a `SourceMap`, `EntryKind::Slot`
+  // for a `ComputedMap`).
   EntryKind entry_kind() const { return Traits::kind; }
 
  protected:
@@ -292,9 +292,9 @@ class ReactiveMap {
   // caching the handle and bumping reactive membership. Re-minting an existing
   // key returns the cached handle.
   //
-  // `compute` is a generic `(auto&)` value factory. For a `SlotMap` it is
+  // `compute` is a generic `(auto&)` value factory. For a `ComputedMap` it is
   // stored as the derived slot's recompute (invoked with a `Compute&`, the
-  // value-threaded tracking surface — `#lzcellkernel`); for a `CellMap` it is
+  // value-threaded tracking surface — `#lzcellkernel`); for a `SourceMap` it is
   // evaluated once eagerly against the `Context&` to seed the input cell.
   template <typename ComputeFn>
   H mint_with(Context& ctx, const K& key, ComputeFn compute) {
@@ -324,11 +324,11 @@ class ReactiveMap {
 
 // A keyed **input-cell** collection: every entry is a settable `Source<V>`.
 //
-// The `CellMap` specialization of `ReactiveMap` adds cell-only `set` and eager
+// The `SourceMap` specialization of `ReactiveMap` adds cell-only `set` and eager
 // value-minting (`entry` / `entry_with`) on top of the shared reactive keyed
 // surface.
 template <typename K, typename V>
-class CellMap : public ReactiveMap<K, V, Source<V>> {
+class SourceMap : public ReactiveMap<K, V, Source<V>> {
  public:
   using Base = ReactiveMap<K, V, Source<V>>;
   using Base::Base;
@@ -350,7 +350,7 @@ class CellMap : public ReactiveMap<K, V, Source<V>> {
   }
 
   // Set the value at `key`, inserting a new entry (and bumping membership) if it
-  // does not exist yet. Cell-only: an input is settable; a `SlotMap` slot is not.
+  // does not exist yet. Cell-only: an input is settable; a `ComputedMap` slot is not.
   void set(Context& ctx, const K& key, V value) {
     auto h = this->handle(key);
     if (h) {
@@ -368,9 +368,9 @@ class CellMap : public ReactiveMap<K, V, Source<V>> {
 // A keyed **derived-slot** collection: every entry is a `Computed<V>` whose
 // value is derived. `get_or_insert_with` mints a slot on first access (lazy
 // materialization); `materialize_all` pre-mints the keyset (eager). A slot's
-// value is derived, so `SlotMap` has **no `set`**.
+// value is derived, so `ComputedMap` has **no `set`**.
 template <typename K, typename V>
-class SlotMap : public ReactiveMap<K, V, Computed<V>> {
+class ComputedMap : public ReactiveMap<K, V, Computed<V>> {
  public:
   using Base = ReactiveMap<K, V, Computed<V>>;
   using Base::Base;
@@ -387,6 +387,16 @@ class SlotMap : public ReactiveMap<K, V, Computed<V>> {
     materialize_all(ctx, std::vector<K>(keys), std::move(factory));
   }
 };
+
+// -- Deprecated pre-v2 spellings --
+//
+// The v2 kernel renamed the node kinds to `Source` and `Computed`; the map names
+// followed. The old names remain as alias templates so existing callers keep
+// compiling — they are not removed.
+template <typename K, typename V>
+using CellMap [[deprecated("renamed to SourceMap")]] = SourceMap<K, V>;
+template <typename K, typename V>
+using SlotMap [[deprecated("renamed to ComputedMap")]] = ComputedMap<K, V>;
 
 }  // namespace lazily
 
