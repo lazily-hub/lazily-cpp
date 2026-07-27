@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -225,6 +226,49 @@ struct JsonParser {
 inline JsonPtr parse_json(const std::string& text) {
   JsonParser parser(text);
   return parser.parse();
+}
+
+inline const Json& json_member(const Json& object, const std::string& key) {
+  REQUIRE(object.is_object(), "expected JSON object");
+  const Json* value = object.find(key);
+  REQUIRE(value != nullptr, "missing JSON object member");
+  return *value;
+}
+
+inline const std::vector<JsonPtr>& json_array(const Json& value) {
+  REQUIRE(value.is_array(), "expected JSON array");
+  return value.array;
+}
+
+inline const std::string& json_string(const Json& value) {
+  REQUIRE(value.type == Json::Type::String, "expected JSON string");
+  return value.as_str();
+}
+
+inline std::uint64_t json_u64(const Json& value) {
+  REQUIRE(value.type == Json::Type::Number && value.number >= 0,
+          "expected non-negative JSON number");
+  return static_cast<std::uint64_t>(value.as_int());
+}
+
+inline double json_number(const Json& value) {
+  REQUIRE(value.type == Json::Type::Number, "expected JSON number");
+  return value.as_double();
+}
+
+inline bool json_bool(const Json& value) {
+  REQUIRE(value.type == Json::Type::Bool, "expected JSON boolean");
+  return value.as_bool();
+}
+
+inline std::optional<std::string> json_optional_string(const Json& value) {
+  if (value.is_null()) return std::nullopt;
+  return json_string(value);
+}
+
+inline std::optional<std::uint64_t> json_optional_u64(const Json& value) {
+  if (value.is_null()) return std::nullopt;
+  return json_u64(value);
 }
 
 }  // namespace lazily_test

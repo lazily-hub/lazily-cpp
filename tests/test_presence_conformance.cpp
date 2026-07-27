@@ -1,7 +1,7 @@
 // Cross-language conformance for the presence + ephemeral plane
 // (`#lzpresence`) — port of `lazily-rs/tests/presence_conformance.rs`.
 //
-// Steps are transcribed directly from the shared fixtures
+// Config, operations, and expectations are parsed directly from the shared fixtures
 // (`lazily-spec/conformance/presence/{presence,awareness,ephemeral}.json`,
 // read from the sibling lazily-spec checkout). Each step asserts the op's
 // projected reader value(s) (`expected.*`) and INVALIDATION (`expected.
@@ -13,12 +13,10 @@
 #include <lazily/presence.hpp>
 
 #include <cassert>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <map>
 #include <optional>
 #include <string>
+#include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
 using namespace lazily;
@@ -39,17 +37,27 @@ static int test_passed = 0;
 
 using PresenceMap = std::map<uint64_t, std::string>;
 
-static std::string fixture_text(const std::string& name) {
-  return lazily_test::spec_fixture_text("presence", name);
+static lazily_test::JsonPtr fixture(const std::string& name) {
+  return lazily_test::parse_json(
+      lazily_test::spec_fixture_text("presence", name));
+}
+
+static PresenceMap json_presence_map(const lazily_test::Json& value) {
+  assert(value.is_object());
+  PresenceMap result;
+  for (const auto& entry : value.object) {
+    result.emplace(std::stoull(entry.first),
+                   lazily_test::json_string(*entry.second));
+  }
+  return result;
 }
 
 // -- PresenceCell: heartbeat / evict / TTL tick; live-view invalidation --
 TEST(test_presence) {
-  const auto fx = fixture_text("presence.json");
-  assert(fx.find("\"model\": \"PresenceCell\"") != std::string::npos);
-
+  const auto fx = fixture("presence.json");
   Context ctx;
-  const uint64_t ttl = 5;  // config.ttl
+  const uint64_t ttl = lazily_test::json_u64(lazily_test::json_member(
+      lazily_test::json_member(*fx, "config"), "ttl"));
   PresenceCell<uint64_t, std::string> cell(ctx, ttl);
   auto pc = cell.present_cell();
   auto observed =
@@ -63,30 +71,36 @@ TEST(test_presence) {
     assert((!was) == invalidates);
   };
 
-  // heartbeat peer 1 "online" now 0
-  cell.heartbeat(ctx, 1, "online", 0);
-  step({{1, "online"}}, true);
-  // heartbeat peer 2 "online" now 1
-  cell.heartbeat(ctx, 2, "online", 1);
-  step({{1, "online"}, {2, "online"}}, true);
-  // heartbeat peer 1 "away" now 3
-  cell.heartbeat(ctx, 1, "away", 3);
-  step({{1, "away"}, {2, "online"}}, true);
-  // evict peer 2 now 4
-  cell.evict(ctx, 2, 4);
-  step({{1, "away"}}, true);
-  // tick now 8 — peer 1 expired at 5
-  cell.tick(ctx, 8);
-  step({}, true);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    if (type == "heartbeat") {
+      cell.heartbeat(
+          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
+          lazily_test::json_string(lazily_test::json_member(op, "value")), now);
+    } else if (type == "evict") {
+      cell.evict(
+          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now);
+    } else {
+      assert(type == "tick");
+      cell.tick(ctx, now);
+    }
+    step(json_presence_map(lazily_test::json_member(expected, "present")),
+         lazily_test::json_bool(lazily_test::json_member(
+             lazily_test::json_member(expected, "invalidates"), "present")));
+  }
 }
 
 // -- AwarenessCell: last-writer-per-peer, no merge; TTL tick --
 TEST(test_awareness) {
-  const auto fx = fixture_text("awareness.json");
-  assert(fx.find("\"model\": \"AwarenessCell\"") != std::string::npos);
-
+  const auto fx = fixture("awareness.json");
   Context ctx;
-  const uint64_t ttl = 5;  // config.ttl
+  const uint64_t ttl = lazily_test::json_u64(lazily_test::json_member(
+      lazily_test::json_member(*fx, "config"), "ttl"));
   AwarenessCell<uint64_t, std::string> cell(ctx, ttl);
   auto pc = cell.present_cell();
   auto observed =
@@ -100,21 +114,25 @@ TEST(test_awareness) {
     assert((!was) == invalidates);
   };
 
-  // set peer 1 "cursor-a" now 0
-  cell.set(ctx, 1, "cursor-a", 0);
-  step({{1, "cursor-a"}}, true);
-  // set peer 2 "cursor-b" now 1
-  cell.set(ctx, 2, "cursor-b", 1);
-  step({{1, "cursor-a"}, {2, "cursor-b"}}, true);
-  // set peer 1 "cursor-a2" now 2 (overwrite, no merge)
-  cell.set(ctx, 1, "cursor-a2", 2);
-  step({{1, "cursor-a2"}, {2, "cursor-b"}}, true);
-  // tick now 5 — nothing expired yet (expiries 7 and 6)
-  cell.tick(ctx, 5);
-  step({{1, "cursor-a2"}, {2, "cursor-b"}}, false);
-  // tick now 7 — both expired
-  cell.tick(ctx, 7);
-  step({}, true);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    if (type == "set") {
+      cell.set(
+          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
+          lazily_test::json_string(lazily_test::json_member(op, "value")), now);
+    } else {
+      assert(type == "tick");
+      cell.tick(ctx, now);
+    }
+    step(json_presence_map(lazily_test::json_member(expected, "present")),
+         lazily_test::json_bool(lazily_test::json_member(
+             lazily_test::json_member(expected, "invalidates"), "present")));
+  }
 
   // last-writer-per-peer visible via non-reactive get
   assert(cell.get(1, 6) == std::nullopt);  // expired by now 7 already ticked
@@ -122,9 +140,7 @@ TEST(test_awareness) {
 
 // -- EphemeralCell: single value auto-expiry; value invalidation --
 TEST(test_ephemeral) {
-  const auto fx = fixture_text("ephemeral.json");
-  assert(fx.find("\"model\": \"EphemeralCell\"") != std::string::npos);
-
+  const auto fx = fixture("ephemeral.json");
   Context ctx;
   EphemeralCell<std::string> cell(ctx);
   auto vc = cell.value_cell();
@@ -139,24 +155,26 @@ TEST(test_ephemeral) {
     assert((!was) == invalidates);
   };
 
-  // set "a" now 0 ttl 5  (expiry 5)
-  cell.set(ctx, "a", 0, 5);
-  step(std::string("a"), true);
-  // tick now 3 — not yet expired
-  cell.tick(ctx, 3);
-  step(std::string("a"), false);
-  // tick now 5 — expired
-  cell.tick(ctx, 5);
-  step(std::nullopt, true);
-  // set "b" now 6 ttl 5 (expiry 11)
-  cell.set(ctx, "b", 6, 5);
-  step(std::string("b"), true);
-  // tick now 10 — not yet expired
-  cell.tick(ctx, 10);
-  step(std::string("b"), false);
-  // set "c" now 10 ttl 5 — overwrite before expiry
-  cell.set(ctx, "c", 10, 5);
-  step(std::string("c"), true);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    if (type == "set") {
+      cell.set(
+          ctx, lazily_test::json_string(lazily_test::json_member(op, "value")),
+          now, lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
+    } else {
+      assert(type == "tick");
+      cell.tick(ctx, now);
+    }
+    step(lazily_test::json_optional_string(
+             lazily_test::json_member(expected, "value")),
+         lazily_test::json_bool(lazily_test::json_member(
+             lazily_test::json_member(expected, "invalidates"), "value")));
+  }
 }
 
 // -- Pure cores mirror the Rust unit tests --

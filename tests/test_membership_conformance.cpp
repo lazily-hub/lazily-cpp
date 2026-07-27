@@ -11,13 +11,11 @@
 #include <lazily/membership.hpp>
 
 #include <cassert>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
+#include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
 using namespace lazily;
@@ -36,28 +34,25 @@ static int test_passed = 0;
   } name##_instance;               \
   static void name()
 
-static std::string fixture_text() {
-  return lazily_test::spec_fixture_text("membership", "membership_lifecycle.json");
+static lazily_test::JsonPtr fixture() {
+  return lazily_test::parse_json(lazily_test::spec_fixture_text(
+      "membership", "membership_lifecycle.json"));
 }
 
-// The canonical fixture carries the `"model": "MembershipCell"` marker and the
-// canonical config replayed below.
-TEST(test_fixture_present_and_model_marker) {
-  const auto fixture = fixture_text();
-  assert(fixture.find("\"model\": \"MembershipCell\"") != std::string::npos);
-  assert(fixture.find("\"kind\": \"Membership\"") != std::string::npos);
-  assert(fixture.find("\"phi_threshold\": 8.0") != std::string::npos);
-}
-
-// Full lifecycle replay — transcribes `steps` from membership_lifecycle.json.
+// Full lifecycle replay — parses `config` and `steps` from the fixture.
 // Each step asserts per-peer state, the alive set, and PeerSet invalidation.
 TEST(test_membership_lifecycle) {
-  // config: phi_threshold 8.0, suspect_timeout 5, max_samples 100, min_std 0.1.
+  const auto fx = fixture();
+  const auto& config_json = lazily_test::json_member(*fx, "config");
   MembershipConfig config;
-  config.phi_threshold = 8.0;
-  config.suspect_timeout = 5;
-  config.max_samples = 100;
-  config.min_std = 0.1;
+  config.phi_threshold = lazily_test::json_number(
+      lazily_test::json_member(config_json, "phi_threshold"));
+  config.suspect_timeout = lazily_test::json_u64(
+      lazily_test::json_member(config_json, "suspect_timeout"));
+  config.max_samples = lazily_test::json_u64(
+      lazily_test::json_member(config_json, "max_samples"));
+  config.min_std =
+      lazily_test::json_number(lazily_test::json_member(config_json, "min_std"));
 
   Context ctx;
   MembershipCell<uint64_t> m(ctx, config);
@@ -66,56 +61,59 @@ TEST(test_membership_lifecycle) {
       ctx.computed<std::set<uint64_t>>([set](Compute& c) { return c.get(set); });
   (void)ctx.get(observed);
 
-  struct Step {
-    // op
-    const char* op;
-    uint64_t peer;  // ignored for tick
-    uint64_t now;
-    // expected
-    std::vector<std::pair<uint64_t, PeerState>> states;
-    std::set<uint64_t> alive_set;
-    bool invalidates;
-  };
-
-  const std::vector<Step> steps = {
-      {"join", 1, 0, {{1, PeerState::Alive}}, {1}, true},
-      {"heartbeat", 1, 1, {{1, PeerState::Alive}}, {1}, false},
-      {"heartbeat", 1, 2, {{1, PeerState::Alive}}, {1}, false},
-      {"heartbeat", 1, 3, {{1, PeerState::Alive}}, {1}, false},
-      {"tick", 0, 3, {{1, PeerState::Alive}}, {1}, false},
-      {"tick", 0, 100, {{1, PeerState::Suspect}}, {}, true},
-      {"tick", 0, 106, {{1, PeerState::Dead}}, {}, false},
-      {"join", 2, 106, {{1, PeerState::Dead}, {2, PeerState::Alive}}, {2}, true},
-      {"leave", 2, 107, {{1, PeerState::Dead}, {2, PeerState::Left}}, {}, true},
-  };
-
-  for (const auto& step : steps) {
-    std::string op = step.op;
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op_json = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto op =
+        lazily_test::json_string(lazily_test::json_member(op_json, "type"));
+    const auto now =
+        lazily_test::json_u64(lazily_test::json_member(op_json, "now"));
+    const auto* peer_json = op_json.find("peer");
+    const auto peer = peer_json == nullptr ? 0 : lazily_test::json_u64(*peer_json);
     if (op == "join") {
-      m.join(ctx, step.peer, step.now);
+      m.join(ctx, peer, now);
     } else if (op == "heartbeat") {
-      m.heartbeat(ctx, step.peer, step.now);
+      m.heartbeat(ctx, peer, now);
     } else if (op == "leave") {
-      m.leave(ctx, step.peer, step.now);
+      m.leave(ctx, peer, now);
     } else if (op == "tick") {
-      m.tick(ctx, step.now);
+      m.tick(ctx, now);
     } else {
       assert(false && "unknown op");
     }
 
     // Per-peer state.
-    for (const auto& want : step.states) {
-      auto got = m.state(want.first);
-      assert(got && *got == want.second && "peer state after op");
+    const auto& states = lazily_test::json_member(expected, "states");
+    assert(states.is_object());
+    for (const auto& want : states.object) {
+      const auto state = lazily_test::json_string(*want.second);
+      const auto want_state =
+          state == "Alive"
+              ? PeerState::Alive
+              : (state == "Suspect"
+                     ? PeerState::Suspect
+                     : (state == "Dead" ? PeerState::Dead : PeerState::Left));
+      const auto got = m.state(std::stoull(want.first));
+      assert(got && *got == want_state && "peer state after op");
     }
     // Alive set (the reactive PeerSet).
-    assert(m.peer_set(ctx) == step.alive_set && "alive_set after op");
+    std::set<uint64_t> alive_set;
+    for (const auto& alive : lazily_test::json_array(
+             lazily_test::json_member(expected, "alive_set"))) {
+      alive_set.insert(lazily_test::json_u64(*alive));
+    }
+    assert(m.peer_set(ctx) == alive_set && "alive_set after op");
 
     // PeerSet invalidation: the observed reader is dropped from cache exactly
     // when the alive set changed.
     bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == step.invalidates && "invalidation after op");
+    assert((!was_cached) ==
+               lazily_test::json_bool(
+                   lazily_test::json_member(expected, "invalidates")) &&
+           "invalidation after op");
   }
 }
 

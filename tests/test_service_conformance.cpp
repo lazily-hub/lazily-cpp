@@ -7,8 +7,8 @@
 //   - discovery.json        ("model": "DiscoveryCell")
 //   - service_registry.json ("model": "ServiceRegistry")
 //
-// Each fixture's steps are transcribed into C++ below. Per step we assert the
-// op result + projected reader value (`expected.*`) and the reader INVALIDATION
+// Each fixture's operations and expectations are parsed directly. Per step we
+// assert the op result + projected reader value (`expected.*`) and INVALIDATION
 // (`expected.invalidates`) via a `computed` slot + `is_set` cache-survival
 // probe: after an op, a real projection change marks the observing slot dirty
 // (is_set == false) while a deduped no-op leaves it cached (is_set == true).
@@ -18,12 +18,9 @@
 
 #include <cassert>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <map>
 #include <string>
-#include <vector>
+#include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
 using namespace lazily;
@@ -42,8 +39,9 @@ static int test_passed = 0;
   } name##_instance;                                      \
   static void name()
 
-static std::string fixture_text(const std::string& file) {
-  return lazily_test::spec_fixture_text("service", file);
+static lazily_test::JsonPtr fixture(const std::string& file) {
+  return lazily_test::parse_json(
+      lazily_test::spec_fixture_text("service", file));
 }
 
 // After an op, `observed` is dirty (is_set == false) iff the projection changed.
@@ -57,141 +55,151 @@ static void check_inval(Context& ctx, const Computed<T>& observed,
 
 using Map = std::map<std::string, std::string>;
 
+static Map json_map(const lazily_test::Json& value) {
+  assert(value.is_object());
+  Map result;
+  for (const auto& entry : value.object) {
+    result.emplace(entry.first, lazily_test::json_string(*entry.second));
+  }
+  return result;
+}
+
 // -- health.json --
 TEST(test_health) {
-  const auto fx = fixture_text("health.json");
-  assert(fx.find("\"model\": \"HealthCell\"") != std::string::npos);
-
+  const auto fx = fixture("health.json");
   Context ctx;
   HealthCell h(ctx);
   auto hc = h.health_cell();
   auto observed = ctx.computed<Health>([hc](Compute& c) { return c.get(hc); });
   (void)ctx.get(observed);
 
-  struct Step {
-    const char* name;
-    bool up;
-    bool critical;
-    Health want;
-    bool inval;
-  };
-  const std::vector<Step> steps = {
-      {"cache", true, false, Health::Healthy, false},
-      {"cache", false, false, Health::Degraded, true},
-      {"db", false, true, Health::Unhealthy, true},
-      {"db", true, true, Health::Degraded, true},
-      {"cache", true, false, Health::Healthy, true},
-  };
-  for (const auto& s : steps) {
-    h.set(ctx, s.name, s.up, s.critical);
-    assert(h.health() == s.want);
-    check_inval(ctx, observed, s.inval, "health inval");
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    h.set(ctx,
+          lazily_test::json_string(lazily_test::json_member(op, "name")),
+          lazily_test::json_bool(lazily_test::json_member(op, "up")),
+          lazily_test::json_bool(lazily_test::json_member(op, "critical")));
+    const auto health =
+        lazily_test::json_string(lazily_test::json_member(expected, "health"));
+    const auto want = health == "Healthy"
+                          ? Health::Healthy
+                          : (health == "Degraded" ? Health::Degraded
+                                                  : Health::Unhealthy);
+    assert(h.health() == want);
+    check_inval(
+        ctx, observed,
+        lazily_test::json_bool(lazily_test::json_member(
+            lazily_test::json_member(expected, "invalidates"), "health")),
+        "health inval");
   }
 }
 
 // -- readiness.json --
 TEST(test_readiness) {
-  const auto fx = fixture_text("readiness.json");
-  assert(fx.find("\"model\": \"ReadinessCell\"") != std::string::npos);
-
+  const auto fx = fixture("readiness.json");
   Context ctx;
   ReadinessCell r(ctx);
   auto rc = r.ready_cell();
   auto observed = ctx.computed<bool>([rc](Compute& c) { return c.get(rc); });
   (void)ctx.get(observed);
 
-  struct Step {
-    const char* name;
-    bool ready;
-    bool want;
-    bool inval;
-  };
-  const std::vector<Step> steps = {
-      {"deps_ready", false, false, true},
-      {"leader_known", false, false, false},
-      {"deps_ready", true, false, false},
-      {"leader_known", true, true, true},
-      {"lease_valid", false, false, true},
-  };
-  for (const auto& s : steps) {
-    r.set(ctx, s.name, s.ready);
-    assert(r.ready() == s.want);
-    check_inval(ctx, observed, s.inval, "ready inval");
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    r.set(ctx,
+          lazily_test::json_string(lazily_test::json_member(op, "name")),
+          lazily_test::json_bool(lazily_test::json_member(op, "ready")));
+    assert(r.ready() ==
+           lazily_test::json_bool(lazily_test::json_member(expected, "ready")));
+    check_inval(
+        ctx, observed,
+        lazily_test::json_bool(lazily_test::json_member(
+            lazily_test::json_member(expected, "invalidates"), "ready")),
+        "ready inval");
   }
 }
 
 // -- discovery.json --
 TEST(test_discovery) {
-  const auto fx = fixture_text("discovery.json");
-  assert(fx.find("\"model\": \"DiscoveryCell\"") != std::string::npos);
-
+  const auto fx = fixture("discovery.json");
   Context ctx;
   DiscoveryCell<uint64_t> d(ctx);
   auto dc = d.discovery_cell();
   auto observed = ctx.computed<Map>([dc](Compute& c) { return c.get(dc); });
   (void)ctx.get(observed);
 
-  // step 1: register api -> {api}
-  d.register_(ctx, "api", "10.0.0.1", 1);
-  assert(d.discovery(ctx) == (Map{{"api", "10.0.0.1"}}));
-  check_inval(ctx, observed, true, "discovery inval s1");
-
-  // step 2: register db -> {api, db}
-  d.register_(ctx, "db", "10.0.0.2", 2);
-  assert(d.discovery(ctx) == (Map{{"api", "10.0.0.1"}, {"db", "10.0.0.2"}}));
-  check_inval(ctx, observed, true, "discovery inval s2");
-
-  // step 3: resolve api -> read-only, map unchanged
-  assert(d.resolve("api") == std::optional<std::string>("10.0.0.1"));
-  assert(d.discovery(ctx) == (Map{{"api", "10.0.0.1"}, {"db", "10.0.0.2"}}));
-  check_inval(ctx, observed, false, "discovery inval s3");
-
-  // step 4: evict peer 2 -> {api}
-  d.evict(ctx, 2);
-  assert(d.discovery(ctx) == (Map{{"api", "10.0.0.1"}}));
-  check_inval(ctx, observed, true, "discovery inval s4");
-
-  // step 5: deregister api -> {}
-  d.deregister(ctx, "api");
-  assert(d.discovery(ctx) == Map{});
-  check_inval(ctx, observed, true, "discovery inval s5");
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    if (type == "register") {
+      d.register_(
+          ctx, lazily_test::json_string(lazily_test::json_member(op, "service")),
+          lazily_test::json_string(lazily_test::json_member(op, "endpoint")),
+          lazily_test::json_u64(lazily_test::json_member(op, "peer")));
+    } else if (type == "resolve") {
+      assert(d.resolve(
+                 lazily_test::json_string(lazily_test::json_member(op, "service"))) ==
+             lazily_test::json_optional_string(
+                 lazily_test::json_member(item, "returns")));
+    } else if (type == "evict") {
+      d.evict(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")));
+    } else {
+      assert(type == "deregister");
+      d.deregister(
+          ctx, lazily_test::json_string(lazily_test::json_member(op, "service")));
+    }
+    assert(d.discovery(ctx) ==
+           json_map(lazily_test::json_member(expected, "discovery")));
+    check_inval(
+        ctx, observed,
+        lazily_test::json_bool(lazily_test::json_member(
+            lazily_test::json_member(expected, "invalidates"), "discovery")),
+        "discovery inval");
+  }
 }
 
 // -- service_registry.json --
 TEST(test_service_registry) {
-  const auto fx = fixture_text("service_registry.json");
-  assert(fx.find("\"model\": \"ServiceRegistry\"") != std::string::npos);
-
+  const auto fx = fixture("service_registry.json");
   Context ctx;
   ServiceRegistry reg(ctx);
   auto pc = reg.projection_cell();
   auto observed = ctx.computed<Map>([pc](Compute& c) { return c.get(pc); });
   (void)ctx.get(observed);
 
-  // step 1: register api v1
-  reg.register_(ctx, "api", "v1");
-  assert(reg.projection(ctx) == (Map{{"api", "v1"}}));
-  check_inval(ctx, observed, true, "projection inval s1");
-
-  // step 2: register db v1
-  reg.register_(ctx, "db", "v1");
-  assert(reg.projection(ctx) == (Map{{"api", "v1"}, {"db", "v1"}}));
-  check_inval(ctx, observed, true, "projection inval s2");
-
-  // step 3: register api v2 (overwrite)
-  reg.register_(ctx, "api", "v2");
-  assert(reg.projection(ctx) == (Map{{"api", "v2"}, {"db", "v1"}}));
-  check_inval(ctx, observed, true, "projection inval s3");
-
-  // step 4: deregister db
-  reg.deregister(ctx, "db");
-  assert(reg.projection(ctx) == (Map{{"api", "v2"}}));
-  check_inval(ctx, observed, true, "projection inval s4");
-
-  // step 5: replay rebuilds identical projection -> no change, no invalidation
-  reg.replay(ctx);
-  assert(reg.projection(ctx) == (Map{{"api", "v2"}}));
-  check_inval(ctx, observed, false, "projection inval s5");
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    if (type == "register") {
+      reg.register_(
+          ctx, lazily_test::json_string(lazily_test::json_member(op, "service")),
+          lazily_test::json_string(lazily_test::json_member(op, "endpoint")));
+    } else if (type == "deregister") {
+      reg.deregister(
+          ctx, lazily_test::json_string(lazily_test::json_member(op, "service")));
+    } else {
+      assert(type == "replay");
+      reg.replay(ctx);
+    }
+    assert(reg.projection(ctx) ==
+           json_map(lazily_test::json_member(expected, "projection")));
+    check_inval(
+        ctx, observed,
+        lazily_test::json_bool(lazily_test::json_member(
+            lazily_test::json_member(expected, "invalidates"), "projection")),
+        "projection inval");
+  }
 }
 
 int main() {

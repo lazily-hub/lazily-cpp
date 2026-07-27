@@ -9,19 +9,16 @@
 // in a `computed` and checking whether its cached value survives the tick
 // (`ctx.is_set`).
 //
-// Each scenario is transcribed directly from its fixture JSON (initial + steps),
-// mirroring the repo's other conformance tests; the canonical fixture text is also
-// read from the sibling checkout and asserted to carry its `"model"` marker so the test
-// stays coupled to the fixture.
+// Every scenario parses its initial state, operations, and expectations from the
+// canonical fixture so corpus changes cannot pass against a stale transcription.
 
 #include <lazily/temporal.hpp>
 
 #include <cassert>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <string>
+#include <vector>
+#include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
 using namespace lazily;
@@ -40,8 +37,9 @@ static int test_passed = 0;
   } name##_instance;               \
   static void name()
 
-static std::string fixture_text(const std::string& file) {
-  return lazily_test::spec_fixture_text("temporal", file);
+static lazily_test::JsonPtr fixture(const std::string& file) {
+  return lazily_test::parse_json(
+      lazily_test::spec_fixture_text("temporal", file));
 }
 
 // timer_single_shot.json — initial { fire_at: 3 }.
@@ -49,153 +47,145 @@ static std::string fixture_text(const std::string& file) {
 //        now=3 -> edge true,  fired true,  value (), next_fire null, inval true
 //        now=5 -> edge false, fired true,  value (), next_fire null, inval false
 TEST(test_timer_single_shot) {
-  assert(fixture_text("timer_single_shot.json").find("\"model\": \"TimerCell\"") !=
-         std::string::npos);
-
+  const auto fx = fixture("timer_single_shot.json");
+  const auto& initial = lazily_test::json_member(*fx, "initial");
   Context ctx;
-  TimerCell timer(ctx, 3);
+  TimerCell timer(
+      ctx, lazily_test::json_u64(lazily_test::json_member(initial, "fire_at")));
   auto fired = timer.fired_cell();
   auto observed = ctx.computed<bool>([&](Compute& c) { return fired.get(c); });
   (void)ctx.get(observed);  // prime the cache
 
-  struct Step {
-    uint64_t now;
-    bool edge;
-    bool fired;
-    bool has_value;
-    std::optional<uint64_t> next_fire;
-    bool invalidates;
-  };
-  const Step steps[] = {
-      {1, false, false, false, std::optional<uint64_t>(3), false},
-      {3, true, true, true, std::nullopt, true},
-      {5, false, true, true, std::nullopt, false},
-  };
-
-  for (const auto& s : steps) {
-    bool edge = timer.tick(ctx, s.now);
-    assert(edge == s.edge);
-    assert(timer.has_fired(ctx) == s.fired);
-    assert(timer.value(ctx).has_value() == s.has_value);
-    assert(timer.next_fire() == s.next_fire);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "tick");
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    assert(timer.tick(ctx, now) ==
+           lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    assert(timer.has_fired(ctx) ==
+           lazily_test::json_bool(lazily_test::json_member(expected, "fired")));
+    assert(timer.value(ctx).has_value() ==
+           !lazily_test::json_member(expected, "value").is_null());
+    assert(timer.next_fire() == lazily_test::json_optional_u64(
+                                    lazily_test::json_member(expected, "next_fire")));
 
     bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == s.invalidates);
+    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
+                                lazily_test::json_member(expected, "invalidates"),
+                                "fired")));
   }
 }
 
 // interval_periodic.json — initial { period: 2 }.
 TEST(test_interval_periodic) {
-  assert(fixture_text("interval_periodic.json").find("\"model\": \"IntervalCell\"") !=
-         std::string::npos);
-
+  const auto fx = fixture("interval_periodic.json");
+  const auto& initial = lazily_test::json_member(*fx, "initial");
   Context ctx;
-  IntervalCell iv(ctx, 2);
+  IntervalCell iv(
+      ctx, lazily_test::json_u64(lazily_test::json_member(initial, "period")));
   auto count = iv.count_cell();
   auto observed = ctx.computed<uint64_t>([&](Compute& c) { return count.get(c); });
   (void)ctx.get(observed);
 
-  struct Step {
-    uint64_t now;
-    bool edge;
-    uint64_t count;
-    std::optional<uint64_t> next_fire;
-    bool invalidates;
-  };
-  const Step steps[] = {
-      {1, false, 0, std::optional<uint64_t>(2), false},
-      {2, true, 1, std::optional<uint64_t>(4), true},
-      {4, true, 2, std::optional<uint64_t>(6), true},
-      {5, false, 2, std::optional<uint64_t>(6), false},
-      {8, true, 4, std::optional<uint64_t>(10), true},
-  };
-
-  for (const auto& s : steps) {
-    bool edge = iv.tick(ctx, s.now);
-    assert(edge == s.edge);
-    assert(iv.count(ctx) == s.count);
-    assert(iv.next_fire() == s.next_fire);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    assert(iv.tick(ctx, now) ==
+           lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    assert(iv.count(ctx) ==
+           lazily_test::json_u64(lazily_test::json_member(expected, "count")));
+    assert(iv.next_fire() == lazily_test::json_optional_u64(
+                                 lazily_test::json_member(expected, "next_fire")));
 
     bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == s.invalidates);
+    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
+                                lazily_test::json_member(expected, "invalidates"),
+                                "count")));
   }
 }
 
 // cron_pattern.json — initial { cycle: 5, offsets: [0, 3] }.
 TEST(test_cron_pattern) {
-  assert(fixture_text("cron_pattern.json").find("\"model\": \"CronCell\"") !=
-         std::string::npos);
-
+  const auto fx = fixture("cron_pattern.json");
+  const auto& initial = lazily_test::json_member(*fx, "initial");
+  std::vector<uint64_t> offsets;
+  for (const auto& value :
+       lazily_test::json_array(lazily_test::json_member(initial, "offsets"))) {
+    offsets.push_back(lazily_test::json_u64(*value));
+  }
   Context ctx;
-  CronCell cron(ctx, 5, {0, 3});
+  CronCell cron(
+      ctx, lazily_test::json_u64(lazily_test::json_member(initial, "cycle")),
+      offsets);
   auto count = cron.count_cell();
   auto observed = ctx.computed<uint64_t>([&](Compute& c) { return count.get(c); });
   (void)ctx.get(observed);
 
-  struct Step {
-    uint64_t now;
-    bool edge;
-    uint64_t count;
-    std::optional<uint64_t> next_fire;
-    bool invalidates;
-  };
-  const Step steps[] = {
-      {2, false, 0, std::optional<uint64_t>(3), false},
-      {3, true, 1, std::optional<uint64_t>(5), true},
-      {5, true, 2, std::optional<uint64_t>(8), true},
-      {8, true, 3, std::optional<uint64_t>(10), true},
-      {10, true, 4, std::optional<uint64_t>(13), true},
-  };
-
-  for (const auto& s : steps) {
-    bool edge = cron.tick(ctx, s.now);
-    assert(edge == s.edge);
-    assert(cron.count(ctx) == s.count);
-    assert(cron.next_fire() == s.next_fire);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    assert(cron.tick(ctx, now) ==
+           lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    assert(cron.count(ctx) ==
+           lazily_test::json_u64(lazily_test::json_member(expected, "count")));
+    assert(cron.next_fire() == lazily_test::json_optional_u64(
+                                   lazily_test::json_member(expected, "next_fire")));
 
     bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == s.invalidates);
+    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
+                                lazily_test::json_member(expected, "invalidates"),
+                                "count")));
   }
 }
 
 // deadline_expiry.json — initial { value: "payload", deadline: 4 }.
 TEST(test_deadline_expiry) {
-  assert(fixture_text("deadline_expiry.json").find("\"model\": \"DeadlineCell\"") !=
-         std::string::npos);
-
+  const auto fx = fixture("deadline_expiry.json");
+  const auto& initial = lazily_test::json_member(*fx, "initial");
   Context ctx;
-  const std::string value = "payload";
-  DeadlineCell<std::string> d(ctx, value, 4);
+  const std::string value =
+      lazily_test::json_string(lazily_test::json_member(initial, "value"));
+  DeadlineCell<std::string> d(
+      ctx, value,
+      lazily_test::json_u64(lazily_test::json_member(initial, "deadline")));
   auto expired = d.expired_cell();
   auto observed = ctx.computed<bool>([&](Compute& c) { return expired.get(c); });
   (void)ctx.get(observed);
 
-  struct Step {
-    uint64_t now;
-    bool edge;
-    bool expired;
-    bool invalidates;
-  };
-  const Step steps[] = {
-      {2, false, false, false},
-      {4, true, true, true},
-      {9, false, true, false},
-  };
-
-  for (const auto& s : steps) {
-    bool edge = d.tick(ctx, s.now);
-    assert(edge == s.edge);
+  for (const auto& step_ptr :
+       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+    const auto& item = *step_ptr;
+    const auto& op = lazily_test::json_member(item, "op");
+    const auto& expected = lazily_test::json_member(item, "expected");
+    const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    assert(d.tick(ctx, now) ==
+           lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    const bool expired =
+        lazily_test::json_string(lazily_test::json_member(expected, "state")) ==
+        "Expired";
     Deadlined<std::string> state = d.state(ctx);
-    assert(state.is_expired() == s.expired);
-    assert(state.value() == value);  // value preserved across the flip
-    assert(d.is_expired(ctx) == s.expired);
+    assert(state.is_expired() == expired);
+    assert(state.value() ==
+           lazily_test::json_string(lazily_test::json_member(expected, "value")));
+    assert(d.is_expired(ctx) == expired);
 
     bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == s.invalidates);
+    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
+                                lazily_test::json_member(expected, "invalidates"),
+                                "state")));
   }
 }
 
