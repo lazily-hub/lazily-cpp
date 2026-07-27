@@ -78,6 +78,14 @@ add_executable(test_collections test_collections.cpp)
 target_link_libraries(test_collections PRIVATE lazily)
 add_test(NAME collections COMMAND test_collections)
 
+# Replays the remaining canonical collections corpus: MergeCell algebra,
+# keyed reconciliation, SemTree, stable IDs, and TextCrdt convergence/deltas.
+add_executable(test_collections_fixture_conformance
+  test_collections_fixture_conformance.cpp)
+target_link_libraries(test_collections_fixture_conformance PRIVATE lazily)
+add_test(NAME CollectionsFixtureConformance
+  COMMAND test_collections_fixture_conformance)
+
 # Replays ../lazily-spec/conformance/receipts/ — one canonical fixture the
 # binding had no runner for in any form.
 add_executable(test_receipts_conformance test_receipts_conformance.cpp)
@@ -270,6 +278,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_lossless_tree_conformance
   test_command_conformance
   test_materialization_conformance
+  test_collections_fixture_conformance
   test_collections_family_conformance
   test_queue_conformance
   test_work_queue_conformance
@@ -297,6 +306,7 @@ set_tests_properties(
   ResilienceConformance
   ServiceConformance
   MaterializationConformance
+  CollectionsFixtureConformance
   ReactiveGraphConformance
   # These four read the sibling checkout exactly like the rest but were missing
   # from this list, so an absent lazily-spec turned their exit-77 SKIP into a

@@ -48,14 +48,11 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-#   77  pre-existing readers (reactive-graph 21, lossless-tree 9,
-#       message-passing 8, rateshape 6, coordination 5, collections 5,
-#       temporal 4, windowing 4, resilience 4, service 4, presence 3,
-#       materialization 1, membership 1, reliable-sync 1, crdt-tree 1)
-#   +7  statechart   — the area had SEVEN fixtures and NO runner at all
-#   +1  receipts     — one fixture, no runner
-#   +1  distributed  — anti_entropy_converge.json, no runner
-MIN_FIXTURES="${MIN_FIXTURES:-86}"
+# The current suite replays 102 distinct fixtures. Six collections fixtures
+# (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
+# moved out of KNOWN_UNCOVERED in #lazilycppcollections; keep the floor aligned
+# so deleting that runner cannot hide behind older aggregate growth.
+MIN_FIXTURES="${MIN_FIXTURES:-102}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -102,19 +99,6 @@ REQUIRED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
-  # collections — no runner opens these at all.
-  "collections/cellmap_atomic_move.json"
-  "collections/cellmap_independence.json"
-  "collections/keyed_reconciliation_lis.json"
-  "collections/semtree_incremental.json"
-  "collections/stableid_alignment.json"
-  "collections/textcrdt_convergence.json"
-  "collections/textcrdt_delta_sync.json"
-  # collections — mergecell_algebra is still mirrored by hand in test_merge.cpp,
-  # which never opens the canonical bytes. The five queuecell_* fixtures used to
-  # be listed here for the same reason; test_queue_conformance.cpp now replays
-  # them from the canonical bytes (#lzqfcppfx), so they are gone from this list.
-  "collections/mergecell_algebra.json"
   # distributed — CrdtSync wire-serde frames; lazily-cpp has no JSON codec for
   # the IpcMessage envelope, so replaying `wire` needs an encoder first.
   "distributed/crdt_sync_frames.json"
