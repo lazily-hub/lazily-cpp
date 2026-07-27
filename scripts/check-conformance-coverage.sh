@@ -110,8 +110,6 @@ KNOWN_UNCOVERED=(
   "collections/stableid_alignment.json"
   "collections/textcrdt_convergence.json"
   "collections/textcrdt_delta_sync.json"
-  "collections/workqueue_competing_delivery.json"
-  "collections/workqueue_lease_deadletter.json"
   # collections — mergecell_algebra is still mirrored by hand in test_merge.cpp,
   # which never opens the canonical bytes. The five queuecell_* fixtures used to
   # be listed here for the same reason; test_queue_conformance.cpp now replays

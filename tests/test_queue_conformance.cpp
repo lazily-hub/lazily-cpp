@@ -38,16 +38,16 @@ using lazily_test::spec_fixture_text;
 
 namespace {
 
-// A reactive reader over one queue reader-kind. `is_valid()` reports whether the
-// cached value survived the last op; the fixture's `invalidates` polarity is the
-// negation of that.
+// A reactive reader over one queue reader-kind. `is_valid()` reports whether
+// the cached value survived the last op; the fixture's `invalidates` polarity
+// is the negation of that.
 template <typename T> struct Reader {
   Context &ctx;
   Computed<T> slot;
   T cached;
   Reader(Context &c, std::function<T(Compute &)> fn)
-      : ctx(c), slot(c.template computed<T>(
-                    [fn](Compute &cc) { return fn(cc); })) {
+      : ctx(c),
+        slot(c.template computed<T>([fn](Compute &cc) { return fn(cc); })) {
     cached = ctx.get(slot);
   }
   const T &value() { return cached; }
@@ -55,13 +55,13 @@ template <typename T> struct Reader {
   void refresh() { cached = ctx.get(slot); }
 };
 
-struct Readers {
+template <typename Queue> struct Readers {
   Reader<std::optional<std::string>> head;
   Reader<size_t> len;
   Reader<bool> empty;
   Reader<bool> full;
   Reader<bool> closed;
-  Readers(Context &ctx, QueueCell<std::string> &q)
+  Readers(Context &ctx, Queue &q)
       : head(ctx, [&q](Compute &c) { return q.head(c); }),
         len(ctx, [&q](Compute &c) { return q.len(c); }),
         empty(ctx, [&q](Compute &c) { return q.is_empty(c); }),
@@ -91,12 +91,14 @@ void check_bool(const std::string &fixture, size_t step, const char *label,
                 bool actual, bool expected) {
   if (actual != expected) {
     fail(fixture, step,
-         std::string(label) + " = " + (actual ? "true" : "false") + ", fixture says " +
-             (expected ? "true" : "false"));
+         std::string(label) + " = " + (actual ? "true" : "false") +
+             ", fixture says " + (expected ? "true" : "false"));
   }
 }
 
-void replay(const std::string &name) {
+template <typename OwnerContext, typename Queue>
+void replay(const std::string &name, const std::string &flavor) {
+  const std::string label = flavor + " " + name;
   const std::string text = spec_fixture_text("collections", name);
   const auto doc = parse_json(text);
   REQUIRE(doc && doc->type == Json::Type::Object,
@@ -106,7 +108,7 @@ void replay(const std::string &name) {
   REQUIRE(initial != nullptr, "fixture has no `initial`");
   const Json *cap = initial->find("capacity");
 
-  Context ctx;
+  OwnerContext ctx;
   // All five fixtures start from an empty, open queue; honour the fields anyway
   // so a future fixture with a seeded `initial` does not silently start blank.
   const Json *init_elems = initial->find("elements");
@@ -114,13 +116,12 @@ void replay(const std::string &name) {
           "this runner does not seed a non-empty `initial.elements` yet — a "
           "fixture that needs one must extend the runner, not be skipped");
 
-  QueueCell<std::string> q =
-      (cap != nullptr && cap->type == Json::Type::Number)
-          ? QueueCell<std::string>::bounded(ctx,
-                                            static_cast<size_t>(cap->number))
-          : QueueCell<std::string>(ctx);
+  Queue q = (cap != nullptr && cap->type == Json::Type::Number)
+                ? Queue::bounded(ctx, static_cast<size_t>(cap->number))
+                : Queue(ctx);
 
-  Readers r(ctx, q);
+  Context &graph = queue_detail::graph(ctx);
+  Readers<Queue> r(graph, q);
 
   const Json *steps = doc->find("steps");
   REQUIRE(steps != nullptr && !steps->array.empty(),
@@ -134,7 +135,7 @@ void replay(const std::string &name) {
     REQUIRE(op != nullptr, "step has no `op`");
     const std::string type = op->find("type")->str;
 
-    r.refresh();  // every reader valid again before the op
+    r.refresh(); // every reader valid again before the op
 
     std::optional<std::string> returned;
     std::string status;
@@ -143,9 +144,9 @@ void replay(const std::string &name) {
       q.push(ctx, op->find("value")->str);
     } else if (type == "try_push") {
       const PushResult res = q.try_push(ctx, op->find("value")->str);
-      status = res == PushResult::Ok      ? "Ok"
-               : res == PushResult::Full  ? "Full"
-                                          : "Closed";
+      status = res == PushResult::Ok     ? "Ok"
+               : res == PushResult::Full ? "Full"
+                                         : "Closed";
     } else if (type == "pop" || type == "try_pop") {
       // Both spellings go through `try_pop`. The spec's `pop` still reports
       // `Empty` vs `Closed` (see queuecell_spsc_push_pop step 4), and cpp's
@@ -165,18 +166,20 @@ void replay(const std::string &name) {
       // invalidation frontier, which is the point of the fixture.
       const Json *inner = op->find("ops");
       REQUIRE(inner != nullptr, "batch op has no `ops`");
-      ctx.batch([&](auto &bctx) {
+      queue_detail::batch(ctx, [&](Context &) {
         for (const auto &sub : inner->array) {
           const std::string sub_type = sub->find("type")->str;
           REQUIRE(sub_type == "push",
                   "batch currently carries only pushes; a new inner op must "
                   "extend this runner rather than be ignored");
-          q.push(bctx, sub->find("value")->str);
+          q.push(ctx, sub->find("value")->str);
         }
       });
     } else {
-      fail(name, i, "unknown op type `" + type + "` — the corpus grew a case "
-                    "this runner does not implement");
+      fail(label, i,
+           "unknown op type `" + type +
+               "` — the corpus grew a case "
+               "this runner does not implement");
       continue;
     }
 
@@ -194,16 +197,17 @@ void replay(const std::string &name) {
         const char *key;
         bool still_valid;
       } probes[] = {
-          {"head", r.head.is_valid()},   {"len", r.len.is_valid()},
+          {"head", r.head.is_valid()},      {"len", r.len.is_valid()},
           {"is_empty", r.empty.is_valid()}, {"is_full", r.full.is_valid()},
           {"closed", r.closed.is_valid()},
       };
       for (const auto &probe : probes) {
         const Json *want = inv->find(probe.key);
-        if (want == nullptr) continue;
+        if (want == nullptr)
+          continue;
         const bool got = invalidated(probe.still_valid);
         if (got != want->boolean) {
-          fail(name, i,
+          fail(label, i,
                std::string("invalidates.") + probe.key + " = " +
                    (got ? "true" : "false") + ", fixture says " +
                    (want->boolean ? "true" : "false"));
@@ -217,10 +221,12 @@ void replay(const std::string &name) {
         const std::string want = ret->str;
         const std::string got = returned ? *returned : status;
         if (got != want) {
-          fail(name, i, "returns = `" + got + "`, fixture says `" + want + "`");
+          fail(label, i,
+               "returns = `" + got + "`, fixture says `" + want + "`");
         }
       } else if (ret->type == Json::Type::Null) {
-        if (returned) fail(name, i, "expected no return value, got one");
+        if (returned)
+          fail(label, i, "expected no return value, got one");
       }
     }
 
@@ -229,16 +235,17 @@ void replay(const std::string &name) {
     if (const Json *e = exp->find("head")) {
       const auto got = r.head.value();
       if (e->type == Json::Type::Null) {
-        if (got) fail(name, i, "head has a value, fixture says null");
+        if (got)
+          fail(label, i, "head has a value, fixture says null");
       } else if (!got || *got != e->str) {
-        fail(name, i,
-             "head = " + (got ? *got : std::string("null")) + ", fixture says " +
-                 e->str);
+        fail(label, i,
+             "head = " + (got ? *got : std::string("null")) +
+                 ", fixture says " + e->str);
       }
     }
     if (const Json *e = exp->find("len")) {
       if (r.len.value() != static_cast<size_t>(e->number)) {
-        fail(name, i,
+        fail(label, i,
              "len = " + std::to_string(r.len.value()) + ", fixture says " +
                  std::to_string(static_cast<size_t>(e->number)));
       }
@@ -252,7 +259,8 @@ void replay(const std::string &name) {
 
     if (const Json *e = exp->find("elements")) {
       expected_final.clear();
-      for (const auto &el : e->array) expected_final.push_back(el->str);
+      for (const auto &el : e->array)
+        expected_final.push_back(el->str);
     }
   }
 
@@ -263,20 +271,24 @@ void replay(const std::string &name) {
   std::vector<std::string> drained;
   while (true) {
     auto v = q.pop(ctx);
-    if (!v) break;
+    if (!v)
+      break;
     drained.push_back(*v);
   }
   if (drained != expected_final) {
     std::string got;
-    for (const auto &d : drained) got += d + " ";
+    for (const auto &d : drained)
+      got += d + " ";
     std::string want;
-    for (const auto &w : expected_final) want += w + " ";
-    fail(name, steps->array.size(),
-         "final drain = [" + got + "], fixture's last `elements` = [" + want + "]");
+    for (const auto &w : expected_final)
+      want += w + " ";
+    fail(label, steps->array.size(),
+         "final drain = [" + got + "], fixture's last `elements` = [" + want +
+             "]");
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   const char *fixtures[] = {
@@ -287,10 +299,16 @@ int main() {
       "queuecell_closure_lifecycle.json",
   };
 
-  for (const char *f : fixtures) replay(f);
+  for (const char *f : fixtures) {
+    replay<Context, QueueCell<std::string>>(f, "sync");
+    replay<ThreadSafeContext, ThreadSafeQueueCell<std::string>>(f,
+                                                                "thread-safe");
+    replay<AsyncContext, AsyncQueueCell<std::string>>(f, "async");
+  }
 
   if (failures != 0) {
-    std::cout << "queue conformance: " << failures << " failure(s)" << std::endl;
+    std::cout << "queue conformance: " << failures << " failure(s)"
+              << std::endl;
     return 1;
   }
 
@@ -298,6 +316,7 @@ int main() {
   // silently loaded nothing would print the same success line.
   REQUIRE_FIXTURES_LOADED(5);
 
-  std::cout << "queue conformance: 5 canonical fixtures replayed" << std::endl;
+  std::cout << "queue conformance: 5 canonical fixtures x 3 flavors replayed"
+            << std::endl;
   return 0;
 }

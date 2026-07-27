@@ -2,7 +2,9 @@
 
 #include <cassert>
 #include <iostream>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace lazily;
@@ -197,92 +199,147 @@ TEST(test_queue_raw_channel_reader_reactive) {
   q.push(ctx, 10);
   assert(log.size() == 2 && log[1] == 1);
   q.pop(ctx);
-assert(log.size() == 3 && log[2] == 0);
+  assert(log.size() == 3 && log[2] == 0);
+}
+
+TEST(test_thread_safe_queue_concurrent_producers_are_confluent) {
+  ThreadSafeContext ctx;
+  ThreadSafeQueueCell<int> q(ctx);
+  constexpr int producers = 4;
+  constexpr int per_producer = 100;
+  std::vector<std::thread> threads;
+  for (int producer = 0; producer < producers; ++producer) {
+    threads.emplace_back([&, producer] {
+      for (int i = 0; i < per_producer; ++i)
+        q.push(ctx, producer * per_producer + i);
+    });
+  }
+  for (auto &thread : threads)
+    thread.join();
+
+  assert(q.len(ctx) == producers * per_producer);
+  std::set<int> observed;
+  while (auto value = q.pop(ctx))
+    observed.insert(*value);
+  assert(observed.size() == producers * per_producer);
+  for (int value = 0; value < producers * per_producer; ++value)
+    assert(observed.count(value) == 1);
+}
+
+TEST(test_thread_safe_topic_concurrent_publish_is_confluent) {
+  ThreadSafeContext ctx;
+  ThreadSafeTopicCell<int> topic(ctx);
+  topic.subscribe(ctx, "subscriber");
+  constexpr int publishers = 4;
+  constexpr int per_publisher = 50;
+  std::vector<std::thread> threads;
+  for (int publisher = 0; publisher < publishers; ++publisher) {
+    threads.emplace_back([&, publisher] {
+      for (int i = 0; i < per_publisher; ++i)
+        topic.publish(ctx, publisher * per_publisher + i);
+    });
+  }
+  for (auto &thread : threads)
+    thread.join();
+
+  const auto stream = topic.read_stream(ctx, "subscriber");
+  assert(stream.size() == publishers * per_publisher);
+  const std::set<int> observed(stream.begin(), stream.end());
+  assert(observed.size() == publishers * per_publisher);
+}
+
+TEST(test_topic_pre_minted_reader_invalidates_on_subscribe) {
+  Context ctx;
+  TopicCell<int> topic(ctx);
+  const auto reader = topic.reader_handle(ctx, "late");
+  assert(ctx.get(reader).empty());
+  assert(ctx.is_set(reader));
+  topic.subscribe(ctx, "late");
+  assert(!ctx.is_set(reader));
 }
 
 TEST(test_topic_broadcast_cursor_isolation) {
-Context ctx;
-TopicCell<std::string> topic(ctx);
-assert(topic.subscribe(ctx, "alice") == TopicSubscribeOutcome::Subscribed);
-topic.subscribe(ctx, "bob");
-assert(topic.publish(ctx, "a") == 0);
-assert(topic.publish(ctx, "b") == 1);
-assert(topic.advance(ctx, "alice") == 1);
-assert(topic.read_stream(ctx, "alice") == std::vector<std::string>{"b"});
-assert(topic.read_stream(ctx, "bob") ==
-(std::vector<std::string>{"a", "b"}));
+  Context ctx;
+  TopicCell<std::string> topic(ctx);
+  assert(topic.subscribe(ctx, "alice") == TopicSubscribeOutcome::Subscribed);
+  topic.subscribe(ctx, "bob");
+  assert(topic.publish(ctx, "a") == 0);
+  assert(topic.publish(ctx, "b") == 1);
+  assert(topic.advance(ctx, "alice") == 1);
+  assert(topic.read_stream(ctx, "alice") == std::vector<std::string>{"b"});
+  assert(topic.read_stream(ctx, "bob") == (std::vector<std::string>{"a", "b"}));
 }
 
 TEST(test_topic_durable_replay_and_gc) {
-Context ctx;
-TopicCell<std::string> topic(ctx);
-topic.subscribe(ctx, "fast");
-topic.subscribe(ctx, "slow");
-topic.publish(ctx, "a");
-topic.publish(ctx, "b");
-topic.advance(ctx, "fast", 2);
-topic.advance(ctx, "slow");
-topic.disconnect(ctx, "slow");
-topic.publish(ctx, "c");
-assert(topic.gc() == 1);
-topic.reconnect(ctx, "slow");
-assert(topic.read_stream(ctx, "slow") ==
-(std::vector<std::string>{"b", "c"}));
+  Context ctx;
+  TopicCell<std::string> topic(ctx);
+  topic.subscribe(ctx, "fast");
+  topic.subscribe(ctx, "slow");
+  topic.publish(ctx, "a");
+  topic.publish(ctx, "b");
+  topic.advance(ctx, "fast", 2);
+  topic.advance(ctx, "slow");
+  topic.disconnect(ctx, "slow");
+  topic.publish(ctx, "c");
+  assert(topic.gc() == 1);
+  topic.reconnect(ctx, "slow");
+  assert(topic.read_stream(ctx, "slow") ==
+         (std::vector<std::string>{"b", "c"}));
 
-Context restored_ctx;
-TopicCell<std::string> restored(restored_ctx, topic.snapshot());
-assert(restored.base_offset() == topic.base_offset());
-assert(restored.elements() == topic.elements());
+  Context restored_ctx;
+  TopicCell<std::string> restored(restored_ctx, topic.snapshot());
+  assert(restored.base_offset() == topic.base_offset());
+  assert(restored.elements() == topic.elements());
 }
 
 TEST(test_topic_ephemeral_lifecycle) {
-Context ctx;
-TopicCell<std::string> topic(ctx);
-topic.subscribe(ctx, "durable");
-topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
-topic.publish(ctx, "a");
-topic.advance(ctx, "durable");
-topic.disconnect(ctx, "viewer");
-assert(!topic.subscription("viewer").has_value());
-assert(topic.gc() == 1);
-topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
-assert(topic.subscription("viewer")->cursor == topic.tail_offset());
+  Context ctx;
+  TopicCell<std::string> topic(ctx);
+  topic.subscribe(ctx, "durable");
+  topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
+  topic.publish(ctx, "a");
+  topic.advance(ctx, "durable");
+  topic.disconnect(ctx, "viewer");
+  assert(!topic.subscription("viewer").has_value());
+  assert(topic.gc() == 1);
+  topic.subscribe(ctx, "viewer", TopicDurability::Ephemeral);
+  assert(topic.subscription("viewer")->cursor == topic.tail_offset());
 }
 
 TEST(test_topic_tail_and_offline_advance_are_noops) {
-Context ctx;
-TopicCell<std::string> topic(ctx);
-topic.subscribe(ctx, "worker");
-topic.publish(ctx, "a");
-assert(topic.advance(ctx, "worker") == 1);
-assert(topic.advance(ctx, "worker") == 1);
+  Context ctx;
+  TopicCell<std::string> topic(ctx);
+  topic.subscribe(ctx, "worker");
+  topic.publish(ctx, "a");
+  assert(topic.advance(ctx, "worker") == 1);
+  assert(topic.advance(ctx, "worker") == 1);
 
-topic.disconnect(ctx, "worker");
-topic.publish(ctx, "b");
-assert(topic.read_stream(ctx, "worker").empty());
-assert(topic.advance(ctx, "worker") == 1);
-assert(topic.subscription("worker")->cursor == 1);
+  topic.disconnect(ctx, "worker");
+  topic.publish(ctx, "b");
+  assert(topic.read_stream(ctx, "worker").empty());
+  assert(topic.advance(ctx, "worker") == 1);
+  assert(topic.subscription("worker")->cursor == 1);
 
-topic.reconnect(ctx, "worker");
-assert(topic.read_stream(ctx, "worker") == std::vector<std::string>{"b"});
-assert(topic.gc() == 1);
-assert(topic.base_offset() == 1);
-assert(topic.subscription("worker")->cursor == 1);
+  topic.reconnect(ctx, "worker");
+  assert(topic.read_stream(ctx, "worker") == std::vector<std::string>{"b"});
+  assert(topic.gc() == 1);
+  assert(topic.base_offset() == 1);
+  assert(topic.subscription("worker")->cursor == 1);
 }
 
 TEST(test_topic_snapshot_rejects_disconnected_ephemeral) {
-Context ctx;
-TopicSnapshot<std::string> snapshot;
-snapshot.subscriptions.push_back(
-{"viewer", 0, TopicDurability::Ephemeral, false});
-bool rejected = false;
-try {
-TopicCell<std::string> topic(ctx, snapshot);
-(void)topic;
-} catch (const std::invalid_argument &) {
-rejected = true;
-}
-assert(rejected);
+  Context ctx;
+  TopicSnapshot<std::string> snapshot;
+  snapshot.subscriptions.push_back(
+      {"viewer", 0, TopicDurability::Ephemeral, false});
+  bool rejected = false;
+  try {
+    TopicCell<std::string> topic(ctx, snapshot);
+    (void)topic;
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  assert(rejected);
 }
 
 int main() {

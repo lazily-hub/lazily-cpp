@@ -84,14 +84,14 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) **Core surface** — single-threaded flavor | ✅ | ✅ | ✅ | ~ | ✅ | ~ | ✅ | ✅ | — |
-| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) **Core surface** — thread-safe flavor (reader kinds + closure lifecycle) | ✅ | — | — | — | — | — | — | — | — |
-| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) **Core surface** — async flavor (reader kinds + eventual transparency) | ✅ | — | — | — | — | — | — | — | — |
+| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) **Core surface** — thread-safe flavor (reader kinds + closure lifecycle) | ✅ | — | — | — | — | — | — | ✅ | — |
+| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) **Core surface** — async flavor (reader kinds + eventual transparency) | ✅ | — | — | — | — | — | — | ✅ | — |
 | Broadcast topic (`TopicCell`) **Core surface** — single-threaded flavor — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ~ | ✅ | ~ | ✅ | ✅ | — |
-| Broadcast topic (`TopicCell`) **Core surface** — thread-safe flavor (reader kinds + closure lifecycle) | ✅ | — | — | — | — | — | — | — | — |
-| Broadcast topic (`TopicCell`) **Core surface** — async flavor (reader kinds + eventual transparency) | ✅ | — | — | — | — | — | — | — | — |
+| Broadcast topic (`TopicCell`) **Core surface** — thread-safe flavor (reader kinds + closure lifecycle) | ✅ | — | — | — | — | — | — | ✅ | — |
+| Broadcast topic (`TopicCell`) **Core surface** — async flavor (reader kinds + eventual transparency) | ✅ | — | — | — | — | — | — | ✅ | — |
 | Competing-consumer work queue (`WorkQueueCell`) **Core surface** — single-threaded flavor — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ~ | ✅ | ~ | ✅ | ✅ | — |
-| Competing-consumer work queue (`WorkQueueCell`) **Core surface** — thread-safe flavor (reader kinds + closure lifecycle) | ✅ | — | — | — | — | — | — | — | — |
-| Competing-consumer work queue (`WorkQueueCell`) **Core surface** — async flavor (reader kinds + eventual transparency) | ✅ | — | — | — | — | — | — | — | — |
+| Competing-consumer work queue (`WorkQueueCell`) **Core surface** — thread-safe flavor (reader kinds + closure lifecycle) | ✅ | — | — | — | — | — | — | ✅ | — |
+| Competing-consumer work queue (`WorkQueueCell`) **Core surface** — async flavor (reader kinds + eventual transparency) | ✅ | — | — | — | — | — | — | ✅ | — |
 | Merge algebra + `Source<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ Source<KeepLatest>`, read-any-cell/write-`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -374,12 +374,22 @@ q.close(ctx);
 assert(q.try_pop(ctx).is_closed());    // closed + empty → Closed (≠ Empty)
 ```
 
+The same Core surface is available as `ThreadSafeQueueCell<T>` on a
+`ThreadSafeContext` and `AsyncQueueCell<T>` on an `AsyncContext`. Queue state
+itself needs no await, so every flavor exposes synchronous memoized reader
+kinds and clears exactly the changed readers in one batched frontier.
+
 ### Competing-consumer work queue
 
 `WorkQueueCell<T>` provides exclusive FIFO claims with visibility deadlines,
 worker-scoped acknowledgements, tail retries, and bounded dead-letter handling.
 Item ids remain stable across retries while every claim receives a fresh
 delivery id. Its four reactive readers invalidate independently.
+
+`ThreadSafeWorkQueueCell<T>` and `AsyncWorkQueueCell<T>` expose the same
+caller-driven lease clock and operation surface. `ThreadSafeTopicCell<T>` and
+`AsyncTopicCell<T>` likewise preserve `TopicCell<T>`'s per-subscriber cursor and
+invalidation contract.
 
 ```cpp
 lazily::WorkQueueCell<std::string> work(ctx, 10, 3);

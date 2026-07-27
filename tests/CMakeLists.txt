@@ -110,6 +110,10 @@ add_executable(test_work_queue test_work_queue.cpp)
 target_link_libraries(test_work_queue PRIVATE lazily)
 add_test(NAME work_queue COMMAND test_work_queue)
 
+add_executable(test_work_queue_conformance test_work_queue_conformance.cpp)
+target_link_libraries(test_work_queue_conformance PRIVATE lazily)
+add_test(NAME WorkQueueConformance COMMAND test_work_queue_conformance)
+
 add_executable(test_concurrency test_concurrency.cpp)
 target_link_libraries(test_concurrency PRIVATE lazily)
 add_test(NAME concurrency COMMAND test_concurrency)
@@ -268,6 +272,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_materialization_conformance
   test_collections_family_conformance
   test_queue_conformance
+  test_work_queue_conformance
   test_signaling_conformance
   test_queue_family_conformance
   test_reactive_graph_conformance
@@ -298,6 +303,7 @@ set_tests_properties(
   # hard ctest FAILURE instead of a skip.
   SeqCrdtConformance
   TopicConformance
+  WorkQueueConformance
   LosslessTreeConformance
   CommandConformance
   StatechartConformance

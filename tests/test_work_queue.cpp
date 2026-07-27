@@ -1,7 +1,11 @@
 #include <lazily/lazily.hpp>
 
 #include <cassert>
+#include <mutex>
+#include <set>
 #include <string>
+#include <thread>
+#include <vector>
 
 using namespace lazily;
 
@@ -15,7 +19,8 @@ struct WorkQueueReaders {
   WorkQueueReaders(Context &context, WorkQueueCell<std::string> &queue)
       : ctx(context), pending(ctx.computed<size_t>(
                           [&](Compute &c) { return queue.pending_len(c); })),
-        empty(ctx.computed<bool>([&](Compute &c) { return queue.is_empty(c); })),
+        empty(
+            ctx.computed<bool>([&](Compute &c) { return queue.is_empty(c); })),
         in_flight(ctx.computed<size_t>(
             [&](Compute &c) { return queue.in_flight_len(c); })),
         dead(ctx.computed<size_t>(
@@ -96,8 +101,39 @@ static void visibility_and_dead_letter() {
          dead[0].reason == WorkQueueDeadLetterReason::Expired);
 }
 
+static void thread_safe_claims_are_exclusive() {
+  ThreadSafeContext ctx;
+  ThreadSafeWorkQueueCell<std::string> queue(ctx, 10, 3);
+  constexpr std::size_t item_count = 100;
+  for (std::size_t i = 0; i < item_count; ++i)
+    queue.push(ctx, std::to_string(i));
+
+  std::mutex observed_mutex;
+  std::set<std::uint64_t> observed;
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < 4; ++worker) {
+    workers.emplace_back([&, worker] {
+      const std::string name = "worker-" + std::to_string(worker);
+      while (auto delivery = queue.claim(ctx, name, 0)) {
+        {
+          std::lock_guard<std::mutex> lock(observed_mutex);
+          assert(observed.insert(delivery->item_id).second);
+        }
+        assert(queue.ack(ctx, name, delivery->delivery_id));
+      }
+    });
+  }
+  for (auto &worker : workers)
+    worker.join();
+
+  assert(observed.size() == item_count);
+  assert(queue.pending_len(ctx) == 0);
+  assert(queue.in_flight_len(ctx) == 0);
+}
+
 int main() {
   competing_delivery();
   visibility_and_dead_letter();
+  thread_safe_claims_are_exclusive();
   return 0;
 }
