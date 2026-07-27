@@ -13,6 +13,8 @@
 #include <cassert>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace lazily;
@@ -34,7 +36,37 @@ static int test_passed = 0;
 // Drive a lazily-resolved async slot handle to its resolved value.
 template <typename H>
 static uint32_t drive(H handle) {
-  return handle.get_async().get();
+return handle.get_async().get();
+}
+
+static_assert(std::is_same_v<AsyncCellHandle<uint32_t>, AsyncSource<uint32_t>>);
+static_assert(std::is_same_v<AsyncSlotHandle<uint32_t>, AsyncComputed<uint32_t>>);
+static_assert(std::is_same_v<
+decltype(std::declval<AsyncContext&>().source(uint32_t{})),
+AsyncSource<uint32_t>>);
+static_assert(std::is_same_v<
+decltype(std::declval<AsyncContext&>().template computed<uint32_t>(
+std::declval<uint32_t (*)()>())),
+AsyncComputed<uint32_t>>);
+
+TEST(test_async_v2_names_and_legacy_factories_share_types) {
+AsyncContext ctx;
+auto source = ctx.source(uint32_t{2});
+auto computed = ctx.computed<uint32_t>(
+[source]() mutable { return source.get() * 3; });
+assert(computed.get_async().get() == 6);
+assert(computed.state() == AsyncComputedState::Resolved);
+
+AsyncCellHandle<uint32_t> legacy_source = ctx.cell(uint32_t{4});
+AsyncSlotHandle<uint32_t> legacy_computed =
+ctx.slot<uint32_t>([legacy_source]() mutable { return legacy_source.get() + 1; });
+assert(legacy_computed.get_async().get() == 5);
+
+auto guarded = ctx.memo<uint32_t>(
+[] { return uint32_t{7}; },
+[](const uint32_t& left, const uint32_t& right) { return left == right; });
+static_assert(std::is_same_v<decltype(guarded), AsyncComputed<uint32_t>>);
+assert(guarded.get_async().get() == 7);
 }
 
 TEST(test_eager_source_map_resolves_immediately) {

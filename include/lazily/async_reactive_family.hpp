@@ -5,7 +5,7 @@
 // flavor).
 //
 // The `AsyncContext` analog of `ReactiveMap`: keys `K` map to per-entry async
-// reactive nodes (`AsyncCellHandle<V>` input cells / `AsyncSlotHandle<V>` derived
+// reactive nodes (`AsyncSource<V>` input cells / `AsyncComputed<V>` derived
 // slots). Like `ThreadSafeReactiveMap` it guards its present-set state behind a
 // `std::mutex`, so it can live in a cross-task owner.
 //
@@ -34,54 +34,54 @@
 
 namespace lazily {
 
-// Traits abstracting over the two async map handle kinds — `AsyncCellHandle<V>`
-// (input cells, always resolved) and `AsyncSlotHandle<V>` (derived slots, resolve
+// Traits abstracting over the two async map handle kinds — `AsyncSource<V>`
+// (input cells, always resolved) and `AsyncComputed<V>` (derived slots, resolve
 // asynchronously). The `AsyncContext` analog of `MapHandleTraits`.
 template <typename H>
 struct AsyncMapHandleTraits;  // primary template intentionally undefined
 
 template <typename V>
-struct AsyncMapHandleTraits<AsyncCellHandle<V>> {
+struct AsyncMapHandleTraits<AsyncSource<V>> {
   static constexpr EntryKind kind = EntryKind::Source;
 
   template <typename K>
-  static AsyncCellHandle<V> materialize(
+  static AsyncSource<V> materialize(
       AsyncContext& ctx, const K& key,
       const std::function<V(const K&)>& factory) {
-    return ctx.template cell<V>(factory(key));
+    return ctx.template source<V>(factory(key));
   }
 
   // A materialized cell is always resolved.
-  static std::optional<V> observe(AsyncCellHandle<V> h, AsyncContext&) {
+  static std::optional<V> observe(AsyncSource<V> h, AsyncContext&) {
     return std::optional<V>(h.get());
   }
 
-  static void clear_dependents(AsyncCellHandle<V> h, AsyncContext&) {
+  static void clear_dependents(AsyncSource<V> h, AsyncContext&) {
     h.clear_dependents();
   }
 };
 
 template <typename V>
-struct AsyncMapHandleTraits<AsyncSlotHandle<V>> {
+struct AsyncMapHandleTraits<AsyncComputed<V>> {
   static constexpr EntryKind kind = EntryKind::Computed;
 
   // A derived node whose async recompute yields the sync factory value. Resolve
   // it with `get_async()` on the returned handle.
   template <typename K>
-  static AsyncSlotHandle<V> materialize(
+  static AsyncComputed<V> materialize(
       AsyncContext& ctx, const K& key,
       const std::function<V(const K&)>& factory) {
     K k = key;
-    return ctx.template slot<V>(
+    return ctx.template computed<V>(
         std::function<V()>([factory, k]() -> V { return factory(k); }));
   }
 
   // Non-blocking read: a value once resolved, else `std::nullopt`.
-  static std::optional<V> observe(AsyncSlotHandle<V> h, AsyncContext&) {
+  static std::optional<V> observe(AsyncComputed<V> h, AsyncContext&) {
     return h.get();
   }
 
-  static void clear_dependents(AsyncSlotHandle<V> h, AsyncContext&) {
+  static void clear_dependents(AsyncComputed<V> h, AsyncContext&) {
     h.clear_dependents();
   }
 };
@@ -100,7 +100,7 @@ struct AsyncReactiveMapInner {
 };
 
 // The async keyed reactive collection (`#reactivemap`) generic over the entry
-// handle kind `H` (`AsyncCellHandle<V>` input cells, `AsyncSlotHandle<V>` derived
+// handle kind `H` (`AsyncSource<V>` input cells, `AsyncComputed<V>` derived
 // slots).
 //
 // Cheap to copy (a `shared_ptr` to shared inner state). See the eventual-
@@ -121,7 +121,7 @@ class AsyncReactiveMap {
   // -- Shared surface --
 
   // Get the entry handle for `key`, minting it via `factory(key)` on first access
-  // and caching it. For a slot map this is the `AsyncSlotHandle` to drive with
+  // and caching it. For a slot map this is the `AsyncComputed` to drive with
   // `get_async()`.
   H get_or_insert_handle(AsyncContext& ctx, const K& key,
                          std::function<V(const K&)> factory) {
@@ -253,7 +253,7 @@ class AsyncReactiveMap {
       if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
     }
     H handle = Traits::materialize(ctx, key, factory);
-    // `H` is not required to be default-constructible (an `AsyncCellHandle`
+    // `H` is not required to be default-constructible (an `AsyncSource`
     // needs a context), so the race outcome is carried in an optional.
     std::optional<H> stored;
     MapMutation mutation;
@@ -297,11 +297,11 @@ class AsyncReactiveMap {
 };
 
 // An async **input-cell** map: every entry is an always-resolved
-// `AsyncCellHandle<V>`. Adds cell-only `set`.
+// `AsyncSource<V>`. Adds cell-only `set`.
 template <typename K, typename V>
-class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncCellHandle<V>> {
+class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncSource<V>> {
  public:
-  using Base = AsyncReactiveMap<K, V, AsyncCellHandle<V>>;
+  using Base = AsyncReactiveMap<K, V, AsyncSource<V>>;
   using Base::Base;
 
   // Set the value at `key`, inserting a new input cell if absent. Cell-only.
@@ -316,12 +316,12 @@ class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncCellHandle<V>> {
   }
 };
 
-// An async **derived-slot** map: entries are `AsyncSlotHandle<V>` minted lazily
+// An async **derived-slot** map: entries are `AsyncComputed<V>` minted lazily
 // on access or eagerly via `materialize_all`, resolved via `get_async()`.
 template <typename K, typename V>
-class AsyncComputedMap : public AsyncReactiveMap<K, V, AsyncSlotHandle<V>> {
+class AsyncComputedMap : public AsyncReactiveMap<K, V, AsyncComputed<V>> {
  public:
-  using Base = AsyncReactiveMap<K, V, AsyncSlotHandle<V>>;
+  using Base = AsyncReactiveMap<K, V, AsyncComputed<V>>;
   using Base::Base;
 
   // **Eager materialization**: pre-mint a derived slot for every key in `keys`.

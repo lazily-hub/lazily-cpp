@@ -22,40 +22,42 @@
 
 namespace lazily {
 
-enum class AsyncSlotState { Empty, Computing, Resolved, Error };
+// Public projection of the async computed state machine. The formal model keeps
+// the storage-oriented `AsyncSlotState` theorem/module vocabulary.
+enum class AsyncComputedState { Empty, Computing, Resolved, Error };
 
 // AsyncContext stores its closures and nodes on the library's own
 // SmallFn/RcPtr primitives (#lzcppasyncmodernize), mirroring how the sync
 // Context already does this (context.hpp:118-126):
 //   - compute/equals/cleanup closures → SmallFn (inline storage for typical
 //     small lambdas; no per-slot std::function heap alloc);
-//   - AsyncSlotNode<T> / AsyncEffectHandle → RcBox<T> held by RcPtr<RcBox<T>>
+//   - AsyncComputedNode<T> / AsyncEffectHandle → RcBox<T> held by RcPtr<RcBox<T>>
 //     (intrusive non-atomic refcount — same model as Context's ComputeFnPtr
 //     / EffectFnPtr). AsyncContext is single-owner; the refcount is mutated
 //     only on the owner thread while the async compute thread accesses the
 //     node through a stable raw pointer captured by value.
 template <typename T>
-struct AsyncSlotNode {
+struct AsyncComputedNode {
   SmallFn<T()> compute;
   std::optional<T> value;
   std::optional<std::string> error;
-  AsyncSlotState state = AsyncSlotState::Empty;
+AsyncComputedState state = AsyncComputedState::Empty;
   int revision = 0;
   SmallFn<bool(const T&, const T&)> equals;
 };
 
 template <typename T>
-struct AsyncSlotHandle {
-  using NodePtr = RcPtr<RcBox<AsyncSlotNode<T>>>;
+struct AsyncComputed {
+using NodePtr = RcPtr<RcBox<AsyncComputedNode<T>>>;
 
   uint64_t id;
   NodePtr node;
 
-  AsyncSlotState state() const { return node->value.state; }
+AsyncComputedState state() const { return node->value.state; }
   int revision() const { return node->value.revision; }
 
   std::optional<T> get() {
-    if (node->value.state == AsyncSlotState::Resolved && node->value.value) {
+if (node->value.state == AsyncComputedState::Resolved && node->value.value) {
       return node->value.value;
     }
     return std::nullopt;
@@ -69,12 +71,12 @@ struct AsyncSlotHandle {
   void clear_dependents() {
     node->value.value.reset();
     node->value.error.reset();
-    node->value.state = AsyncSlotState::Empty;
+node->value.state = AsyncComputedState::Empty;
   }
 
   std::future<T> get_async() {
     return std::async(std::launch::async, [this]() -> T {
-      node->value.state = AsyncSlotState::Computing;
+node->value.state = AsyncComputedState::Computing;
       node->value.revision++;
       try {
         T result = node->value.compute();
@@ -84,11 +86,11 @@ struct AsyncSlotHandle {
         } else {
           node->value.value = result;
         }
-        node->value.state = AsyncSlotState::Resolved;
+node->value.state = AsyncComputedState::Resolved;
         node->value.error.reset();
         return *node->value.value;
       } catch (const std::exception& e) {
-        node->value.state = AsyncSlotState::Error;
+node->value.state = AsyncComputedState::Error;
         node->value.error = e.what();
         throw;
       }
@@ -97,10 +99,10 @@ struct AsyncSlotHandle {
 };
 
 template <typename T>
-struct AsyncCellHandle {
-  Context* ctx;
-  Source<T> cell;  // #lzcellkernel: was CellHandle<T>
-  AsyncCellHandle(Context& c, T value) : ctx(&c), cell(c.source(std::move(value))) {}
+struct AsyncSource {
+Context* ctx;
+Source<T> cell;  // #lzcellkernel: was CellHandle<T>
+AsyncSource(Context& c, T value) : ctx(&c), cell(c.source(std::move(value))) {}
   T peek() { return ctx->get(cell); }
   T get() { return ctx->get(cell); }
   void set(T value) { ctx->set(cell, std::move(value)); }
@@ -108,6 +110,16 @@ struct AsyncCellHandle {
   // ordinary node teardown.
   void clear_dependents() { cell.clear_dependents(*ctx); }
 };
+
+// Published v1 compatibility spellings. New implementation code uses the
+// canonical async value kinds above.
+using AsyncSlotState [[deprecated("use AsyncComputedState")]] = AsyncComputedState;
+
+template <typename T>
+using AsyncCellHandle [[deprecated("use AsyncSource")]] = AsyncSource<T>;
+
+template <typename T>
+using AsyncSlotHandle [[deprecated("use AsyncComputed")]] = AsyncComputed<T>;
 
 struct AsyncEffectHandle {
   SmallFn<void()> cleanup_fn;
@@ -137,33 +149,51 @@ class AsyncContext {
   AsyncContext(const AsyncContext&) = delete;
   AsyncContext& operator=(const AsyncContext&) = delete;
 
-  template <typename T>
-  AsyncCellHandle<T> cell(T value) {
-    return AsyncCellHandle<T>(ctx_, std::move(value));
-  }
+template <typename T>
+AsyncSource<T> source(T value) {
+return AsyncSource<T>(ctx_, std::move(value));
+}
 
-  // Accept any callable (std::function, lambdas, function pointers) via
-  // SmallFn's converting constructor; T must be explicit.
-  template <typename T, typename F>
-  AsyncSlotHandle<T> slot(F&& compute) {
-    auto id = next_id_++;
-    auto* raw = new RcBox<AsyncSlotNode<T>>();
-    raw->value.compute = std::forward<F>(compute);
-    typename AsyncSlotHandle<T>::NodePtr node(
-        raw, typename AsyncSlotHandle<T>::NodePtr::adopt_t{});
-    return AsyncSlotHandle<T>{id, std::move(node)};
-  }
+// Accept any callable (std::function, lambdas, function pointers) via
+// SmallFn's converting constructor; T must be explicit.
+template <typename T, typename F>
+AsyncComputed<T> computed(F&& compute) {
+auto id = next_id_++;
+auto* raw = new RcBox<AsyncComputedNode<T>>();
+raw->value.compute = std::forward<F>(compute);
+typename AsyncComputed<T>::NodePtr node(
+raw, typename AsyncComputed<T>::NodePtr::adopt_t{});
+return AsyncComputed<T>{id, std::move(node)};
+}
 
-  template <typename T, typename F, typename E>
-  AsyncSlotHandle<T> memo(F&& compute, E&& eq) {
-    auto id = next_id_++;
-    auto* raw = new RcBox<AsyncSlotNode<T>>();
-    raw->value.compute = std::forward<F>(compute);
-    raw->value.equals = std::forward<E>(eq);
-    typename AsyncSlotHandle<T>::NodePtr node(
-        raw, typename AsyncSlotHandle<T>::NodePtr::adopt_t{});
-    return AsyncSlotHandle<T>{id, std::move(node)};
-  }
+template <typename T, typename F, typename E>
+AsyncComputed<T> computed(F&& compute, E&& eq) {
+auto id = next_id_++;
+auto* raw = new RcBox<AsyncComputedNode<T>>();
+raw->value.compute = std::forward<F>(compute);
+raw->value.equals = std::forward<E>(eq);
+typename AsyncComputed<T>::NodePtr node(
+raw, typename AsyncComputed<T>::NodePtr::adopt_t{});
+return AsyncComputed<T>{id, std::move(node)};
+}
+
+template <typename T>
+[[deprecated("use source")]]
+AsyncSource<T> cell(T value) {
+return source<T>(std::move(value));
+}
+
+template <typename T, typename F>
+[[deprecated("use computed")]]
+AsyncComputed<T> slot(F&& compute) {
+return computed<T>(std::forward<F>(compute));
+}
+
+template <typename T, typename F, typename E>
+[[deprecated("memo is a guarded computed; use computed(compute, equals)")]]
+AsyncComputed<T> memo(F&& compute, E&& eq) {
+return computed<T>(std::forward<F>(compute), std::forward<E>(eq));
+}
 
   EffectHandlePtr effect(EffectBody body) {
     auto* raw = new RcBox<AsyncEffectHandle>();

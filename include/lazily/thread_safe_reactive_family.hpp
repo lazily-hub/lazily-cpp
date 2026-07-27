@@ -294,7 +294,7 @@ class ThreadSafeReactiveMap {
       if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
     }
     H handle = Traits::materialize(ctx, key, factory);
-    // `H` is not required to be default-constructible (an `AsyncCellHandle`
+    // `H` is not required to be default-constructible (an `AsyncSource`
     // needs a context), so the race outcome is carried in an optional.
     std::optional<H> stored;
     MapMutation mutation;
