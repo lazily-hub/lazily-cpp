@@ -51,11 +51,10 @@ invalidation and effect reruns happen once after the outermost batch exits.
 > **`Slot` is the storage sense only.** `SlotId`, `SlotNode`, the arena
 > free-list, and the wire `SlotValue` name the *position that holds a node* of
 > any kind — they are unchanged. Only the former reactive-VALUE sense of "slot"
-> became `Computed`. The lower-level handle types `CellHandle<T>` /
-> `SlotHandle<T>` / `Effect` and the engine constructors (`cell`/`slot`/`memo`/
-> `signal`, `MergeCell`) remain as the internal engine surface the CRDT, relay,
-> and coordination families build on, but the kernel above is the recommended
-> public vocabulary.
+> became `Computed`. The arena still stores nodes by `SlotId`, but the removed
+> `CellHandle<T>` / `SlotHandle<T>` value-handle spellings are not an alternate
+> public layer: code uses `Source<T, M>` / `Computed<T>` / `Effect` and the
+> corresponding `Context` constructors.
 
 ## Feature Set
 
@@ -287,8 +286,8 @@ assert(ctx.dependency_count(derived) == 1);
 ### Keyed reactive collections (`ReactiveMap`)
 
 `ReactiveMap<K, V, H>` is the one keyed primitive: it maps keys to per-entry
-reactive nodes of a single handle kind — `CellHandle<V>` (input cells) or
-`SlotHandle<V>` (derived slots) — with **reactive membership and order**. It has
+reactive nodes of a single handle kind — `Source<V>` (input cells) or
+`Computed<V>` (derived values) — with **reactive membership and order**. It has
 two specializations (`#reactivemap`):
 
 - **`SourceMap<K, V>`** — input-cell entries. Adds cell-only `set` and eager
@@ -403,10 +402,8 @@ assert(work.ack(ctx, "worker-a", delivery.delivery_id));
 - **Context owns all nodes** in a `std::vector<std::optional<Node>>` indexed by
   `SlotId` (uint64_t) — cache-friendly, allocation-light, no hash probes on the
   read path.
-- **Lightweight Copy handles** — the public kernel handles `Source<T, M>` /
-  `Computed<T>` and the internal engine handles (`SlotHandle<T>`,
-  `CellHandle<T>`, `Effect`) are all just `SlotId`s — every value lives in the
-  Context.
+- **Lightweight Copy handles** — `Source<T, M>`, `Computed<T>`, and `Effect`
+  carry `SlotId`s; every value lives in the `Context`.
 - **Write protection by distinct types** — `set`/`merge` are declared only on
   `Source<T, M>`, so `computed.set(...)` fails to compile with no runtime check
   and no base class. Proved by `tests/test_cell_kernel.cpp` (`has_set<>`

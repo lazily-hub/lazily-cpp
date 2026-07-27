@@ -39,12 +39,12 @@ The public reactive surface is `include/lazily/cell.hpp`:
   holds a node of any kind. Only the reactive-VALUE sense of "slot" became
   `Computed`.
 
-Engine substrate (kept, not the public vocabulary): the internal handle types
-`CellHandle<T>` / `SlotHandle<T>` / `Effect`, and the engine constructors
-`cell`/`slot` (unguarded) / `memo` (guarded) / `signal`, plus the
-`MergeCell<T, Policy>` class in `merge.hpp`, remain as the lower-level surface the
-CRDT/relay/coordination families build on. `AsyncContext` remains a stub with no
-dependency graph and was not migrated (it carries the vocab only).
+Engine substrate (kept, not the public vocabulary): `SlotId`, `SlotNode`, the
+arena/free-list, and the wire `SlotValue` storage name. The removed
+`CellHandle<T>` / `SlotHandle<T>` value-handle spellings and their old
+constructors are not an alternate lower-level API; production code uses
+`Source<T, M>` / `Computed<T>` / `Effect`. `AsyncContext` remains a separate
+incomplete plane and is tracked by the async-v2 migration plan.
 
 ## Commit & Push
 
