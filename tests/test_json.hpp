@@ -50,6 +50,7 @@ struct Json {
   enum class Type { Null, Bool, Number, String, Array, Object } type = Type::Null;
   bool boolean = false;
   double number = 0;
+  std::string number_token;
   std::string str;
   std::vector<JsonPtr> array;
   std::vector<std::pair<std::string, JsonPtr>> object;  // ordered for determinism
@@ -217,7 +218,8 @@ struct JsonParser {
             src[pos] == 'e' || src[pos] == 'E' || src[pos] == '-' || src[pos] == '+'))
       ++pos;
     REQUIRE(pos > start, "malformed JSON number");
-    node->number = std::stod(src.substr(start, pos - start));
+    node->number_token = src.substr(start, pos - start);
+    node->number = std::stod(node->number_token);
     return node;
   }
 };
@@ -248,7 +250,7 @@ inline const std::string& json_string(const Json& value) {
 inline std::uint64_t json_u64(const Json& value) {
   REQUIRE(value.type == Json::Type::Number && value.number >= 0,
           "expected non-negative JSON number");
-  return static_cast<std::uint64_t>(value.as_int());
+  return static_cast<std::uint64_t>(std::stoull(value.number_token));
 }
 
 inline double json_number(const Json& value) {

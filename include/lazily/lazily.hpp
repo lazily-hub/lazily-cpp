@@ -35,6 +35,7 @@
 #include <lazily/stable_id.hpp>
 #include <lazily/state_machine.hpp>
 #include <lazily/statechart.hpp>
+#include <lazily/stdlib.hpp>
 #include <lazily/temporal.hpp>
 #include <lazily/thread_safe.hpp>
 #include <lazily/thread_safe_reactive_family.hpp>

@@ -17,6 +17,17 @@ add_executable(test_smoke test_smoke.cpp)
 target_link_libraries(test_smoke PRIVATE lazily)
 add_test(NAME smoke COMMAND test_smoke)
 
+add_executable(test_stdlib_conformance test_stdlib_conformance.cpp)
+target_link_libraries(test_stdlib_conformance PRIVATE lazily)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(test_stdlib_conformance PRIVATE
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer)
+  target_link_options(test_stdlib_conformance PRIVATE
+    -fsanitize=address,undefined)
+endif()
+add_test(NAME StdlibConformance COMMAND test_stdlib_conformance)
+
 add_executable(test_core test_core.cpp)
 target_link_libraries(test_core PRIVATE lazily)
 add_test(NAME core COMMAND test_core)
@@ -263,6 +274,7 @@ add_test(NAME ReactiveGraphConformance COMMAND test_reactive_graph_conformance)
 # silent pass. CI asserts the directory exists so a skip cannot go unnoticed
 # there, and each suite additionally asserts a positive distinct-fixture count.
 set(LAZILY_SPEC_CONFORMANCE_TESTS
+  test_stdlib_conformance
   test_crdt_tree
   test_outbox_store
   test_temporal_conformance
@@ -295,6 +307,7 @@ foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
 endforeach()
 
 set_tests_properties(
+  StdlibConformance
   CrdtTreeConformance
   OutboxStoreConformance
   TemporalConformance
