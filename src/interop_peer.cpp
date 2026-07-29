@@ -442,7 +442,7 @@ private:
     logical_ = 0;
     stdlib_.clear();
     return "{\"ok\":true,\"binding\":\"lazily-cpp\","
-           "\"version\":\"0.25.1\",\"protocol_version\":1,"
+           "\"version\":\"0.27.0\",\"protocol_version\":1,"
            "\"features\":[\"distributed_crdt\",\"stdlib_timer_v1\","
            "\"stdlib_timeout_v1\",\"stdlib_revision_barrier_v1\"],"
            "\"codecs\":[\"msgpack\"],\"channels\":[],"
