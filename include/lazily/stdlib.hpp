@@ -179,14 +179,22 @@ public:
   template <typename Cancellation>
   RevisionBarrierObservation observe(std::uint64_t now, bool predicate,
                                      Cancellation cancellation) {
-    std::lock_guard<std::mutex> lock(mu_);
+    std::unique_lock<std::mutex> lock(mu_);
     if (terminal_)
       return snapshot();
+    if (!accept_now(now))
+      return latch(RevisionBarrierObservation::Outcome::unavailable,
+                   "clock_regression");
     if (deadline_ && now >= *deadline_)
       return latch(RevisionBarrierObservation::Outcome::timed_out);
     if (predicate && revision_ >= required_revision_)
       return latch(RevisionBarrierObservation::Outcome::satisfied);
-    switch (cancellation()) {
+    lock.unlock();
+    const auto cancellation_state = cancellation();
+    lock.lock();
+    if (terminal_)
+      return snapshot();
+    switch (cancellation_state) {
     case TimeoutCancellation::cancelled:
       return latch(RevisionBarrierObservation::Outcome::cancelled);
     case TimeoutCancellation::unavailable:
@@ -204,6 +212,9 @@ public:
     std::lock_guard<std::mutex> lock(mu_);
     if (terminal_)
       return snapshot();
+    if (!accept_now(now))
+      return latch(RevisionBarrierObservation::Outcome::unavailable,
+                   "clock_regression");
     if (deadline_ && now >= *deadline_)
       return latch(RevisionBarrierObservation::Outcome::timed_out);
     accept_revision(observed_revision);
@@ -235,6 +246,13 @@ public:
   }
 
 private:
+  bool accept_now(std::uint64_t now) {
+    if (last_now_ && now < *last_now_)
+      return false;
+    last_now_ = now;
+    return true;
+  }
+
   void accept_revision(std::uint64_t revision) {
     if (revision > revision_) {
       revision_ = revision;
@@ -259,6 +277,7 @@ private:
   std::uint64_t required_revision_;
   std::uint64_t generation_ = 0;
   std::optional<std::uint64_t> deadline_;
+  std::optional<std::uint64_t> last_now_;
   std::optional<RevisionBarrierObservation::Outcome> terminal_;
   std::string terminal_reason_;
 };

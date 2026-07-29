@@ -297,6 +297,20 @@ void validate_mutations(const Json &fixture,
   }
 }
 
+void validate_reentrant_barrier_cancellation() {
+  lazily::RevisionBarrier barrier(0, 1, std::nullopt);
+  const auto observation = barrier.observe(0, false, [&] {
+    const auto disposed = barrier.dispose();
+    REQUIRE(disposed.outcome ==
+                lazily::RevisionBarrierObservation::Outcome::disposed,
+            "reentrant disposal did not latch");
+    return lazily::TimeoutCancellation::cancelled;
+  });
+  REQUIRE(observation.outcome ==
+              lazily::RevisionBarrierObservation::Outcome::disposed,
+          "later cancellation overwrote reentrant disposal");
+}
+
 } // namespace
 
 int main() {
@@ -322,6 +336,7 @@ int main() {
     }
     validate_mutations(*fixture, scenario_ids);
   }
+  validate_reentrant_barrier_cancellation();
   REQUIRE_FIXTURES_LOADED(3);
   std::cout << "stdlib conformance: ok\n";
   return 0;

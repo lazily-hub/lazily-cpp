@@ -248,9 +248,17 @@ inline const std::string& json_string(const Json& value) {
 }
 
 inline std::uint64_t json_u64(const Json& value) {
-  REQUIRE(value.type == Json::Type::Number && value.number >= 0,
-          "expected non-negative JSON number");
-  return static_cast<std::uint64_t>(std::stoull(value.number_token));
+  const std::string* token = nullptr;
+  if (value.type == Json::Type::Number && value.number >= 0)
+    token = &value.number_token;
+  else if (value.type == Json::Type::String)
+    token = &value.str;
+  REQUIRE(token != nullptr && !token->empty(),
+          "expected non-negative JSON integer or decimal string");
+  for (const auto ch : *token)
+    REQUIRE(std::isdigit(static_cast<unsigned char>(ch)) != 0,
+            "expected unsigned decimal integer");
+  return static_cast<std::uint64_t>(std::stoull(*token));
 }
 
 inline double json_number(const Json& value) {
