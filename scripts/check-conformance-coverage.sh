@@ -15,12 +15,14 @@
 # APPENDS to the manifest named by LAZILY_CONFORMANCE_MANIFEST (see
 # tests/test_spec_fixture.hpp) and this script audits the union.
 #
-# Three independent failures are detected:
+# Four independent failures are detected:
 #   1. the manifest is missing or short   — replays stopped running
 #   2. a required AREA contributed nothing — that suite is silently not running
 #   3. a fixture exists on disk, is in a required area, and is neither replayed
 #      nor listed in KNOWN_UNCOVERED — an upstream corpus addition nobody picked
 #      up, which is exactly how a binding drifts out of conformance quietly
+#   4. a KNOWN_UNCOVERED entry IS in the replayed manifest — a stale excuse that
+#      understates coverage, so the ledger keeps claiming a gap the suite closed
 #
 # Usage: scripts/check-conformance-coverage.sh [manifest-path]
 #
@@ -97,8 +99,9 @@ REQUIRED_AREAS=(
 # Fixtures inside a REQUIRED area that this binding does NOT yet replay, each
 # with the reason it is outstanding. This list is the honest ledger of the gap:
 # a fixture is either replayed or named here, never silently absent. Entries are
-# verified to still exist on disk, so a fixture renamed or deleted upstream
-# forces this list to be pruned rather than rotting into a permanent excuse.
+# verified BOTH to still exist on disk and to still be unread, so neither a
+# fixture renamed/deleted upstream nor one this suite started replaying can rot
+# into a permanent excuse.
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
@@ -150,12 +153,32 @@ for area in "${REQUIRED_AREAS[@]}"; do
   fi
 done
 
-# Stale-ledger check: an excused fixture that no longer exists must be removed,
-# otherwise the ledger silently excuses a name that means nothing.
+# Stale-ledger check, both directions. An excuse is only honest while the fixture
+# still EXISTS upstream and is still UNREAD by this suite:
+#
+#   * gone from the corpus  — the ledger excuses a name that means nothing
+#   * present in the manifest — the ledger claims a gap the suite already closed,
+#     which understates coverage and lets a stale excuse rot into permanence
+#
+# The second arm is the one that matters for drift: nothing else in this script
+# ever reads KNOWN_UNCOVERED against the manifest. The completeness check below
+# consults the list only for fixtures that are ABSENT from the manifest, so a
+# fixture that starts being replayed silently keeps its excuse forever. Both arms
+# feed the same `status` counter as the MIN_FIXTURES and REQUIRED_AREAS checks, so
+# a stale excuse fails the build exactly like a missing replay does.
+#
+# Membership uses `grep -qxF`, byte-identical to the covered-check in the
+# completeness loop, so an entry can never be "replayed" for one check and
+# "uncovered" for the other.
 for excused in "${KNOWN_UNCOVERED[@]}"; do
   if [[ ! -f "$conformance_dir/$excused" ]]; then
     echo "ERROR: KNOWN_UNCOVERED lists '$excused', which is not in the canonical corpus." >&2
     echo "       It was renamed or deleted upstream — prune the entry." >&2
+    status=1
+  elif grep -qxF "$excused" "$replayed"; then
+    echo "ERROR: KNOWN_UNCOVERED lists '$excused', but it IS replayed — the excuse is stale." >&2
+    echo "       A runner now opens this fixture; prune the entry so the ledger stops" >&2
+    echo "       understating coverage." >&2
     status=1
   fi
 done
