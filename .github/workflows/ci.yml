@@ -16,6 +16,15 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [g++, clang++]
+    # Coverage manifest every conformance binary APPENDS to at static-destruction
+    # time (tests/test_spec_fixture.hpp). It carries BOTH the fixture-level rung
+    # and the per-scenario declared/replayed ledger, and it is the only evidence
+    # scripts/check-conformance-coverage.sh has. Set at job level so every ctest
+    # invocation below inherits it, exactly as the Makefile's `test` target does
+    # locally — a guard whose evidence file is never written passes VACUOUSLY
+    # (#lzguardsnotinci).
+    env:
+      LAZILY_CONFORMANCE_MANIFEST: ${{ github.workspace }}/build/conformance-fixtures-loaded.txt
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,15 +56,59 @@ jobs:
               exit 1
             }
           done
+      # Truncated before the first ctest run so the manifest always describes
+      # THIS run. A stale file left by an earlier step would let the coverage
+      # and scenario guards pass on fixtures nobody read (#lzguardsnotinci).
+      - name: Truncate the conformance coverage manifest (#lzguardsnotinci)
+        shell: bash
+        run: rm -f "$LAZILY_CONFORMANCE_MANIFEST"
       - name: Test
         run: ctest --test-dir build --output-on-failure
       # An absence guard proves the corpus exists; it cannot prove the suites
       # read it. Fail the run if ctest reported any conformance test as skipped.
       - name: Assert no conformance suite was skipped (#lzspecconf)
+        shell: bash
         run: |
           ctest --test-dir build -R Conformance --output-on-failure --no-tests=error \
             | tee ctest-conformance.log
           if grep -q "Skipped" ctest-conformance.log; then
             echo "::error::a conformance suite skipped — it validated nothing"
+            exit 1
+          fi
+      # ── the two guards that do NOT live inside the test binary ────────────
+      #
+      # Four conformance guards exist per binding. The unconsumed-assertion-key
+      # and unasserted-assertion-key rungs std::abort() from inside the
+      # conformance executables (tests/test_assertion_keys.hpp), so plain `ctest`
+      # already enforces them. The fixture-manifest rung and the per-scenario
+      # replay ledger are audited by scripts/check-conformance-coverage.sh, which
+      # only `make check` invoked — CI ran ctest and never reached the script, so
+      # both were silently unenforced here. Wire them in with the same env and
+      # manifest truncation the Makefile uses locally (#lzguardsnotinci).
+      #
+      # The manifest is asserted non-empty FIRST. The script's own MIN_FIXTURES /
+      # MIN_SCENARIOS floors do fail an empty manifest — verified — but a guard
+      # that can only report "0 of everything" does not name WHY; failing on the
+      # evidence file itself does.
+      - name: Assert the coverage manifest was written (#lzguardsnotinci)
+        shell: bash
+        run: |
+          if [[ ! -s "$LAZILY_CONFORMANCE_MANIFEST" ]]; then
+            echo "::error::no conformance coverage manifest at $LAZILY_CONFORMANCE_MANIFEST — the fixture and scenario guards would audit nothing"
+            exit 1
+          fi
+          echo "manifest records: $(wc -l < "$LAZILY_CONFORMANCE_MANIFEST")"
+      # Fixture-level coverage plus the per-scenario replay ledger. The script
+      # SKIPs (exit 0) when the sibling corpus is absent; that is a pass-shaped
+      # non-result, so treat a SKIP as a CI failure — the corpus is cloned and
+      # asserted present above, so a SKIP here means path resolution broke, not
+      # that there was nothing to check (#lzguardsnotinci).
+      - name: Assert canonical fixtures and scenarios were replayed (#lzguardsnotinci)
+        shell: bash
+        run: |
+          ./scripts/check-conformance-coverage.sh "$LAZILY_CONFORMANCE_MANIFEST" \
+            2>&1 | tee conformance-coverage.log
+          if grep -q '^SKIP:' conformance-coverage.log; then
+            echo "::error::the conformance coverage guard SKIPPED — it audited nothing"
             exit 1
           fi
