@@ -341,7 +341,10 @@ TEST(cancel_preempts_nonterminal_scenarios) {
   lazily_test::JsonPtr fx; load("cancel_preempts_nonterminal.json", fx);
   const Json* scenarios = fx->find("scenarios");
   REQUIRE(scenarios != nullptr, "cancel fixture missing scenarios");
-  for (const auto& scenario : scenarios->array) {
+  for (std::size_t i = 0; i < scenarios->array.size(); ++i) {
+    const auto& scenario = scenarios->array[i];
+    lazily_test::record_scenario_at(
+        "message-passing/cancel_preempts_nonterminal.json", *scenario, i);
     CommandProjection p;
     for (const auto& fr : scenario->find("frames")->array) fold_frame(p, fr.get());
     assert_projection(p, scenario->find("expect"),

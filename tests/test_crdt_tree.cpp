@@ -19,9 +19,11 @@ static lazily_test::JsonPtr fixture() {
 int main() {
   static_assert(is_crdt_tree_v<TextCrdt>, "TextCrdt is the canonical CrdtTree");
   const auto fx = fixture();
-  for (const auto& scenario_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "scenarios"))) {
-    const auto& scenario = *scenario_ptr;
+  const auto& scenarios =
+      lazily_test::json_array(lazily_test::json_member(*fx, "scenarios"));
+  for (std::size_t i = 0; i < scenarios.size(); ++i) {
+    const auto& scenario = *scenarios[i];
+    lazily_test::record_scenario_at("crdt-tree/algebra.json", scenario, i);
     const auto& seed = lazily_test::json_member(scenario, "seed");
     const auto peer =
         lazily_test::json_u64(lazily_test::json_member(seed, "peer"));

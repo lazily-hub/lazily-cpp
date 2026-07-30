@@ -15,7 +15,7 @@
 # APPENDS to the manifest named by LAZILY_CONFORMANCE_MANIFEST (see
 # tests/test_spec_fixture.hpp) and this script audits the union.
 #
-# Four independent failures are detected:
+# Four independent FIXTURE-level failures are detected:
 #   1. the manifest is missing or short   — replays stopped running
 #   2. a required AREA contributed nothing — that suite is silently not running
 #   3. a fixture exists on disk, is in a required area, and is neither replayed
@@ -23,6 +23,16 @@
 #      up, which is exactly how a binding drifts out of conformance quietly
 #   4. a KNOWN_UNCOVERED entry IS in the replayed manifest — a stale excuse that
 #      understates coverage, so the ledger keeps claiming a gap the suite closed
+#
+# "The file was opened" is one rung short of "the file was replayed", though: a
+# fixture carrying several named scenarios can be PARTIALLY replayed and every
+# check above stays green, because one scenario is enough to open the file. The
+# per-scenario ledger closes that rung and adds three more failures:
+#   5. a scenario the fixture declares was never replayed and is not excused
+#   6. an excused scenario the run DID replay — a stale excuse
+#   7. an excused scenario no opened fixture declares — a stale excuse
+# Scenario ids whose fixture carries no `id` and no `name` fall back to the
+# positional spelling; those are REPORTED rather than silently accepted.
 #
 # Usage: scripts/check-conformance-coverage.sh [manifest-path]
 #
@@ -124,6 +134,52 @@ KNOWN_UNCOVERED=(
   "reliable-sync/resync_gap_converge.json"
 )
 
+# ── per-scenario ledger ────────────────────────────────────────────────────
+#
+# Same shape, one rung down: a scenario of an OPENED fixture is either replayed
+# or excused here with a reason, never silently absent. Kept beside
+# KNOWN_UNCOVERED on purpose, so there is one place to read what this binding
+# does not prove.
+#
+# Fixtures this binding never opens contribute nothing here — their gap is
+# already stated above, and restating it per scenario would double-count it.
+SCENARIO_EXCUSES=()
+
+# excuse_scenario <fixture> <scenario-id> <reason>
+excuse_scenario() {
+  local fixture="$1" id="$2" reason="${3:-}"
+  if [[ -z "$reason" ]]; then
+    echo "ERROR: excuse_scenario '$fixture' '$id' has no reason — an excuse without" >&2
+    echo "       one is the allowlist this ledger exists to replace." >&2
+    exit 1
+  fi
+  SCENARIO_EXCUSES+=("${fixture}"$'\t'"${id}"$'\t'"${reason}")
+}
+
+# reliable-sync/outbox_store_protocol.json — tests/test_outbox_store.cpp opens
+# the fixture only to assert the four scenario names still exist upstream, then
+# drives the store from hand-written constants. A transcription is not a replay:
+# every value it checks is one somebody typed, so the fixture cannot disprove
+# it. Converting the runner is tracked as its own item; excused here rather than
+# recorded as replayed, because recording it would be the false claim.
+excuse_scenario "reliable-sync/outbox_store_protocol.json" \
+  "unordered puts replay in ascending epoch order" \
+  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
+excuse_scenario "reliable-sync/outbox_store_protocol.json" \
+  "ack cursor is monotone and prune-safe" \
+  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
+excuse_scenario "reliable-sync/outbox_store_protocol.json" \
+  "restart reloads cursor and unacked suffix" \
+  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
+excuse_scenario "reliable-sync/outbox_store_protocol.json" \
+  "stale handle cannot regress serialized cursor" \
+  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
+
+# Minimum DISTINCT scenarios replayed, the per-scenario twin of MIN_FIXTURES.
+# Without it a ledger that stopped recording entirely would leave the
+# declared-vs-replayed comparison vacuously satisfied on both sides.
+MIN_SCENARIOS="${MIN_SCENARIOS:-75}"
+
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
   echo "       Run the suite with LAZILY_CONFORMANCE_MANIFEST set (see the Makefile's \`test\` target)." >&2
@@ -134,9 +190,20 @@ fi
 # read the materialization corpus). Count DISTINCT fixtures: the question is
 # corpus coverage, not read count.
 replayed="$(mktemp)"
-trap 'rm -f "$replayed"' EXIT
-sort -u "$manifest" | grep . > "$replayed" || true
+declared_scenarios="$(mktemp)"
+replayed_scenarios="$(mktemp)"
+positional_scenarios="$(mktemp)"
+trap 'rm -f "$replayed" "$declared_scenarios" "$replayed_scenarios" "$positional_scenarios"' EXIT
+sort -u "$manifest" | grep . | grep -v '^@' > "$replayed" || true
 count="$(wc -l < "$replayed" | tr -d ' ')"
+
+# Scenario records are tab-delimited and tag-prefixed (tests/test_spec_fixture.hpp).
+# `declared` is what the corpus on disk carries for every fixture this run
+# opened; `replayed` is what a runner actually entered.
+awk -F'\t' '$1=="@declared"   {print $2 "\t" $3}' "$manifest" | sort -u > "$declared_scenarios"
+awk -F'\t' '$1=="@replayed"   {print $2 "\t" $3}' "$manifest" | sort -u > "$replayed_scenarios"
+awk -F'\t' '$1=="@positional" {print $2 "\t" $3}' "$manifest" | sort -u > "$positional_scenarios"
+scenario_count="$(wc -l < "$replayed_scenarios" | tr -d ' ')"
 
 status=0
 
@@ -203,9 +270,73 @@ for area in "${REQUIRED_AREAS[@]}"; do
   done < <(cd "$conformance_dir/$area" && ls -1 *.json 2>/dev/null || true)
 done
 
+# ── per-scenario accounting ────────────────────────────────────────────────
+#
+# Everything above asks whether a FILE was opened. These three checks ask
+# whether each SCENARIO inside an opened file was entered, which is the failure
+# a file-level manifest cannot see: replay one of four scenarios and the fixture
+# still counts as covered.
+
+if (( scenario_count < MIN_SCENARIOS )); then
+  echo "ERROR: only $scenario_count distinct scenarios replayed, expected >= $MIN_SCENARIOS." >&2
+  echo "       A replay loop stopped recording, or a runner stopped running. Do not lower" >&2
+  echo "       MIN_SCENARIOS to fix this." >&2
+  status=1
+fi
+
+scenario_is_excused() {
+  local pair="$1" entry
+  for entry in ${SCENARIO_EXCUSES[@]+"${SCENARIO_EXCUSES[@]}"}; do
+    [[ "${entry%$'\t'*}" == "$pair" ]] && return 0
+  done
+  return 1
+}
+
+# Forward: every scenario an opened fixture carries was replayed, or excused.
+while IFS= read -r pair; do
+  [[ -n "$pair" ]] || continue
+  grep -qxF "$pair" "$replayed_scenarios" && continue
+  scenario_is_excused "$pair" && continue
+  echo "ERROR: scenario '${pair#*$'\t'}' of '${pair%%$'\t'*}' is carried by the fixture but" >&2
+  echo "       was never replayed. The file was opened, so every file-level check passed" >&2
+  echo "       while this scenario proved nothing. Replay it, or excuse_scenario it with a" >&2
+  echo "       reason beside KNOWN_UNCOVERED." >&2
+  status=1
+done < "$declared_scenarios"
+
+# Reverse, both arms, exactly as KNOWN_UNCOVERED is checked: an excuse is only
+# honest while the scenario is still declared upstream AND still unreplayed.
+for entry in ${SCENARIO_EXCUSES[@]+"${SCENARIO_EXCUSES[@]}"}; do
+  pair="${entry%$'\t'*}"
+  if grep -qxF "$pair" "$replayed_scenarios"; then
+    echo "ERROR: scenario '${pair#*$'\t'}' of '${pair%%$'\t'*}' is excused, but this run DID" >&2
+    echo "       replay it — the excuse is stale and now hides nothing. Delete it." >&2
+    status=1
+  elif ! grep -qxF "$pair" "$declared_scenarios"; then
+    echo "ERROR: scenario '${pair#*$'\t'}' of '${pair%%$'\t'*}' is excused, but no fixture this" >&2
+    echo "       run opened carries that id — the excuse was renamed away upstream or names a" >&2
+    echo "       fixture nobody reads. Delete it." >&2
+    status=1
+  fi
+done
+
 if (( status != 0 )); then
   exit 1
 fi
 
+# Reported, never silently accepted: an id resolved by position means the corpus
+# gives that scenario no `id` and no `name`, so the ledger cannot survive a
+# reordering upstream. Visibility here is what makes the corpus gap fixable.
+if [[ -s "$positional_scenarios" ]]; then
+  echo "NOTE: $(wc -l < "$positional_scenarios" | tr -d ' ') scenario(s) carry no 'id' and no 'name'" \
+       "upstream and are ledgered by position:"
+  while IFS= read -r pair; do
+    [[ -n "$pair" ]] || continue
+    echo "        ${pair%%$'\t'*} scenario ${pair#*$'\t'}"
+  done < "$positional_scenarios"
+fi
+
 echo "conformance coverage OK: $count canonical fixtures replayed across ${#REQUIRED_AREAS[@]} areas" \
      "(${#KNOWN_UNCOVERED[@]} fixtures listed as known-uncovered)"
+echo "scenario coverage OK: $scenario_count of $(wc -l < "$declared_scenarios" | tr -d ' ')" \
+     "declared scenarios replayed (${#SCENARIO_EXCUSES[@]} excused)"

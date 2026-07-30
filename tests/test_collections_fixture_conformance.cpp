@@ -88,9 +88,14 @@ void replay_merge_scenario(const Json& scenario) {
 
 void test_mergecell_algebra() {
   const auto root = fixture("mergecell_algebra.json");
-  for (const auto& scenario_ptr : lazily_test::json_array(
-           lazily_test::json_member(*root, "scenarios"))) {
-    const auto& scenario = *scenario_ptr;
+  const auto& scenarios =
+      lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (std::size_t i = 0; i < scenarios.size(); ++i) {
+    const auto& scenario = *scenarios[i];
+    // This corpus carries neither `id` nor `name`, so the ledger falls back to
+    // the positional spelling and the coverage script reports it.
+    lazily_test::record_scenario_at("collections/mergecell_algebra.json",
+                                    scenario, i);
     const auto policy =
         lazily_test::json_string(
             lazily_test::json_member(scenario, "policy"));
@@ -210,9 +215,12 @@ void assert_sem_values(SemTree<int, int>& tree,
 
 void test_semtree_incremental() {
   const auto root = fixture("semtree_incremental.json");
-  for (const auto& scenario_ptr : lazily_test::json_array(
-           lazily_test::json_member(*root, "scenarios"))) {
-    const auto& scenario = *scenario_ptr;
+  const auto& scenarios =
+      lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (std::size_t i = 0; i < scenarios.size(); ++i) {
+    const auto& scenario = *scenarios[i];
+    lazily_test::record_scenario_at("collections/semtree_incremental.json",
+                                    scenario, i);
     const auto& tree_json = lazily_test::json_member(scenario, "tree");
     const auto fold_name =
         lazily_test::json_string(
@@ -322,9 +330,12 @@ std::string match_string(const Match& match) {
 
 void test_stableid_alignment() {
   const auto root = fixture("stableid_alignment.json");
-  for (const auto& scenario_ptr : lazily_test::json_array(
-           lazily_test::json_member(*root, "scenarios"))) {
-    const auto& scenario = *scenario_ptr;
+  const auto& scenarios =
+      lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (std::size_t i = 0; i < scenarios.size(); ++i) {
+    const auto& scenario = *scenarios[i];
+    lazily_test::record_scenario_at("collections/stableid_alignment.json",
+                                    scenario, i);
     lazily_test::AssertionKeys expect(
         std::string(__func__) + " expect", lazily_test::json_member(scenario, "expect"));
     if (scenario.has("blocks")) {
@@ -594,9 +605,11 @@ void assert_text_expectations(const ReplicaMap& replicas,
 
 void replay_text_fixture(const std::string& name) {
   const auto root = fixture(name);
-  for (const auto& scenario_ptr : lazily_test::json_array(
-           lazily_test::json_member(*root, "scenarios"))) {
-    const auto& scenario = *scenario_ptr;
+  const auto& scenarios =
+      lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (std::size_t i = 0; i < scenarios.size(); ++i) {
+    const auto& scenario = *scenarios[i];
+    lazily_test::record_scenario_at("collections/" + name, scenario, i);
     auto replicas = text_seed(scenario);
     apply_text_steps(
         replicas, lazily_test::json_member(scenario, "steps"));

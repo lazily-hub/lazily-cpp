@@ -39,6 +39,12 @@ struct TempJournal {
   }
 };
 
+// The four scenarios of `outbox_store_protocol.json` are transcribed below by
+// hand rather than replayed from the fixture's own steps: this runner reads the
+// bytes only to assert the scenario names still exist upstream. The scenario
+// ledger therefore declares them and they are excused, with that reason, in
+// scripts/check-conformance-coverage.sh. Converting this runner to a real
+// replay is tracked separately as the transcribed-runners item.
 int main() {
   static_assert(is_outbox_store_v<InMemoryStore>,
                 "in-memory byte store contract");

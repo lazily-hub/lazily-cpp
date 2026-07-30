@@ -116,6 +116,8 @@ static void assert_order(const Replica& r, const Json* expected, const std::stri
 }
 
 static void run_scenario(const Json* scenario, size_t idx) {
+  lazily_test::record_scenario_at("collections/seqcrdt_convergence.json",
+                                  *scenario, idx);
   Replicas replicas;
 
   if (const Json* seed = scenario->find("seed")) {

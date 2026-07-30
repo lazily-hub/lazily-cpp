@@ -174,8 +174,12 @@ int main() {
   REQUIRE(scenarios != nullptr && scenarios->is_array() && !scenarios->array.empty(),
           "fixture has no scenarios to replay");
 
-  for (const auto& scenario_node : scenarios->array) {
+  for (std::size_t scenario_index = 0; scenario_index < scenarios->array.size();
+       ++scenario_index) {
+    const auto& scenario_node = scenarios->array[scenario_index];
     REQUIRE(scenario_node->is_object(), "a scenario is not an object");
+    lazily_test::record_scenario_at(std::string(kArea) + "/" + kFixture,
+                                    *scenario_node, scenario_index);
     for (const auto& kv : scenario_node->object)
       REQUIRE(is_known_scenario_key(kv.first),
               "unrecognised distributed scenario key in fixture — it would be "

@@ -325,7 +325,11 @@ int main() {
     REQUIRE(string_field(*fixture, "feature") == feature,
             "stdlib feature mismatch");
     std::set<std::string> scenario_ids;
-    for (const auto &scenario : required(*fixture, "scenarios").array) {
+    const auto &scenarios = required(*fixture, "scenarios").array;
+    for (std::size_t i = 0; i < scenarios.size(); ++i) {
+      const auto &scenario = scenarios[i];
+      lazily_test::record_scenario_at(std::string("stdlib/") + name, *scenario,
+                                      i);
       scenario_ids.insert(string_field(*scenario, "id"));
       if (std::string(feature) == "stdlib_timer_v1")
         replay_timer(*scenario);

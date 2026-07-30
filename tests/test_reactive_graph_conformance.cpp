@@ -1200,10 +1200,20 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
   Report total;
   std::map<std::string, Observation> observations;
 
-  for (const auto& scenario : scenarios->array) {
+  for (std::size_t i = 0; i < scenarios->array.size(); ++i) {
+    const auto& scenario = scenarios->array[i];
     const Json* sname = scenario->find("name");
     const Json* ssteps = scenario->find("steps");
     REQUIRE(sname && ssteps, "scenario needs a name and steps");
+    // This runner carries its own JSON reader, so the scenario id is resolved
+    // here in the same fixed order the shared ledger uses (`id`, else `name`,
+    // else the positional index). A drift between the two spellings is not
+    // silent: the ledger DECLARES the id through `lazily_test::` and would
+    // report the one recorded below as an unreplayed scenario.
+    const Json* sid = scenario->find("id");
+    lazily_test::record_scenario(
+        std::string(kArea) + "/" + name,
+        sid != nullptr && !sid->str.empty() ? sid->str : sname->str);
     World w;
     Report report;
     replay(name + "/" + sname->str, w, ssteps->array, expected, report);

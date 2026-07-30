@@ -183,6 +183,7 @@ static void run_fixture(const std::string& name, int& fixture_scenarios) {
   REQUIRE(scenarios != nullptr && !scenarios->array.empty(), "no scenarios");
   for (size_t i = 0; i < scenarios->array.size(); ++i) {
     const Json* scenario = scenarios->array[i].get();
+    lazily_test::record_scenario_at("lossless-tree/" + name, *scenario, i);
     const Json* seed = scenario->find("seed");
     REQUIRE(seed != nullptr, "scenario missing seed");
     const std::string label =
