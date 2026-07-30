@@ -509,17 +509,32 @@ target_link_libraries(your_target PRIVATE lazily)
 | `ingress.hpp` | Transport-agnostic reactive ingress — `IngressCore` admission algebra + `IngressCell` / `ThreadSafeIngressCell` / `AsyncIngressCell` shells; keyed lifecycle scopes, generation fence, reorder buffer, freshness horizon, three receipt channels, and the `IngressTransportSeam` / `InProcIngress` delivery seam (`#designimplementtransport`) |
 | `ffi.hpp` | C-ABI FFI boundary (LazilyFfiChannel, extern "C" exports) |
 
-## Related Projects
+## The lazily family
 
-- [`lazily-spec`][spec] — wire protocol specification, JSON Schemas, conformance fixtures
-- [`lazily-formal`][formal] — Lean 4 formal models
-- [`lazily-rs`][rs] — Rust reference implementation
-- [`lazily-py`][py] — Python implementation
-- [`lazily-kt`][kt] — Kotlin/JVM implementation
-- [`lazily-js`][js] — TypeScript/Worker implementation
-- [`lazily-dart`][dart] — Dart implementation
-- [`lazily-zig`][zig] — Zig implementation
-- [`lazily-go`][go] — Go implementation
+`lazily` is one reactive model — the Cell kernel, keyed collections, state
+charts, CRDTs, and the distributed plane — implemented natively per language and
+held to the same behaviour by a shared conformance corpus.
+
+- [`lazily-spec`][spec] — the language-agnostic wire protocol, JSON Schemas, and
+  the canonical conformance corpus every binding replays. It also carries the
+  generated cross-language feature matrix; that table is the one to read rather
+  than any per-binding copy.
+- [`lazily-formal`][formal] — the **Lean 4 formal model**. Not a binding: it is
+  the neutral formal home every binding depends on *equally*, and this C++
+  implementation is one of its consumers.
+
+| Repo | Language |
+|---|---|
+| [`lazily-rs`][rs] | Rust — the reference implementation |
+| [`lazily-py`][py] | Python |
+| [`lazily-go`][go] | Go |
+| [`lazily-kt`][kt] | Kotlin / JVM |
+| [`lazily-js`][js] | JavaScript / TypeScript |
+| [`lazily-cs`][cs] | C# / .NET |
+| **`lazily-cpp`** | C++ — you are here |
+| [`lazily-zig`][zig] | Zig |
+| [`lazily-dart`][dart] | Dart / Flutter |
+| [`lazily-react`][react] | React / Preact bindings layered over [`lazily-js`][js] — not a separate language binding |
 
 [spec]: https://github.com/lazily-hub/lazily-spec
 [formal]: https://github.com/lazily-hub/lazily-formal
@@ -527,6 +542,8 @@ target_link_libraries(your_target PRIVATE lazily)
 [py]: https://github.com/lazily-hub/lazily-py
 [kt]: https://github.com/lazily-hub/lazily-kt
 [js]: https://github.com/lazily-hub/lazily-js
+[cs]: https://github.com/lazily-hub/lazily-cs
 [dart]: https://github.com/lazily-hub/lazily-dart
 [zig]: https://github.com/lazily-hub/lazily-zig
 [go]: https://github.com/lazily-hub/lazily-go
+[react]: https://github.com/lazily-hub/lazily-react
