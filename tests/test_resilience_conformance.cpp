@@ -70,19 +70,20 @@ TEST(test_circuit_breaker) {
       assert(cb.allow(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     }
-    const auto state =
-        lazily_test::json_string(lazily_test::json_member(expected, "state"));
-    const auto want = state == "Closed"
-                          ? BreakerState::Closed
-                          : (state == "Open" ? BreakerState::Open
-                                             : BreakerState::HalfOpen);
-    assert(cb.state() == want && "breaker state");
-    bool was = ctx.is_set(observed);
+    expected.assert_key_with("state", [&](const lazily_test::Json& value) {
+      const auto state = lazily_test::json_string(value);
+      const auto want = state == "Closed"
+                            ? BreakerState::Closed
+                            : (state == "Open" ? BreakerState::Open
+                                               : BreakerState::HalfOpen);
+      return cb.state() == want;
+    });
+    const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was) == lazily_test::json_bool(lazily_test::json_member(
-                         lazily_test::json_member(expected, "invalidates"),
-                         "state")) &&
-           "state invalidation");
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "state")) ==
+             !was;
+    });
   }
 }
 
@@ -106,14 +107,13 @@ TEST(test_retry) {
         std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     assert(r.next_delay(ctx) ==
            lazily_test::json_u64(lazily_test::json_member(item, "returns")));
-    assert(r.delay(ctx) ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "delay")));
-    bool was = ctx.is_set(observed);
+    expected.assert_key("delay", r.delay(ctx));
+    const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was) == lazily_test::json_bool(lazily_test::json_member(
-                         lazily_test::json_member(expected, "invalidates"),
-                         "delay")) &&
-           "delay invalidation");
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "delay")) ==
+             !was;
+    });
   }
 }
 
@@ -144,14 +144,13 @@ TEST(test_bulkhead) {
       assert(lazily_test::json_member(item, "returns").is_null());
       b.release(ctx);
     }
-    assert(b.permits_in_use(ctx) ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "in_use")));
-    bool was = ctx.is_set(observed);
+    expected.assert_key("in_use", b.permits_in_use(ctx));
+    const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was) == lazily_test::json_bool(lazily_test::json_member(
-                         lazily_test::json_member(expected, "invalidates"),
-                         "in_use")) &&
-           "in_use invalidation");
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "in_use")) ==
+             !was;
+    });
   }
 }
 
@@ -184,15 +183,13 @@ TEST(test_timeout) {
     }
     assert(got ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    assert(t.is_timed_out(ctx) == lazily_test::json_bool(
-                                      lazily_test::json_member(
-                                          expected, "is_timed_out")));
-    bool was = ctx.is_set(observed);
+    expected.assert_key("is_timed_out", t.is_timed_out(ctx));
+    const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was) == lazily_test::json_bool(lazily_test::json_member(
-                         lazily_test::json_member(expected, "invalidates"),
-                         "is_timed_out")) &&
-           "is_timed_out invalidation");
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(
+                 lazily_test::json_member(want, "is_timed_out")) == !was;
+    });
   }
 }
 

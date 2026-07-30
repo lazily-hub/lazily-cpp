@@ -57,15 +57,15 @@ int main() {
       lazily_test::AssertionKeys expect(
           std::string("crdt-tree/algebra.json expect"),
           lazily_test::json_member(scenario, "expect"));
+      // The fixture's claim is the ASSERTION, not a gate on one: reading
+      // `texts_equal` and only checking convergence when it is true means a
+      // fixture that flips it to false changes nothing (#lzconsumednotasserted).
       for (const auto& fold : folds) {
-        if (lazily_test::json_bool(
-                lazily_test::json_member(expect, "texts_equal"))) {
-          assert(fold.value() == folds.front().value());
-        }
-        if (lazily_test::json_bool(
-                lazily_test::json_member(expect, "version_vectors_equal"))) {
-          assert(fold.version_vector() == folds.front().version_vector());
-        }
+        expect.assert_key("texts_equal",
+                          fold.value() == folds.front().value());
+        expect.assert_key(
+            "version_vectors_equal",
+            fold.version_vector() == folds.front().version_vector());
       }
     } else if (scenario.has("snapshot")) {
       assert(lazily_test::json_string(
@@ -79,18 +79,13 @@ int main() {
       lazily_test::AssertionKeys expect(
           std::string("crdt-tree/algebra.json expect"),
           lazily_test::json_member(scenario, "expect"));
-      if (lazily_test::json_bool(
-              lazily_test::json_member(expect, "restored_text_equal"))) {
-        assert(restored.value() == source.value());
-      }
+      expect.assert_key("restored_text_equal",
+                        restored.value() == source.value());
       std::set<OpId> source_ids;
       std::set<OpId> restored_ids;
       for (const auto& op : snapshot) source_ids.insert(op.id);
       for (const auto& op : restored.delta_since({})) restored_ids.insert(op.id);
-      if (lazily_test::json_bool(
-              lazily_test::json_member(expect, "op_ids_equal"))) {
-        assert(source_ids == restored_ids);
-      }
+      expect.assert_key("op_ids_equal", source_ids == restored_ids);
 
       if (lazily_test::json_bool(
               lazily_test::json_member(scenario, "then_concurrent_edit"))) {
@@ -103,9 +98,7 @@ int main() {
         std::set<OpId> converged_ids;
         for (const auto& op : converged_ops) converged_ids.insert(op.id);
         const auto duplicates = converged_ops.size() - converged_ids.size();
-        assert(duplicates == lazily_test::json_u64(
-                                 lazily_test::json_member(
-                                     expect, "later_merge_duplicates")));
+        expect.assert_key("later_merge_duplicates", duplicates);
       }
     } else {
       assert(lazily_test::json_string(
@@ -116,12 +109,12 @@ int main() {
       lazily_test::AssertionKeys expect(
           std::string("crdt-tree/algebra.json expect"),
           lazily_test::json_member(scenario, "expect"));
-      assert(empty.size() ==
-             lazily_test::json_array(
-                 lazily_test::json_member(expect, "delta")).size());
-      assert(steady.apply_delta(empty) ==
-             lazily_test::json_bool(
-                 lazily_test::json_member(expect, "apply_changed")));
+      // The fixture spells the steady-state delta as a literal array, so its
+      // length is the claim: a frontier delta carries no ops.
+      expect.assert_key_with("delta", [&](const lazily_test::Json& want) {
+        return empty.size() == lazily_test::json_array(want).size();
+      });
+      expect.assert_key("apply_changed", steady.apply_delta(empty));
     }
   }
   REQUIRE_FIXTURES_LOADED(1);

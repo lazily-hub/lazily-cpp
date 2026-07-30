@@ -152,8 +152,6 @@ int main() {
           "default_mode must name a strategy this runner exercises");
   const auto eager_present =
       strings_of(expected.find("eager_present"), "expected.eager_present");
-  const auto lazy_at_build = strings_of(expected.find("lazy_present_at_build"),
-                                        "expected.lazy_present_at_build");
   const auto lazy_after_reads =
       strings_of(expected.find("lazy_present_after_reads"),
                  "expected.lazy_present_after_reads");
@@ -181,30 +179,37 @@ int main() {
 
   // Input entries are materialized at build in every strategy; derived entries
   // are deferred until read.
-  REQUIRE(
-      present_keys() == sorted(lazy_at_build),
-      "lazy build present-set does not match expected.lazy_present_at_build");
+  expected.assert_key_with(
+      "lazy_present_at_build", [&](const Json& want) {
+        return present_keys() ==
+               sorted(strings_of(&want, "expected.lazy_present_at_build"));
+      });
 
   for (const auto& key : reads) {
     REQUIRE(slots.get_or_insert_with(ctx, key, factory) == factory(key),
             "a lazily-minted derived entry read back its canonical value");
   }
-  REQUIRE(present_keys() == sorted(lazy_after_reads),
-          "lazy present-set after reads does not match "
-          "expected.lazy_present_after_reads");
+  expected.assert_key_with(
+      "lazy_present_after_reads", [&](const Json& want) {
+        return present_keys() ==
+               sorted(strings_of(&want, "expected.lazy_present_after_reads"));
+      });
 
   // Reads are strategy-independent: every key observes its canonical value,
   // whether it was present at build or minted on access.
-  for (const auto& kv : observe->object) {
-    const auto want = static_cast<uint32_t>(kv.second->as_int());
-    if (cells.is_present(kv.first)) {
-      REQUIRE(cells.get(ctx, kv.first) == std::optional<uint32_t>(want),
-              "an input entry did not observe its canonical value");
-    } else {
-      REQUIRE(slots.get_or_insert_with(ctx, kv.first, factory) == want,
-              "a derived entry did not observe its canonical value");
+  expected.assert_key_with("observe", [&](const Json& block) {
+    for (const auto& kv : block.object) {
+      const auto want = static_cast<uint32_t>(kv.second->as_int());
+      if (cells.is_present(kv.first)) {
+        REQUIRE(cells.get(ctx, kv.first) == std::optional<uint32_t>(want),
+                "an input entry did not observe its canonical value");
+      } else {
+        REQUIRE(slots.get_or_insert_with(ctx, kv.first, factory) == want,
+                "a derived entry did not observe its canonical value");
+      }
     }
-  }
+    return true;
+  });
 
   // -- Eager strategy --
 
@@ -218,10 +223,13 @@ int main() {
   ComputedMap<std::string, uint32_t> eager_slots(eager_ctx);
   eager_slots.materialize_all(eager_ctx, slot_keys, factory);
 
-  std::vector<std::string> eager_keys = eager_cells.present_keys();
-  for (const auto& key : eager_slots.present_keys()) eager_keys.push_back(key);
-  REQUIRE(sorted(std::move(eager_keys)) == sorted(eager_present),
-          "eager present-set does not match expected.eager_present");
+  expected.assert_key_with("eager_present", [&](const Json& want) {
+    std::vector<std::string> eager_keys = eager_cells.present_keys();
+    for (const auto& key : eager_slots.present_keys())
+      eager_keys.push_back(key);
+    return sorted(std::move(eager_keys)) ==
+           sorted(strings_of(&want, "expected.eager_present"));
+  });
 
   for (const auto& kv : observe->object) {
     const auto want = static_cast<uint32_t>(kv.second->as_int());
@@ -235,16 +243,17 @@ int main() {
 
   // ... and the declared default's present-set is the one that has to hold
   // for a map built without a strategy argument.
-  {
+  expected.assert_key_with("default_mode", [&](const Json& want) {
+    const std::string mode = lazily_test::json_string(want);
+    REQUIRE(mode == "eager" || mode == "lazy",
+            "default_mode must name a strategy this runner exercises");
     std::vector<std::string> default_keys = eager_cells.present_keys();
     const auto& want_default =
-        default_mode == "eager" ? eager_present : lazy_after_reads;
+        mode == "eager" ? eager_present : lazy_after_reads;
     for (const auto& key : eager_slots.present_keys())
       default_keys.push_back(key);
-    REQUIRE(sorted(std::move(default_keys)) == sorted(want_default),
-            "the default-mode present-set does not match the expectation the "
-            "fixture names in `default_mode`");
-  }
+    return sorted(std::move(default_keys)) == sorted(want_default);
+  });
 
   REQUIRE_FIXTURES_LOADED(1);
   std::cout << "materialization conformance: " << kFixture << " replayed ("

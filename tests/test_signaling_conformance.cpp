@@ -230,30 +230,41 @@ int main() {
   {
     lazily_test::AssertionKeys keys("signaling/anti_spoof_session.json assertions",
                                     lazily_test::json_member(*doc, "assertions"));
-    if (const Json* want = keys.optional("roster_excludes_self")) {
-      REQUIRE(!observed_welcomes.empty(), "roster_excludes_self: no welcome observed");
-      bool excludes = true;
-      for (const auto& w : observed_welcomes)
-        for (const PeerId p : w.peers)
-          if (p == w.peer) excludes = false;
-      if (excludes != want->as_bool()) fail(-1, "roster_excludes_self");
-    }
-    if (const Json* want = keys.optional("roster_sorted_ascending")) {
-      REQUIRE(!observed_welcomes.empty(), "roster_sorted_ascending: no welcome observed");
-      bool sorted = true;
-      for (const auto& w : observed_welcomes)
-        for (size_t i = 1; i < w.peers.size(); ++i)
-          if (w.peers[i - 1] >= w.peers[i]) sorted = false;
-      if (sorted != want->as_bool()) fail(-1, "roster_sorted_ascending");
-    }
-    if (const Json* want = keys.optional("forwarded_from_is_server_registered")) {
-      REQUIRE(!observed_forward_from.empty(),
-              "forwarded_from_is_server_registered: nothing was forwarded");
-      bool ok = true;
-      for (const PeerId from : observed_forward_from)
-        if (registered_peers.count(from) == 0) ok = false;
-      if (ok != want->as_bool()) fail(-1, "forwarded_from_is_server_registered");
-    }
+    keys.assert_key_with_if_present(
+        "roster_excludes_self", [&](const Json& want) {
+          REQUIRE(!observed_welcomes.empty(),
+                  "roster_excludes_self: no welcome observed");
+          bool excludes = true;
+          for (const auto& w : observed_welcomes)
+            for (const PeerId p : w.peers)
+              if (p == w.peer) excludes = false;
+          if (excludes == want.as_bool()) return true;
+          fail(-1, "roster_excludes_self");
+          return false;
+        });
+    keys.assert_key_with_if_present(
+        "roster_sorted_ascending", [&](const Json& want) {
+          REQUIRE(!observed_welcomes.empty(),
+                  "roster_sorted_ascending: no welcome observed");
+          bool sorted = true;
+          for (const auto& w : observed_welcomes)
+            for (size_t i = 1; i < w.peers.size(); ++i)
+              if (w.peers[i - 1] >= w.peers[i]) sorted = false;
+          if (sorted == want.as_bool()) return true;
+          fail(-1, "roster_sorted_ascending");
+          return false;
+        });
+    keys.assert_key_with_if_present(
+        "forwarded_from_is_server_registered", [&](const Json& want) {
+          REQUIRE(!observed_forward_from.empty(),
+                  "forwarded_from_is_server_registered: nothing was forwarded");
+          bool ok = true;
+          for (const PeerId from : observed_forward_from)
+            if (registered_peers.count(from) == 0) ok = false;
+          if (ok == want.as_bool()) return true;
+          fail(-1, "forwarded_from_is_server_registered");
+          return false;
+        });
     keys.finish();
   }
 

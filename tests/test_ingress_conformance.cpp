@@ -372,7 +372,7 @@ template <typename M> void materialize(M &model, const std::vector<Key> &keys) {
 template <typename M>
 void assert_state(M &model, lazily_test::AssertionKeys &expected,
                   const std::string &where) {
-  const Json &scopes = expected.required("scopes");
+  expected.assert_key_with("scopes", [&](const Json &scopes) {
   REQUIRE(scopes.is_object(), where + ": expected.scopes is not an object");
   for (const auto &entry : scopes.object) {
     const Key key = entry.first;
@@ -435,17 +435,21 @@ void assert_state(M &model, lazily_test::AssertionKeys &expected,
               where + ": " + key + " retry resume_from");
     }
   }
+  return true;
+  });
 
-  const Json &receipts = expected.required("receipts");
-  REQUIRE(static_cast<std::uint64_t>(model.accepted_len()) ==
-              json_u64(member(receipts, "accepted", where)),
-          where + ": accepted receipts");
-  REQUIRE(static_cast<std::uint64_t>(model.dropped_len()) ==
-              json_u64(member(receipts, "dropped", where)),
-          where + ": dropped receipts");
-  REQUIRE(static_cast<std::uint64_t>(model.errors_len()) ==
-              json_u64(member(receipts, "error", where)),
-          where + ": error receipts");
+  expected.assert_key_with("receipts", [&](const Json &receipts) {
+    REQUIRE(static_cast<std::uint64_t>(model.accepted_len()) ==
+                json_u64(member(receipts, "accepted", where)),
+            where + ": accepted receipts");
+    REQUIRE(static_cast<std::uint64_t>(model.dropped_len()) ==
+                json_u64(member(receipts, "dropped", where)),
+            where + ": dropped receipts");
+    REQUIRE(static_cast<std::uint64_t>(model.errors_len()) ==
+                json_u64(member(receipts, "error", where)),
+            where + ": error receipts");
+    return true;
+  });
 }
 
 /// Assert `invalidates` in BOTH directions. `true` means the reader's cache went
@@ -455,7 +459,7 @@ void assert_invalidation(lazily_test::AssertionKeys &expected,
                          const ValiditySnapshot &before,
                          const ValiditySnapshot &after,
                          const std::string &where) {
-  const Json &want = expected.required("invalidates");
+  expected.assert_key_with("invalidates", [&](const Json &want) {
   static const char *kKinds[4] = {"value", "readiness", "authority", "retry"};
   const Json &want_scopes = member(want, "scopes", where);
   REQUIRE(want_scopes.is_object(),
@@ -492,6 +496,8 @@ void assert_invalidation(lazily_test::AssertionKeys &expected,
                 " invalidation mismatch (expected " +
                 (expected ? "true" : "false") + ")");
   }
+  return true;
+  });
 }
 
 /// Replay one fixture. Returns the number of steps executed, so a caller can

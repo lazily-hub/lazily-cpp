@@ -77,14 +77,12 @@ void replay_merge_scenario(const Json& scenario) {
         std::string(__func__) + " expected", lazily_test::json_member(step, "expected"));
     cell.merge(static_cast<long>(
         lazily_test::json_member(step, "merge").as_int()));
-    assert(cell.get() ==
-           static_cast<long>(
-               lazily_test::json_member(expected, "value").as_int()));
+    expected.assert_key_with("value", [&](const lazily_test::Json& want) {
+      return cell.get() == static_cast<long>(want.as_int());
+    });
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) ==
-           lazily_test::json_bool(
-               lazily_test::json_member(expected, "invalidates")));
+    expected.assert_key("invalidates", !was_cached);
   }
 }
 
@@ -117,42 +115,43 @@ void test_keyed_reconciliation() {
   const auto ops = reconcile(prior, target);
   lazily_test::AssertionKeys expected(
       std::string(__func__) + " expected", lazily_test::json_member(*root, "expected"));
-  const auto& expected_ops =
-      lazily_test::json_array(lazily_test::json_member(expected, "ops"));
-  assert(ops.size() == expected_ops.size());
-
   const auto result_order =
-      string_array(lazily_test::json_member(expected, "result_order"));
-  for (std::size_t i = 0; i < ops.size(); ++i) {
-    const auto& want = *expected_ops[i];
-    const auto type =
-        lazily_test::json_string(lazily_test::json_member(want, "type"));
-    const auto key =
-        lazily_test::json_string(lazily_test::json_member(want, "key"));
-    assert(ops[i].key == key);
-    if (type == "remove") {
-      assert((ops[i].kind == DiffOp<std::string, int>::Kind::Remove));
-    } else {
-      assert(type == "move");
-      assert((ops[i].kind == DiffOp<std::string, int>::Kind::Move));
-      const auto at =
-          std::find(result_order.begin(), result_order.end(), key);
-      assert(at != result_order.end());
-      assert(ops[i].index ==
-             static_cast<std::size_t>(at - result_order.begin()));
-      const auto& after =
-          lazily_test::json_string(
-              lazily_test::json_member(want, "after"));
-      assert(at != result_order.begin() && *(at - 1) == after);
+      string_array(*expected.optional("result_order"));
+  expected.assert_key_with("ops", [&](const lazily_test::Json& block) {
+    const auto& expected_ops = lazily_test::json_array(block);
+    assert(ops.size() == expected_ops.size());
+    for (std::size_t i = 0; i < ops.size(); ++i) {
+      const auto& want = *expected_ops[i];
+      const auto type =
+          lazily_test::json_string(lazily_test::json_member(want, "type"));
+      const auto key =
+          lazily_test::json_string(lazily_test::json_member(want, "key"));
+      assert(ops[i].key == key);
+      if (type == "remove") {
+        assert((ops[i].kind == DiffOp<std::string, int>::Kind::Remove));
+      } else {
+        assert(type == "move");
+        assert((ops[i].kind == DiffOp<std::string, int>::Kind::Move));
+        const auto at =
+            std::find(result_order.begin(), result_order.end(), key);
+        assert(at != result_order.end());
+        assert(ops[i].index ==
+               static_cast<std::size_t>(at - result_order.begin()));
+        const auto& after =
+            lazily_test::json_string(
+                lazily_test::json_member(want, "after"));
+        assert(at != result_order.begin() && *(at - 1) == after);
+      }
     }
-  }
+    return true;
+  });
 
   Context ctx;
   SourceMap<std::string, int> map(ctx);
   for (const auto& entry : prior) map.entry(ctx, entry.first, entry.second);
   std::map<std::string, Computed<int>> observers;
-  for (const auto& key : string_array(lazily_test::json_member(
-           expected, "stable_keys_not_invalidated"))) {
+  for (const auto& key :
+       string_array(*expected.optional("stable_keys_not_invalidated"))) {
     observers.emplace(
         key, ctx.computed<int>(
                  [&map, key](Compute& compute) {
@@ -161,10 +160,17 @@ void test_keyed_reconciliation() {
     (void)ctx.get(observers.at(key));
   }
   map.reconcile(ctx, target);
-  assert(map.keys(ctx) == result_order);
-  for (const auto& observer : observers) {
-    assert(ctx.is_set(observer.second));
-  }
+  expected.assert_key("result_order", map.keys(ctx), string_array);
+  // The named keys are the claim: each one's reader must have survived the
+  // reconcile, so the fixture's list reaches the comparison rather than only
+  // seeding the observers (#lzconsumednotasserted).
+  expected.assert_key_with(
+      "stable_keys_not_invalidated", [&](const lazily_test::Json& block) {
+        for (const auto& key : string_array(block)) {
+          if (!ctx.is_set(observers.at(key))) return false;
+        }
+        return true;
+      });
 }
 
 void add_sem_children(SemTree<int, int>& tree, const Json& node) {
@@ -185,16 +191,20 @@ void add_sem_children(SemTree<int, int>& tree, const Json& node) {
   }
 }
 
-void assert_sem_values(SemTree<int, int>& tree, const Json& expected) {
-  assert(expected.is_object());
-  for (const auto& entry : expected.object) {
-    if (entry.first == "sibling_a_cached" ||
-        entry.first == "downstream_consumer_reran") {
+// Node ids are DATA here, so the block is enumerated by name and every entry
+// asserted through the tracker. The two reactivity claims are asserted by the
+// caller, which owns the before/after observation they need; skipping them
+// silently is what let a read-then-discard hide in this loop
+// (#lzconsumednotasserted).
+void assert_sem_values(SemTree<int, int>& tree,
+                       lazily_test::AssertionKeys& expected) {
+  for (const auto& key : expected.keys()) {
+    if (key == "sibling_a_cached" || key == "downstream_consumer_reran")
       continue;
-    }
-    const auto got = tree.node_value(entry.first);
+    if (lazily_test::assertion_narrative_keys().count(key) != 0) continue;
+    const auto got = tree.node_value(key);
     assert(got.has_value());
-    assert(*got == entry.second->as_int());
+    expected.assert_key(key, *got);
   }
 }
 
@@ -232,13 +242,18 @@ void test_semtree_incremental() {
             lazily_test::json_member(tree_json, "value").as_int()),
         fold);
     add_sem_children(tree, tree_json);
-    assert_sem_values(
-        tree, lazily_test::json_member(scenario, "expect_initial"));
+    {
+      lazily_test::AssertionKeys expect_initial(
+          "semtree_incremental.json expect_initial",
+          lazily_test::json_member(scenario, "expect_initial"));
+      assert_sem_values(tree, expect_initial);
+    }
 
     int downstream_runs = 0;
     std::optional<Computed<int>> downstream;
-    const auto& expect_after =
-        lazily_test::json_member(scenario, "expect_after");
+    lazily_test::AssertionKeys expect_after(
+        "semtree_incremental.json expect_after",
+        lazily_test::json_member(scenario, "expect_after"));
     if (expect_after.has("downstream_consumer_reran")) {
       const auto root_handle = tree.root_handle();
       downstream.emplace(ctx.computed<int>(
@@ -266,22 +281,18 @@ void test_semtree_incremental() {
               lazily_test::json_member(remove, "child")));
     }
 
-    const Json* sibling_cached =
-        expect_after.find("sibling_a_cached");
-    if (sibling_cached != nullptr) {
-      assert(tree.is_cached("a") ==
-             lazily_test::json_bool(*sibling_cached));
-    }
+    expect_after.assert_key_with_if_present(
+        "sibling_a_cached", [&](const Json& want) {
+          return tree.is_cached("a") == lazily_test::json_bool(want);
+        });
 
-    const Json* consumer_reran =
-        expect_after.find("downstream_consumer_reran");
-    if (consumer_reran != nullptr) {
-      const int before = downstream_runs;
-      (void)tree.value();
-      (void)ctx.get(*downstream);
-      assert((downstream_runs > before) ==
-             lazily_test::json_bool(*consumer_reran));
-    }
+    expect_after.assert_key_with_if_present(
+        "downstream_consumer_reran", [&](const Json& want) {
+          const int before = downstream_runs;
+          (void)tree.value();
+          (void)ctx.get(*downstream);
+          return (downstream_runs > before) == lazily_test::json_bool(want);
+        });
     assert_sem_values(tree, expect_after);
   }
 }
@@ -319,24 +330,27 @@ void test_stableid_alignment() {
     if (scenario.has("blocks")) {
       const auto blocks =
           json_blocks(lazily_test::json_member(scenario, "blocks"));
-      const Json* equal = expect.find("key_equal");
-      if (equal != nullptr) {
-        for (const auto& pair : lazily_test::json_array(*equal)) {
+      expect.assert_key_with_if_present("key_equal", [&](const Json& equal) {
+        for (const auto& pair : lazily_test::json_array(equal)) {
           const auto& indices = lazily_test::json_array(*pair);
-          assert(block_key_of(blocks[lazily_test::json_u64(*indices[0])])
-                     .equals(block_key_of(
-                         blocks[lazily_test::json_u64(*indices[1])])));
+          if (!block_key_of(blocks[lazily_test::json_u64(*indices[0])])
+                   .equals(block_key_of(
+                       blocks[lazily_test::json_u64(*indices[1])])))
+            return false;
         }
-      }
-      const Json* not_equal = expect.find("key_not_equal");
-      if (not_equal != nullptr) {
-        for (const auto& pair : lazily_test::json_array(*not_equal)) {
-          const auto& indices = lazily_test::json_array(*pair);
-          assert(!block_key_of(blocks[lazily_test::json_u64(*indices[0])])
+        return true;
+      });
+      expect.assert_key_with_if_present(
+          "key_not_equal", [&](const Json& not_equal) {
+            for (const auto& pair : lazily_test::json_array(not_equal)) {
+              const auto& indices = lazily_test::json_array(*pair);
+              if (block_key_of(blocks[lazily_test::json_u64(*indices[0])])
                       .equals(block_key_of(
-                          blocks[lazily_test::json_u64(*indices[1])])));
-        }
-      }
+                          blocks[lazily_test::json_u64(*indices[1])])))
+                return false;
+            }
+            return true;
+          });
       continue;
     }
 
@@ -347,36 +361,48 @@ void test_stableid_alignment() {
     if (expect.has("new_key_equals_old_key")) {
       const auto old_keys = assign_stable_keys(old_blocks, old_blocks);
       const auto new_keys = assign_stable_keys(old_blocks, new_blocks);
-      for (const auto& pair : lazily_test::json_array(
-               lazily_test::json_member(expect, "new_key_equals_old_key"))) {
-        const auto& indices = lazily_test::json_array(*pair);
-        assert(new_keys[lazily_test::json_u64(*indices[0])] ==
-               old_keys[lazily_test::json_u64(*indices[1])]);
-      }
+      expect.assert_key_with("new_key_equals_old_key",
+                             [&](const Json& pairs) {
+                               for (const auto& pair :
+                                    lazily_test::json_array(pairs)) {
+                                 const auto& indices =
+                                     lazily_test::json_array(*pair);
+                                 if (new_keys[lazily_test::json_u64(
+                                         *indices[0])] !=
+                                     old_keys[lazily_test::json_u64(
+                                         *indices[1])])
+                                   return false;
+                               }
+                               return true;
+                             });
       continue;
     }
 
     const auto alignment = align(old_blocks, new_blocks);
-    const auto matches =
-        string_array(lazily_test::json_member(expect, "matches"));
-    assert(matches.size() == alignment.new_matches.size());
-    for (std::size_t i = 0; i < matches.size(); ++i) {
-      assert(match_string(alignment.new_matches[i]) == matches[i]);
-    }
-    std::vector<int> removed;
-    for (const auto& item : lazily_test::json_array(
-             lazily_test::json_member(expect, "removed"))) {
-      removed.push_back(static_cast<int>(lazily_test::json_u64(*item)));
-    }
-    assert(alignment.removed == removed);
-    const Json* similarity_min = expect.find("similarity_min");
-    if (similarity_min != nullptr) {
-      for (const auto& match : alignment.new_matches) {
-        if (match.kind == Match::Kind::Edited) {
-          assert(match.sim >= lazily_test::json_number(*similarity_min));
-        }
+    expect.assert_key_with("matches", [&](const Json& want) {
+      const auto matches = string_array(want);
+      if (matches.size() != alignment.new_matches.size()) return false;
+      for (std::size_t i = 0; i < matches.size(); ++i) {
+        if (match_string(alignment.new_matches[i]) != matches[i]) return false;
       }
-    }
+      return true;
+    });
+    expect.assert_key_with("removed", [&](const Json& want) {
+      std::vector<int> removed;
+      for (const auto& item : lazily_test::json_array(want)) {
+        removed.push_back(static_cast<int>(lazily_test::json_u64(*item)));
+      }
+      return alignment.removed == removed;
+    });
+    expect.assert_key_with_if_present(
+        "similarity_min", [&](const Json& similarity_min) {
+          for (const auto& match : alignment.new_matches) {
+            if (match.kind == Match::Kind::Edited &&
+                match.sim < lazily_test::json_number(similarity_min))
+              return false;
+          }
+          return true;
+        });
   }
 }
 
@@ -519,53 +545,51 @@ void assert_version_vector(const TextCrdt& replica, const Json& expected) {
   }
 }
 
-void assert_text_expectations(const ReplicaMap& replicas, const Json& expect) {
-  const Json* equal = expect.find("texts_equal");
-  if (equal != nullptr) {
-    for (const auto& pair : lazily_test::json_array(*equal)) {
+void assert_text_expectations(const ReplicaMap& replicas,
+                              lazily_test::AssertionKeys& expect) {
+  expect.assert_key_with_if_present("texts_equal", [&](const Json& equal) {
+    for (const auto& pair : lazily_test::json_array(equal)) {
       const auto names = string_array(*pair);
-      assert(replicas.at(names[0]).text() == replicas.at(names[1]).text());
+      if (replicas.at(names[0]).text() != replicas.at(names[1]).text())
+        return false;
     }
-  }
-  const Json* text = expect.find("text");
-  if (text != nullptr) {
-    assert(replicas.at("a").text() == lazily_test::json_string(*text));
-  }
-  const Json* len = expect.find("len");
-  if (len != nullptr) {
-    assert(replicas.at("a").visible_len() == lazily_test::json_u64(*len));
-  }
-  const Json* starts = expect.find("a_starts_with");
-  if (starts != nullptr) {
-    assert(replicas.at("a").text().rfind(
-               lazily_test::json_string(*starts), 0) == 0);
-  }
-  const Json* ends = expect.find("a_ends_with");
-  if (ends != nullptr) {
+    return true;
+  });
+  expect.assert_key_if_present("text", replicas.at("a").text(),
+                               lazily_test::json_string);
+  expect.assert_key_if_present("len", replicas.at("a").visible_len(),
+                               lazily_test::json_u64);
+  expect.assert_key_with_if_present("a_starts_with", [&](const Json& starts) {
+    return replicas.at("a").text().rfind(lazily_test::json_string(starts),
+                                         0) == 0;
+  });
+  expect.assert_key_with_if_present("a_ends_with", [&](const Json& ends) {
     const auto& actual = replicas.at("a").text();
-    const auto& suffix = lazily_test::json_string(*ends);
-    assert(actual.size() >= suffix.size() &&
+    const auto& suffix = lazily_test::json_string(ends);
+    return actual.size() >= suffix.size() &&
            actual.compare(actual.size() - suffix.size(), suffix.size(),
-                          suffix) == 0);
-  }
-  const Json* tombstones = expect.find("tombstone_count");
-  if (tombstones != nullptr) {
-    assert(replicas.at("a").tombstone_count() ==
-           lazily_test::json_u64(*tombstones));
-  }
-  const Json* text_on = expect.find("text_on");
-  if (text_on != nullptr) {
-    for (const auto& entry : text_on->object) {
-      assert(replicas.at(entry.first).text() ==
-             lazily_test::json_string(*entry.second));
+                          suffix) == 0;
+  });
+  expect.assert_key_if_present("tombstone_count",
+                               replicas.at("a").tombstone_count(),
+                               lazily_test::json_u64);
+  expect.assert_key_with_if_present("text_on", [&](const Json& text_on) {
+    for (const auto& entry : text_on.object) {
+      if (replicas.at(entry.first).text() !=
+          lazily_test::json_string(*entry.second))
+        return false;
     }
-  }
-  const Json* vv_on = expect.find("version_vector_on");
-  if (vv_on != nullptr) {
-    for (const auto& entry : vv_on->object) {
-      assert_version_vector(replicas.at(entry.first), *entry.second);
-    }
-  }
+    return true;
+  });
+  expect.assert_key_with_if_present("version_vector_on",
+                                    [&](const Json& vv_on) {
+                                      for (const auto& entry : vv_on.object) {
+                                        assert_version_vector(
+                                            replicas.at(entry.first),
+                                            *entry.second);
+                                      }
+                                      return true;
+                                    });
 }
 
 void replay_text_fixture(const std::string& name) {
@@ -576,8 +600,9 @@ void replay_text_fixture(const std::string& name) {
     auto replicas = text_seed(scenario);
     apply_text_steps(
         replicas, lazily_test::json_member(scenario, "steps"));
-    assert_text_expectations(
-        replicas, lazily_test::json_member(scenario, "expect"));
+    lazily_test::AssertionKeys expect(
+        name + " expect", lazily_test::json_member(scenario, "expect"));
+    assert_text_expectations(replicas, expect);
   }
 }
 

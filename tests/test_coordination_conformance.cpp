@@ -40,6 +40,20 @@ static lazily_test::JsonPtr fixture(const std::string& name) {
       lazily_test::spec_fixture_text("coordination", name));
 }
 
+// Cache-survival probe: the observing slot was dropped iff the op invalidated
+// the reader. Asserted against `expected.invalidates.<reader>` so the fixture's
+// own claim reaches the comparison (#lzconsumednotasserted).
+template <typename T>
+static void assert_inval(Context& ctx, const Computed<T>& observed,
+                         lazily_test::AssertionKeys& expected,
+                         const std::string& reader) {
+  const bool was = ctx.is_set(observed);
+  (void)ctx.get(observed);
+  expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+    return lazily_test::json_bool(lazily_test::json_member(want, reader)) == !was;
+  });
+}
+
 // LeaseCell — grant/renew/expire + fence monotonicity; holder invalidation.
 TEST(test_lease) {
   const auto fx = fixture("lease.json");
@@ -50,11 +64,6 @@ TEST(test_lease) {
       ctx.computed<std::optional<uint64_t>>([hc](Compute& c) { return hc.get(c); });
   (void)ctx.get(observed);
 
-  auto step = [&](bool inval) {
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert(!was == inval && "holder invalidation");
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -84,14 +93,11 @@ TEST(test_lease) {
       assert(lease.tick(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     }
-    assert(lease.holder(now) == lazily_test::json_optional_u64(
-                                     lazily_test::json_member(expected, "holder")));
-    assert(lease.is_held(now) ==
-           lazily_test::json_bool(lazily_test::json_member(expected, "held")));
-    assert(lease.fence() ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "fence")));
-    step(lazily_test::json_bool(lazily_test::json_member(
-        lazily_test::json_member(expected, "invalidates"), "holder")));
+    expected.assert_key("holder", lease.holder(now),
+                        lazily_test::json_optional_u64);
+    expected.assert_key("held", lease.is_held(now));
+    expected.assert_key("fence", lease.fence());
+    assert_inval(ctx, observed, expected, "holder");
   }
 }
 
@@ -107,11 +113,6 @@ TEST(test_leader) {
       ctx.computed<std::optional<uint64_t>>([lc](Compute& c) { return lc.get(c); });
   (void)ctx.get(observed);
 
-  auto step = [&](bool inval) {
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert(!was == inval && "current_leader invalidation");
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -133,18 +134,17 @@ TEST(test_leader) {
       assert(type == "tick");
       got = leader.tick(ctx, now);
     }
-    const auto role =
-        lazily_test::json_string(lazily_test::json_member(expected, "role"));
-    const auto want = role == "Leader"
-                          ? LeaderRole::Leader
-                          : (role == "Follower" ? LeaderRole::Follower
-                                                : LeaderRole::Candidate);
-    assert(got == want);
-    assert(leader.current_leader(now) == lazily_test::json_optional_u64(
-                                              lazily_test::json_member(
-                                                  expected, "current_leader")));
-    step(lazily_test::json_bool(lazily_test::json_member(
-        lazily_test::json_member(expected, "invalidates"), "current_leader")));
+    expected.assert_key_with("role", [&](const lazily_test::Json& value) {
+      const auto role = lazily_test::json_string(value);
+      const auto want = role == "Leader"
+                            ? LeaderRole::Leader
+                            : (role == "Follower" ? LeaderRole::Follower
+                                                  : LeaderRole::Candidate);
+      return got == want;
+    });
+    expected.assert_key("current_leader", leader.current_leader(now),
+                        lazily_test::json_optional_u64);
+    assert_inval(ctx, observed, expected, "current_leader");
   }
 }
 
@@ -157,11 +157,6 @@ TEST(test_lock) {
   auto observed = ctx.computed<bool>([lc](Compute& c) { return lc.get(c); });
   (void)ctx.get(observed);
 
-  auto step = [&](bool inval) {
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert(!was == inval && "is_locked invalidation");
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -188,12 +183,9 @@ TEST(test_lock) {
       assert(lock.tick(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     }
-    assert(lock.is_locked(now) ==
-           lazily_test::json_bool(lazily_test::json_member(expected, "is_locked")));
-    assert(lock.fence() ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "fence")));
-    step(lazily_test::json_bool(lazily_test::json_member(
-        lazily_test::json_member(expected, "invalidates"), "is_locked")));
+    expected.assert_key("is_locked", lock.is_locked(now));
+    expected.assert_key("fence", lock.fence());
+    assert_inval(ctx, observed, expected, "is_locked");
   }
 }
 
@@ -208,11 +200,6 @@ TEST(test_semaphore) {
   auto observed = ctx.computed<uint64_t>([pc](Compute& c) { return pc.get(c); });
   (void)ctx.get(observed);
 
-  auto step = [&](bool inval) {
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert(!was == inval && "permits_available invalidation");
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -229,11 +216,8 @@ TEST(test_semaphore) {
       assert(lazily_test::json_member(item, "returns").is_null());
       sem.release(ctx);
     }
-    assert(sem.permits_available(ctx) == lazily_test::json_u64(
-                                              lazily_test::json_member(
-                                                  expected, "permits_available")));
-    step(lazily_test::json_bool(lazily_test::json_member(
-        lazily_test::json_member(expected, "invalidates"), "permits_available")));
+    expected.assert_key("permits_available", sem.permits_available(ctx));
+    assert_inval(ctx, observed, expected, "permits_available");
   }
 }
 
@@ -248,11 +232,6 @@ TEST(test_quorum) {
   auto observed = ctx.computed<bool>([oc](Compute& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
-  auto step = [&](bool inval) {
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert(!was == inval && "is_open invalidation");
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -264,12 +243,9 @@ TEST(test_quorum) {
     assert(q.arrive(
                ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer"))) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    assert(q.count() ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "votes")));
-    assert(q.is_open(ctx) ==
-           lazily_test::json_bool(lazily_test::json_member(expected, "is_open")));
-    step(lazily_test::json_bool(lazily_test::json_member(
-        lazily_test::json_member(expected, "invalidates"), "is_open")));
+    expected.assert_key("votes", q.count());
+    expected.assert_key("is_open", q.is_open(ctx));
+    assert_inval(ctx, observed, expected, "is_open");
   }
 }
 

@@ -45,13 +45,18 @@ static lazily_test::JsonPtr fixture(const std::string& file) {
       lazily_test::spec_fixture_text("service", file));
 }
 
-// After an op, `observed` is dirty (is_set == false) iff the projection changed.
+// After an op, `observed` is dirty (is_set == false) iff the projection
+// changed. The claim is asserted against `expected.invalidates.<field>` so the
+// fixture's own value reaches the comparison (#lzconsumednotasserted).
 template <typename T>
-static void check_inval(Context& ctx, const Computed<T>& observed,
-                        bool expect_inval, const char* msg) {
-  bool was = ctx.is_set(observed);
+static void assert_inval(Context& ctx, const Computed<T>& observed,
+                         lazily_test::AssertionKeys& expected,
+                         const std::string& field) {
+  const bool was = ctx.is_set(observed);
   (void)ctx.get(observed);
-  assert(((!was) == expect_inval) && msg);
+  expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+    return lazily_test::json_bool(lazily_test::json_member(want, field)) == !was;
+  });
 }
 
 using Map = std::map<std::string, std::string>;
@@ -84,18 +89,15 @@ TEST(test_health) {
           lazily_test::json_string(lazily_test::json_member(op, "name")),
           lazily_test::json_bool(lazily_test::json_member(op, "up")),
           lazily_test::json_bool(lazily_test::json_member(op, "critical")));
-    const auto health =
-        lazily_test::json_string(lazily_test::json_member(expected, "health"));
-    const auto want = health == "Healthy"
-                          ? Health::Healthy
-                          : (health == "Degraded" ? Health::Degraded
-                                                  : Health::Unhealthy);
-    assert(h.health() == want);
-    check_inval(
-        ctx, observed,
-        lazily_test::json_bool(lazily_test::json_member(
-            lazily_test::json_member(expected, "invalidates"), "health")),
-        "health inval");
+    expected.assert_key_with("health", [&](const lazily_test::Json& value) {
+      const auto health = lazily_test::json_string(value);
+      const auto want = health == "Healthy"
+                            ? Health::Healthy
+                            : (health == "Degraded" ? Health::Degraded
+                                                    : Health::Unhealthy);
+      return h.health() == want;
+    });
+    assert_inval(ctx, observed, expected, "health");
   }
 }
 
@@ -117,13 +119,8 @@ TEST(test_readiness) {
     r.set(ctx,
           lazily_test::json_string(lazily_test::json_member(op, "name")),
           lazily_test::json_bool(lazily_test::json_member(op, "ready")));
-    assert(r.ready() ==
-           lazily_test::json_bool(lazily_test::json_member(expected, "ready")));
-    check_inval(
-        ctx, observed,
-        lazily_test::json_bool(lazily_test::json_member(
-            lazily_test::json_member(expected, "invalidates"), "ready")),
-        "ready inval");
+    expected.assert_key("ready", r.ready());
+    assert_inval(ctx, observed, expected, "ready");
   }
 }
 
@@ -160,13 +157,8 @@ TEST(test_discovery) {
       d.deregister(
           ctx, lazily_test::json_string(lazily_test::json_member(op, "service")));
     }
-    assert(d.discovery(ctx) ==
-           json_map(lazily_test::json_member(expected, "discovery")));
-    check_inval(
-        ctx, observed,
-        lazily_test::json_bool(lazily_test::json_member(
-            lazily_test::json_member(expected, "invalidates"), "discovery")),
-        "discovery inval");
+    expected.assert_key("discovery", d.discovery(ctx), json_map);
+    assert_inval(ctx, observed, expected, "discovery");
   }
 }
 
@@ -197,13 +189,8 @@ TEST(test_service_registry) {
       assert(type == "replay");
       reg.replay(ctx);
     }
-    assert(reg.projection(ctx) ==
-           json_map(lazily_test::json_member(expected, "projection")));
-    check_inval(
-        ctx, observed,
-        lazily_test::json_bool(lazily_test::json_member(
-            lazily_test::json_member(expected, "invalidates"), "projection")),
-        "projection inval");
+    expected.assert_key("projection", reg.projection(ctx), json_map);
+    assert_inval(ctx, observed, expected, "projection");
   }
 }
 

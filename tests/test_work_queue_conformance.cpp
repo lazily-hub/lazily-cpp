@@ -39,24 +39,25 @@ template <typename Queue> struct Readers {
 
   void assert_invalidates(lazily_test::AssertionKeys &expected,
                           const std::string &where) {
-    const Json *inv = expected.find("invalidates");
-    REQUIRE(inv != nullptr, where + ": expected.invalidates is absent");
-    const struct {
-      const char *name;
-      bool cached;
-    } actual[] = {
-        {"pending_len", graph.is_set(handles.pending_len)},
-        {"is_empty", graph.is_set(handles.is_empty)},
-        {"in_flight_len", graph.is_set(handles.in_flight_len)},
-        {"dead_letter_len", graph.is_set(handles.dead_letter_len)},
-    };
-    for (const auto &reader : actual) {
-      const Json *want = inv->find(reader.name);
-      REQUIRE(want != nullptr,
-              where + ": invalidates." + reader.name + " is absent");
-      REQUIRE((!reader.cached) == want->as_bool(),
-              where + ": invalidates." + reader.name + " mismatch");
-    }
+    expected.assert_key_with("invalidates", [&](const Json &inv) {
+      const struct {
+        const char *name;
+        bool cached;
+      } actual[] = {
+          {"pending_len", graph.is_set(handles.pending_len)},
+          {"is_empty", graph.is_set(handles.is_empty)},
+          {"in_flight_len", graph.is_set(handles.in_flight_len)},
+          {"dead_letter_len", graph.is_set(handles.dead_letter_len)},
+      };
+      for (const auto &reader : actual) {
+        const Json *want = inv.find(reader.name);
+        REQUIRE(want != nullptr,
+                where + ": invalidates." + reader.name + " is absent");
+        REQUIRE((!reader.cached) == want->as_bool(),
+                where + ": invalidates." + reader.name + " mismatch");
+      }
+      return true;
+    });
   }
 };
 
@@ -83,52 +84,56 @@ void assert_delivery(const WorkQueueDelivery<std::string> &got,
 template <typename Queue>
 void assert_state(Queue &queue, lazily_test::AssertionKeys &expected,
                   const std::string &where) {
-  const Json *pending = expected.find("pending");
-  const Json *in_flight = expected.find("in_flight");
-  const Json *dead = expected.find("dead_letters");
-  REQUIRE(pending && in_flight && dead, where + ": state array is absent");
+  expected.assert_key_with("pending", [&](const Json &pending) {
+    const auto got_pending = queue.pending_items();
+    REQUIRE(got_pending.size() == pending.array.size(),
+            where + ": pending length mismatch");
+    for (std::size_t i = 0; i < got_pending.size(); ++i) {
+      const Json &want = *pending.array[i];
+      REQUIRE(got_pending[i].item_id ==
+                  static_cast<std::uint64_t>(want.find("item_id")->as_int()),
+              where + ": pending item_id mismatch");
+      REQUIRE(got_pending[i].value == want.find("value")->as_str(),
+              where + ": pending value mismatch");
+      REQUIRE(got_pending[i].attempts ==
+                  static_cast<std::uint64_t>(want.find("attempts")->as_int()),
+              where + ": pending attempts mismatch");
+    }
+    return true;
+  });
 
-  const auto got_pending = queue.pending_items();
-  REQUIRE(got_pending.size() == pending->array.size(),
-          where + ": pending length mismatch");
-  for (std::size_t i = 0; i < got_pending.size(); ++i) {
-    const Json &want = *pending->array[i];
-    REQUIRE(got_pending[i].item_id ==
-                static_cast<std::uint64_t>(want.find("item_id")->as_int()),
-            where + ": pending item_id mismatch");
-    REQUIRE(got_pending[i].value == want.find("value")->as_str(),
-            where + ": pending value mismatch");
-    REQUIRE(got_pending[i].attempts ==
-                static_cast<std::uint64_t>(want.find("attempts")->as_int()),
-            where + ": pending attempts mismatch");
-  }
+  expected.assert_key_with("in_flight", [&](const Json &in_flight) {
+    const auto got_in_flight = queue.in_flight_deliveries();
+    REQUIRE(got_in_flight.size() == in_flight.array.size(),
+            where + ": in_flight length mismatch");
+    for (std::size_t i = 0; i < got_in_flight.size(); ++i)
+      assert_delivery(got_in_flight[i], *in_flight.array[i],
+                      where + " in_flight[" + std::to_string(i) + "]");
+    return true;
+  });
 
-  const auto got_in_flight = queue.in_flight_deliveries();
-  REQUIRE(got_in_flight.size() == in_flight->array.size(),
-          where + ": in_flight length mismatch");
-  for (std::size_t i = 0; i < got_in_flight.size(); ++i)
-    assert_delivery(got_in_flight[i], *in_flight->array[i],
-                    where + " in_flight[" + std::to_string(i) + "]");
-
-  const auto got_dead = queue.dead_letter_items();
-  REQUIRE(got_dead.size() == dead->array.size(),
-          where + ": dead-letter length mismatch");
-  for (std::size_t i = 0; i < got_dead.size(); ++i) {
-    const Json &want = *dead->array[i];
-    REQUIRE(got_dead[i].item_id ==
-                static_cast<std::uint64_t>(want.find("item_id")->as_int()),
-            where + ": dead-letter item_id mismatch");
-    REQUIRE(got_dead[i].value == want.find("value")->as_str(),
-            where + ": dead-letter value mismatch");
-    REQUIRE(got_dead[i].attempts ==
-                static_cast<std::uint64_t>(want.find("attempts")->as_int()),
-            where + ": dead-letter attempts mismatch");
-    const std::string reason =
-        got_dead[i].reason == WorkQueueDeadLetterReason::Expired ? "expired"
-                                                                 : "nack";
-    REQUIRE(reason == want.find("reason")->as_str(),
-            where + ": dead-letter reason mismatch");
-  }
+  expected.assert_key_with("dead_letters", [&](const Json &dead) {
+    const auto got_dead = queue.dead_letter_items();
+    REQUIRE(got_dead.size() == dead.array.size(),
+            where + ": dead-letter length mismatch");
+    for (std::size_t i = 0; i < got_dead.size(); ++i) {
+      const Json &want = *dead.array[i];
+      REQUIRE(got_dead[i].item_id ==
+                  static_cast<std::uint64_t>(want.find("item_id")->as_int()),
+              where + ": dead-letter item_id mismatch");
+      REQUIRE(got_dead[i].value == want.find("value")->as_str(),
+              where + ": dead-letter value mismatch");
+      REQUIRE(got_dead[i].attempts ==
+                  static_cast<std::uint64_t>(want.find("attempts")->as_int()),
+              where + ": dead-letter attempts mismatch");
+      const std::string reason =
+          got_dead[i].reason == WorkQueueDeadLetterReason::Expired ? "expired"
+                                                                   : "nack";
+      REQUIRE(reason == want.find("reason")->as_str(),
+              where + ": dead-letter reason mismatch");
+    }
+    return true;
+  });
 }
 
 template <typename OwnerContext, typename Queue>
@@ -196,21 +201,22 @@ std::size_t replay(const std::string &fixture, const std::string &flavor) {
     readers.assert_invalidates(expected, where);
     assert_state(queue, expected, where);
     readers.refresh();
-    const Json *reads = expected.find("reads");
-    REQUIRE(reads != nullptr, where + ": expected.reads is absent");
-    REQUIRE(queue.pending_len(ctx) ==
-                static_cast<std::size_t>(reads->find("pending_len")->as_int()),
-            where + ": pending_len read mismatch");
-    REQUIRE(queue.is_empty(ctx) == reads->find("is_empty")->as_bool(),
-            where + ": is_empty read mismatch");
-    REQUIRE(
-        queue.in_flight_len(ctx) ==
-            static_cast<std::size_t>(reads->find("in_flight_len")->as_int()),
-        where + ": in_flight_len read mismatch");
-    REQUIRE(
-        queue.dead_letter_len(ctx) ==
-            static_cast<std::size_t>(reads->find("dead_letter_len")->as_int()),
-        where + ": dead_letter_len read mismatch");
+    expected.assert_key_with("reads", [&](const Json &reads) {
+      REQUIRE(queue.pending_len(ctx) ==
+                  static_cast<std::size_t>(reads.find("pending_len")->as_int()),
+              where + ": pending_len read mismatch");
+      REQUIRE(queue.is_empty(ctx) == reads.find("is_empty")->as_bool(),
+              where + ": is_empty read mismatch");
+      REQUIRE(
+          queue.in_flight_len(ctx) ==
+              static_cast<std::size_t>(reads.find("in_flight_len")->as_int()),
+          where + ": in_flight_len read mismatch");
+      REQUIRE(
+          queue.dead_letter_len(ctx) ==
+              static_cast<std::size_t>(reads.find("dead_letter_len")->as_int()),
+          where + ": dead_letter_len read mismatch");
+      return true;
+    });
   }
   return steps->array.size();
 }

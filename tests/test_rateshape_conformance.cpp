@@ -9,6 +9,7 @@
 #include <lazily/rateshape.hpp>
 
 #include <cassert>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,35 +39,41 @@ static std::string fixture_text(const std::string& file) {
   return lazily_test::spec_fixture_text("rateshape", file);
 }
 
-// One canonical step: op fields + expectations. `is_input` distinguishes the
-// `input`/`tick` op type; unused fields (e.g. `now` for count sampling, `value`
-// for a tick) are ignored by the per-fixture driver.
+// One canonical step: op fields + the step's assertion block. `is_input`
+// distinguishes the `input`/`tick` op type; unused fields (e.g. `now` for count
+// sampling, `value` for a tick) are ignored by the per-fixture driver.
+//
+// The expectation values are deliberately NOT copied out here. Parsing happens
+// before the library is driven, so a copied-out expectation could be bound and
+// silently never compared; keeping the live `AssertionKeys` means the fixture's
+// own value reaches the comparison in `run` and is recorded as asserted there
+// (#lzconsumednotasserted).
 struct Step {
   bool is_input;
   uint64_t now;
   std::string value;
   double draw;
-  OptS returns;       // expected emit (`returns`)
-  OptS output;        // expected projected output
-  bool invalidates;   // expected output-reader invalidation
+  OptS returns;                     // expected emit (top-level `returns`)
+  lazily_test::AssertionKeys* keys;  // this step's `expected` block
 };
 
 struct Fixture {
   lazily_test::JsonPtr root;
+  std::vector<std::unique_ptr<lazily_test::AssertionKeys>> keys;
   std::vector<Step> steps;
 };
 
 static Fixture fixture(const std::string& file) {
   using namespace lazily_test;
-  Fixture result{parse_json(fixture_text(file)), {}};
+  Fixture result;
+  result.root = parse_json(fixture_text(file));
   const auto& steps = json_array(json_member(*result.root, "steps"));
   result.steps.reserve(steps.size());
   for (const auto& step_ptr : steps) {
     const auto& step = *step_ptr;
     const auto& op = json_member(step, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", json_member(step, "expected"));
-    const auto& invalidates = json_member(expected, "invalidates");
+    result.keys.push_back(std::make_unique<AssertionKeys>(
+        std::string(__func__) + " expected", json_member(step, "expected")));
     const auto type = json_string(json_member(op, "type"));
     const Json* now = op.find("now");
     const Json* value = op.find("value");
@@ -77,8 +84,7 @@ static Fixture fixture(const std::string& file) {
         value == nullptr ? std::string{} : json_string(*value),
         draw == nullptr ? 0.0 : json_number(*draw),
         json_optional_string(json_member(step, "returns")),
-        json_optional_string(json_member(expected, "output")),
-        json_bool(json_member(invalidates, "output")),
+        result.keys.back().get(),
     });
   }
   return result;
@@ -95,11 +101,15 @@ static void run(Context& ctx, const std::vector<Step>& steps,
     OptS output;
     drive(step, emitted, output);
     assert(emitted == step.returns && "emit");
-    assert(output == step.output && "output");
+    step.keys->assert_key("output", output, lazily_test::json_optional_string);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == step.invalidates && "invalidation");
+    step.keys->assert_key_with(
+        "invalidates", [&](const lazily_test::Json& want) {
+          return lazily_test::json_bool(
+                     lazily_test::json_member(want, "output")) == !was_cached;
+        });
   }
 }
 
@@ -219,10 +229,13 @@ TEST(probabilistic_sample) {
     OptS emitted = cell.input_with_draw(ctx, s.value, s.draw);
     OptS output = cell.output(ctx);
     assert(emitted == s.returns && "emit");
-    assert(output == s.output && "output");
-    bool was_cached = ctx.is_set(observed);
+    s.keys->assert_key("output", output, lazily_test::json_optional_string);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == s.invalidates && "invalidation");
+    s.keys->assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
+             !was_cached;
+    });
   }
 
   // Core threshold: strict `<`.

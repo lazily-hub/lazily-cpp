@@ -88,13 +88,14 @@ void fail(const std::string &fixture, size_t step, const std::string &what) {
 // Was this reader invalidated by the op just applied?
 bool invalidated(bool still_valid) { return !still_valid; }
 
-void check_bool(const std::string &fixture, size_t step, const char *label,
+bool check_bool(const std::string &fixture, size_t step, const char *label,
                 bool actual, bool expected) {
-  if (actual != expected) {
-    fail(fixture, step,
-         std::string(label) + " = " + (actual ? "true" : "false") +
-             ", fixture says " + (expected ? "true" : "false"));
-  }
+  if (actual == expected)
+    return true;
+  fail(fixture, step,
+       std::string(label) + " = " + (actual ? "true" : "false") +
+           ", fixture says " + (expected ? "true" : "false"));
+  return false;
 }
 
 template <typename OwnerContext, typename Queue>
@@ -196,7 +197,7 @@ void replay(const std::string &name, const std::string &flavor) {
     // `invalidates` nests under `expected`. A runner that looked for it at step
     // level would find nothing and check nothing, which is exactly the bug that
     // silently disabled lazily-rs's map assertion.
-    if (const Json *inv = exp.find("invalidates")) {
+    exp.assert_key_with_if_present("invalidates", [&](const Json &inv) {
       const struct {
         const char *key;
         bool still_valid;
@@ -205,8 +206,9 @@ void replay(const std::string &name, const std::string &flavor) {
           {"is_empty", r.empty.is_valid()}, {"is_full", r.full.is_valid()},
           {"closed", r.closed.is_valid()},
       };
+      bool ok = true;
       for (const auto &probe : probes) {
-        const Json *want = inv->find(probe.key);
+        const Json *want = inv.find(probe.key);
         if (want == nullptr)
           continue;
         const bool got = invalidated(probe.still_valid);
@@ -215,9 +217,11 @@ void replay(const std::string &name, const std::string &flavor) {
                std::string("invalidates.") + probe.key + " = " +
                    (got ? "true" : "false") + ", fixture says " +
                    (want->boolean ? "true" : "false"));
+          ok = false;
         }
       }
-    }
+      return ok;
+    });
 
     // `returns`
     if (const Json *ret = step.find("returns")) {
@@ -236,32 +240,48 @@ void replay(const std::string &name, const std::string &flavor) {
 
     // Reader values, checked only for the keys this step actually pins.
     r.refresh();
-    if (const Json *e = exp.find("head")) {
+    exp.assert_key_with_if_present("head", [&](const Json &e) {
       const auto got = r.head.value();
-      if (e->type == Json::Type::Null) {
-        if (got)
-          fail(label, i, "head has a value, fixture says null");
-      } else if (!got || *got != e->str) {
-        fail(label, i,
-             "head = " + (got ? *got : std::string("null")) +
-                 ", fixture says " + e->str);
+      if (e.type == Json::Type::Null) {
+        if (!got)
+          return true;
+        fail(label, i, "head has a value, fixture says null");
+        return false;
       }
-    }
-    if (const Json *e = exp.find("len")) {
-      if (r.len.value() != static_cast<size_t>(e->number)) {
-        fail(label, i,
-             "len = " + std::to_string(r.len.value()) + ", fixture says " +
-                 std::to_string(static_cast<size_t>(e->number)));
-      }
-    }
-    if (const Json *e = exp.find("is_empty"))
-      check_bool(name, i, "is_empty", r.empty.value(), e->boolean);
-    if (const Json *e = exp.find("is_full"))
-      check_bool(name, i, "is_full", r.full.value(), e->boolean);
-    if (const Json *e = exp.find("closed"))
-      check_bool(name, i, "closed", r.closed.value(), e->boolean);
+      if (got && *got == e.str)
+        return true;
+      fail(label, i,
+           "head = " + (got ? *got : std::string("null")) + ", fixture says " +
+               e.str);
+      return false;
+    });
+    exp.assert_key_with_if_present("len", [&](const Json &e) {
+      if (r.len.value() == static_cast<size_t>(e.number))
+        return true;
+      fail(label, i,
+           "len = " + std::to_string(r.len.value()) + ", fixture says " +
+               std::to_string(static_cast<size_t>(e.number)));
+      return false;
+    });
+    exp.assert_key_with_if_present("is_empty", [&](const Json &e) {
+      return check_bool(name, i, "is_empty", r.empty.value(), e.boolean);
+    });
+    exp.assert_key_with_if_present("is_full", [&](const Json &e) {
+      return check_bool(name, i, "is_full", r.full.value(), e.boolean);
+    });
+    exp.assert_key_with_if_present("closed", [&](const Json &e) {
+      return check_bool(name, i, "closed", r.closed.value(), e.boolean);
+    });
 
     if (const Json *e = exp.find("elements")) {
+      // A queue exposes no enumeration, and popping to read it would mutate the
+      // very state the next step asserts. The per-step body claim is therefore
+      // carried to the end of the fixture and asserted by draining; head+len
+      // above pin its boundary each step (#lzconsumednotasserted).
+      exp.excuse_key("elements",
+                     "queue has no enumeration API and a read would consume; "
+                     "asserted at end of fixture by draining and comparing the "
+                     "popped sequence, with head+len pinned every step");
       expected_final.clear();
       for (const auto &el : e->array)
         expected_final.push_back(el->str);

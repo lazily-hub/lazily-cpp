@@ -345,24 +345,30 @@ void run_fixture(const std::string& fixture) {
     }
 
     // -- order + membership -----------------------------------------------
-    const std::vector<std::string> want_order = string_array(expected.find("order"));
     const std::vector<std::string> got_order = model.keys_untracked();
-    REQUIRE(want_order == got_order,
-            where + ": order is [" + join(got_order) + "], expected [" +
-                join(want_order) + "]");
+    expected.assert_key_with("order", [&](const Json& want) {
+      const std::vector<std::string> want_order = string_array(&want);
+      REQUIRE(want_order == got_order,
+              where + ": order is [" + join(got_order) + "], expected [" +
+                  join(want_order) + "]");
+      return true;
+    });
 
-    if (const Json* want_membership = expected.find("membership")) {
-      // Bind the vector: iterators taken from two separate temporaries would
-      // belong to different containers.
-      const std::vector<std::string> want_keys = string_array(want_membership);
-      const std::set<std::string> want(want_keys.begin(), want_keys.end());
-      const std::set<std::string> got(got_order.begin(), got_order.end());
-      REQUIRE(want == got, where + ": membership set diverged");
-    }
+    expected.assert_key_with_if_present(
+        "membership", [&](const Json& want_membership) {
+          // Bind the vector: iterators taken from two separate temporaries
+          // would belong to different containers.
+          const std::vector<std::string> want_keys =
+              string_array(&want_membership);
+          const std::set<std::string> want(want_keys.begin(), want_keys.end());
+          const std::set<std::string> got(got_order.begin(), got_order.end());
+          REQUIRE(want == got, where + ": membership set diverged");
+          return true;
+        });
 
     // -- values -------------------------------------------------------------
-    if (const Json* want_values = expected.find("values")) {
-      for (const auto& kv : want_values->object) {
+    expected.assert_key_with_if_present("values", [&](const Json& want_values) {
+      for (const auto& kv : want_values.object) {
         auto got = model.value_untracked(kv.first);
         REQUIRE(got.has_value(), where + ": value for " + kv.first + " is absent");
         REQUIRE(*got == static_cast<int>(kv.second->as_int()),
@@ -370,74 +376,80 @@ void run_fixture(const std::string& fixture) {
                     std::to_string(*got) + ", expected " +
                     std::to_string(kv.second->as_int()));
       }
-    }
+      return true;
+    });
 
     // -- the invalidation matrix -------------------------------------------
     //
     // Nested under `expected`, which is where the fixtures actually put it.
-    const Json* invalidates = expected.find("invalidates");
-    REQUIRE(invalidates != nullptr,
-            where + ": expected.invalidates is missing - the matrix is the "
-                    "contract, so a step without one must fail loudly");
-    ++asserted_invalidations;
-    const std::vector<std::string> dirty_values =
-        string_array(invalidates->find("value"));
-    const std::set<std::string> dirty(dirty_values.begin(), dirty_values.end());
-    // Only survivors are checked: a key this op removed has no entry left to
-    // read, and a key it added had no reader to invalidate.
-    const std::set<std::string> survivors(got_order.begin(), got_order.end());
-    for (auto& kv : value_readers) {
-      if (survivors.count(kv.first) == 0) continue;
-      const bool want_dirty = dirty.count(kv.first) > 0;
-      const bool still_cached = model.cached(kv.second);
-      if (want_dirty) {
-        REQUIRE(!still_cached, where + ": value reader for " + kv.first +
-                                   " should have been invalidated");
-      } else {
-        REQUIRE(still_cached, where + ": value reader for " + kv.first +
-                                  " should have stayed cached - per-entry "
-                                  "independence is the whole point");
+    expected.assert_key_with("invalidates", [&](const Json& invalidates) {
+      ++asserted_invalidations;
+      const std::vector<std::string> dirty_values =
+          string_array(invalidates.find("value"));
+      const std::set<std::string> dirty(dirty_values.begin(),
+                                        dirty_values.end());
+      // Only survivors are checked: a key this op removed has no entry left to
+      // read, and a key it added had no reader to invalidate.
+      const std::set<std::string> survivors(got_order.begin(), got_order.end());
+      for (auto& kv : value_readers) {
+        if (survivors.count(kv.first) == 0) continue;
+        const bool want_dirty = dirty.count(kv.first) > 0;
+        const bool still_cached = model.cached(kv.second);
+        if (want_dirty) {
+          REQUIRE(!still_cached, where + ": value reader for " + kv.first +
+                                     " should have been invalidated");
+        } else {
+          REQUIRE(still_cached, where + ": value reader for " + kv.first +
+                                    " should have stayed cached - per-entry "
+                                    "independence is the whole point");
+        }
       }
-    }
 
-    const Json* want_membership_dirty = invalidates->find("membership");
-    if (want_membership_dirty != nullptr) {
-      const bool want_dirty = want_membership_dirty->as_bool();
-      REQUIRE(model.cached(membership) != want_dirty,
-              where + std::string(": membership reader should have ") +
-                  (want_dirty ? "been invalidated" : "stayed cached") +
-                  " - a pure reorder must NOT invalidate set-identity readers");
-    }
+      const Json* want_membership_dirty = invalidates.find("membership");
+      if (want_membership_dirty != nullptr) {
+        const bool want_dirty = want_membership_dirty->as_bool();
+        REQUIRE(model.cached(membership) != want_dirty,
+                where + std::string(": membership reader should have ") +
+                    (want_dirty ? "been invalidated" : "stayed cached") +
+                    " - a pure reorder must NOT invalidate set-identity "
+                    "readers");
+      }
 
-    const Json* want_order_dirty = invalidates->find("order");
-    if (want_order_dirty != nullptr) {
-      const bool want_dirty = want_order_dirty->as_bool();
-      REQUIRE(model.cached(order) != want_dirty,
-              where + std::string(": order reader should have ") +
-                  (want_dirty ? "been invalidated" : "stayed cached"));
-    }
+      const Json* want_order_dirty = invalidates.find("order");
+      if (want_order_dirty != nullptr) {
+        const bool want_dirty = want_order_dirty->as_bool();
+        REQUIRE(model.cached(order) != want_dirty,
+                where + std::string(": order reader should have ") +
+                    (want_dirty ? "been invalidated" : "stayed cached"));
+      }
+      return true;
+    });
 
     // -- handle stability ---------------------------------------------------
     //
     // The law that separates an atomic move from a remove + re-mint: a reorder
     // keeps the entry's node, so its dependents and CRDT lineage survive.
-    if (const Json* stable = expected.find("handle_stable")) {
-      for (const auto& kv : stable->object) {
-        auto before = handles_before.count(kv.first)
-                          ? handles_before[kv.first]
-                          : std::nullopt;
-        auto after = model.handle_id(kv.first);
-        if (kv.second->as_bool()) {
-          REQUIRE(before.has_value() && after.has_value() && *before == *after,
+    expected.assert_key_with_if_present(
+        "handle_stable", [&](const Json& stable) {
+          for (const auto& kv : stable.object) {
+            auto before = handles_before.count(kv.first)
+                              ? handles_before[kv.first]
+                              : std::nullopt;
+            auto after = model.handle_id(kv.first);
+            if (kv.second->as_bool()) {
+              REQUIRE(
+                  before.has_value() && after.has_value() && *before == *after,
                   where + ": handle for " + kv.first +
                       " must survive the move - a reorder that re-mints is a "
                       "remove + insert, not a move");
-        } else {
-          REQUIRE(!after.has_value() || !before.has_value() || *before != *after,
+            } else {
+              REQUIRE(
+                  !after.has_value() || !before.has_value() || *before != *after,
                   where + ": handle for " + kv.first + " should have changed");
-        }
-      }
-    }
+            }
+          }
+          return true;
+        });
   }
 
   // The matrix is the contract. A fixture whose `invalidates` block never

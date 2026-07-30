@@ -87,35 +87,36 @@ TEST(test_membership_lifecycle) {
     }
 
     // Per-peer state.
-    const auto& states = lazily_test::json_member(expected, "states");
-    assert(states.is_object());
-    for (const auto& want : states.object) {
-      const auto state = lazily_test::json_string(*want.second);
-      const auto want_state =
-          state == "Alive"
-              ? PeerState::Alive
-              : (state == "Suspect"
-                     ? PeerState::Suspect
-                     : (state == "Dead" ? PeerState::Dead : PeerState::Left));
-      const auto got = m.state(std::stoull(want.first));
-      assert(got && *got == want_state && "peer state after op");
-    }
+    expected.assert_key_with("states", [&](const lazily_test::Json& states) {
+      assert(states.is_object());
+      for (const auto& want : states.object) {
+        const auto state = lazily_test::json_string(*want.second);
+        const auto want_state =
+            state == "Alive"
+                ? PeerState::Alive
+                : (state == "Suspect"
+                       ? PeerState::Suspect
+                       : (state == "Dead" ? PeerState::Dead : PeerState::Left));
+        const auto got = m.state(std::stoull(want.first));
+        if (!got || *got != want_state) return false;
+      }
+      return true;
+    });
     // Alive set (the reactive PeerSet).
-    std::set<uint64_t> alive_set;
-    for (const auto& alive : lazily_test::json_array(
-             lazily_test::json_member(expected, "alive_set"))) {
-      alive_set.insert(lazily_test::json_u64(*alive));
-    }
-    assert(m.peer_set(ctx) == alive_set && "alive_set after op");
+    expected.assert_key(
+        "alive_set", m.peer_set(ctx),
+        [](const lazily_test::Json& value) {
+          std::set<uint64_t> alive_set;
+          for (const auto& alive : lazily_test::json_array(value))
+            alive_set.insert(lazily_test::json_u64(*alive));
+          return alive_set;
+        });
 
     // PeerSet invalidation: the observed reader is dropped from cache exactly
     // when the alive set changed.
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) ==
-               lazily_test::json_bool(
-                   lazily_test::json_member(expected, "invalidates")) &&
-           "invalidation after op");
+    expected.assert_key("invalidates", !was_cached);
   }
 }
 

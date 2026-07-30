@@ -65,13 +65,6 @@ TEST(test_presence) {
       ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
   (void)ctx.get(observed);  // prime the observer cache
 
-  auto step = [&](PresenceMap want, bool invalidates) {
-    assert(cell.present(ctx) == want);
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert((!was) == invalidates);
-  };
-
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
@@ -91,9 +84,15 @@ TEST(test_presence) {
       assert(type == "tick");
       cell.tick(ctx, now);
     }
-    step(json_presence_map(lazily_test::json_member(expected, "present")),
-         lazily_test::json_bool(lazily_test::json_member(
-             lazily_test::json_member(expected, "invalidates"), "present")));
+    expected.assert_key("present", cell.present(ctx), json_presence_map);
+    // INVALIDATION via the `computed` + `is_set` cache-survival technique: the
+    // cached value survived iff nothing invalidated the observer slot.
+    const bool was = ctx.is_set(observed);
+    (void)ctx.get(observed);
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "present")) ==
+             !was;
+    });
   }
 }
 
@@ -108,13 +107,6 @@ TEST(test_awareness) {
   auto observed =
       ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
   (void)ctx.get(observed);
-
-  auto step = [&](PresenceMap want, bool invalidates) {
-    assert(cell.present(ctx) == want);
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert((!was) == invalidates);
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -132,9 +124,13 @@ TEST(test_awareness) {
       assert(type == "tick");
       cell.tick(ctx, now);
     }
-    step(json_presence_map(lazily_test::json_member(expected, "present")),
-         lazily_test::json_bool(lazily_test::json_member(
-             lazily_test::json_member(expected, "invalidates"), "present")));
+    expected.assert_key("present", cell.present(ctx), json_presence_map);
+    const bool was = ctx.is_set(observed);
+    (void)ctx.get(observed);
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "present")) ==
+             !was;
+    });
   }
 
   // last-writer-per-peer visible via non-reactive get
@@ -150,13 +146,6 @@ TEST(test_ephemeral) {
   auto observed = ctx.computed<std::optional<std::string>>(
       [vc](Compute& c) { return c.get(vc); });
   (void)ctx.get(observed);
-
-  auto step = [&](std::optional<std::string> want, bool invalidates) {
-    assert(cell.value(ctx) == want);
-    bool was = ctx.is_set(observed);
-    (void)ctx.get(observed);
-    assert((!was) == invalidates);
-  };
 
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
@@ -174,10 +163,14 @@ TEST(test_ephemeral) {
       assert(type == "tick");
       cell.tick(ctx, now);
     }
-    step(lazily_test::json_optional_string(
-             lazily_test::json_member(expected, "value")),
-         lazily_test::json_bool(lazily_test::json_member(
-             lazily_test::json_member(expected, "invalidates"), "value")));
+    expected.assert_key("value", cell.value(ctx),
+                        lazily_test::json_optional_string);
+    const bool was = ctx.is_set(observed);
+    (void)ctx.get(observed);
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "value")) ==
+             !was;
+    });
   }
 }
 

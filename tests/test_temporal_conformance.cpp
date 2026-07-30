@@ -67,18 +67,21 @@ TEST(test_timer_single_shot) {
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(timer.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    assert(timer.has_fired(ctx) ==
-           lazily_test::json_bool(lazily_test::json_member(expected, "fired")));
-    assert(timer.value(ctx).has_value() ==
-           !lazily_test::json_member(expected, "value").is_null());
-    assert(timer.next_fire() == lazily_test::json_optional_u64(
-                                    lazily_test::json_member(expected, "next_fire")));
+    expected.assert_key("fired", timer.has_fired(ctx));
+    // The fixture spells the unit payload as `null` before the fire edge and
+    // `{}` after it, so presence is the whole claim it carries.
+    expected.assert_key_with("value", [&](const lazily_test::Json& want) {
+      return timer.value(ctx).has_value() == !want.is_null();
+    });
+    expected.assert_key("next_fire", timer.next_fire(),
+                        lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "fired")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "fired")) ==
+             !was_cached;
+    });
   }
 }
 
@@ -102,16 +105,16 @@ TEST(test_interval_periodic) {
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(iv.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    assert(iv.count(ctx) ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "count")));
-    assert(iv.next_fire() == lazily_test::json_optional_u64(
-                                 lazily_test::json_member(expected, "next_fire")));
+    expected.assert_key("count", iv.count(ctx));
+    expected.assert_key("next_fire", iv.next_fire(),
+                        lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "count")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "count")) ==
+             !was_cached;
+    });
   }
 }
 
@@ -141,16 +144,16 @@ TEST(test_cron_pattern) {
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(cron.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    assert(cron.count(ctx) ==
-           lazily_test::json_u64(lazily_test::json_member(expected, "count")));
-    assert(cron.next_fire() == lazily_test::json_optional_u64(
-                                   lazily_test::json_member(expected, "next_fire")));
+    expected.assert_key("count", cron.count(ctx));
+    expected.assert_key("next_fire", cron.next_fire(),
+                        lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "count")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "count")) ==
+             !was_cached;
+    });
   }
 }
 
@@ -177,20 +180,22 @@ TEST(test_deadline_expiry) {
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(d.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    const bool expired =
-        lazily_test::json_string(lazily_test::json_member(expected, "state")) ==
-        "Expired";
     Deadlined<std::string> state = d.state(ctx);
-    assert(state.is_expired() == expired);
-    assert(state.value() ==
-           lazily_test::json_string(lazily_test::json_member(expected, "value")));
-    assert(d.is_expired(ctx) == expired);
+    // The fixture names the state (`Live` / `Expired`); both the projected
+    // wrapper and the reader cell must agree with it.
+    expected.assert_key_with("state", [&](const lazily_test::Json& want) {
+      const bool want_expired = lazily_test::json_string(want) == "Expired";
+      return state.is_expired() == want_expired &&
+             d.is_expired(ctx) == want_expired;
+    });
+    expected.assert_key("value", state.value(), lazily_test::json_string);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "state")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "state")) ==
+             !was_cached;
+    });
   }
 }
 

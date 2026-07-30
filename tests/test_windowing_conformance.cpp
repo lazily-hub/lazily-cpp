@@ -69,14 +69,14 @@ TEST(test_tumbling_count) {
         w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
     assert(emit == lazily_test::json_optional_u64(
                        lazily_test::json_member(item, "returns")));
-    assert(w.output(ctx) == lazily_test::json_optional_u64(
-                                lazily_test::json_member(expected, "output")));
+    expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "output")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
+             !was_cached;
+    });
   }
 }
 
@@ -111,14 +111,14 @@ TEST(test_tumbling_time) {
     }
     assert(emit == lazily_test::json_optional_u64(
                        lazily_test::json_member(item, "returns")));
-    assert(w.output(ctx) == lazily_test::json_optional_u64(
-                                lazily_test::json_member(expected, "output")));
+    expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "output")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
+             !was_cached;
+    });
   }
 }
 
@@ -144,14 +144,14 @@ TEST(test_sliding_count) {
         w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
     assert(emit == lazily_test::json_optional_u64(
                        lazily_test::json_member(item, "returns")));
-    assert(w.output(ctx) == lazily_test::json_optional_u64(
-                                lazily_test::json_member(expected, "output")));
+    expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "output")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
+             !was_cached;
+    });
   }
 }
 
@@ -182,14 +182,14 @@ TEST(test_session) {
     assert(type == "push" || type == "flush");
     assert(emit == lazily_test::json_optional_u64(
                        lazily_test::json_member(item, "returns")));
-    assert(w.output(ctx) == lazily_test::json_optional_u64(
-                                lazily_test::json_member(expected, "output")));
+    expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
-    bool was_cached = ctx.is_set(observed);
+    const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    assert((!was_cached) == lazily_test::json_bool(lazily_test::json_member(
-                                lazily_test::json_member(expected, "invalidates"),
-                                "output")));
+    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
+             !was_cached;
+    });
   }
 }
 
