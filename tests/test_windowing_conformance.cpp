@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -61,7 +62,8 @@ TEST(test_tumbling_count) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "push");
     const OptU emit =
         w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
@@ -93,7 +95,8 @@ TEST(test_tumbling_time) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     OptU emit;
     if (type == "push") {
@@ -135,7 +138,8 @@ TEST(test_sliding_count) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const OptU emit =
         w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
     assert(emit == lazily_test::json_optional_u64(
@@ -166,7 +170,8 @@ TEST(test_session) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     const OptU emit =

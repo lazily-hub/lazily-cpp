@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -183,8 +184,11 @@ void replay(const std::string &name, const std::string &flavor) {
       continue;
     }
 
-    const Json *exp = step.find("expected");
-    REQUIRE(exp != nullptr, "step has no `expected`");
+    const Json *exp_block = step.find("expected");
+    REQUIRE(exp_block != nullptr, "step has no `expected`");
+    lazily_test::AssertionKeys exp(label + " step " + std::to_string(i) +
+                                       " expected",
+                                   *exp_block);
 
     // The invalidation matrix, captured BEFORE any refresh — reading a reader
     // revalidates it, so the order here is load-bearing.
@@ -192,7 +196,7 @@ void replay(const std::string &name, const std::string &flavor) {
     // `invalidates` nests under `expected`. A runner that looked for it at step
     // level would find nothing and check nothing, which is exactly the bug that
     // silently disabled lazily-rs's map assertion.
-    if (const Json *inv = exp->find("invalidates")) {
+    if (const Json *inv = exp.find("invalidates")) {
       const struct {
         const char *key;
         bool still_valid;
@@ -232,7 +236,7 @@ void replay(const std::string &name, const std::string &flavor) {
 
     // Reader values, checked only for the keys this step actually pins.
     r.refresh();
-    if (const Json *e = exp->find("head")) {
+    if (const Json *e = exp.find("head")) {
       const auto got = r.head.value();
       if (e->type == Json::Type::Null) {
         if (got)
@@ -243,21 +247,21 @@ void replay(const std::string &name, const std::string &flavor) {
                  ", fixture says " + e->str);
       }
     }
-    if (const Json *e = exp->find("len")) {
+    if (const Json *e = exp.find("len")) {
       if (r.len.value() != static_cast<size_t>(e->number)) {
         fail(label, i,
              "len = " + std::to_string(r.len.value()) + ", fixture says " +
                  std::to_string(static_cast<size_t>(e->number)));
       }
     }
-    if (const Json *e = exp->find("is_empty"))
+    if (const Json *e = exp.find("is_empty"))
       check_bool(name, i, "is_empty", r.empty.value(), e->boolean);
-    if (const Json *e = exp->find("is_full"))
+    if (const Json *e = exp.find("is_full"))
       check_bool(name, i, "is_full", r.full.value(), e->boolean);
-    if (const Json *e = exp->find("closed"))
+    if (const Json *e = exp.find("closed"))
       check_bool(name, i, "closed", r.closed.value(), e->boolean);
 
-    if (const Json *e = exp->find("elements")) {
+    if (const Json *e = exp.find("elements")) {
       expected_final.clear();
       for (const auto &el : e->array)
         expected_final.push_back(el->str);

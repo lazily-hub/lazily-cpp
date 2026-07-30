@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -77,7 +78,8 @@ TEST(test_health) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     h.set(ctx,
           lazily_test::json_string(lazily_test::json_member(op, "name")),
           lazily_test::json_bool(lazily_test::json_member(op, "up")),
@@ -110,7 +112,8 @@ TEST(test_readiness) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     r.set(ctx,
           lazily_test::json_string(lazily_test::json_member(op, "name")),
           lazily_test::json_bool(lazily_test::json_member(op, "ready")));
@@ -137,7 +140,8 @@ TEST(test_discovery) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     if (type == "register") {
       d.register_(
@@ -179,7 +183,8 @@ TEST(test_service_registry) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     if (type == "register") {
       reg.register_(

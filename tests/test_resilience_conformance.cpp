@@ -12,6 +12,7 @@
 #include <cassert>
 #include <cstdint>
 #include <string>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -56,7 +57,8 @@ TEST(test_circuit_breaker) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "record") {
@@ -100,7 +102,8 @@ TEST(test_retry) {
   for (const auto& step_ptr :
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     assert(r.next_delay(ctx) ==
            lazily_test::json_u64(lazily_test::json_member(item, "returns")));
     assert(r.delay(ctx) ==
@@ -130,7 +133,8 @@ TEST(test_bulkhead) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     if (type == "acquire") {
       assert(b.acquire(ctx) ==
@@ -165,7 +169,8 @@ TEST(test_timeout) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     bool got;

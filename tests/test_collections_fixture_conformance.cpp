@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -72,7 +73,8 @@ void replay_merge_scenario(const Json& scenario) {
   for (const auto& step_ptr : lazily_test::json_array(
            lazily_test::json_member(scenario, "steps"))) {
     const auto& step = *step_ptr;
-    const auto& expected = lazily_test::json_member(step, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(step, "expected"));
     cell.merge(static_cast<long>(
         lazily_test::json_member(step, "merge").as_int()));
     assert(cell.get() ==
@@ -113,7 +115,8 @@ void test_keyed_reconciliation() {
   const auto target =
       keyed_values(lazily_test::json_member(reconcile_json, "target"));
   const auto ops = reconcile(prior, target);
-  const auto& expected = lazily_test::json_member(*root, "expected");
+  lazily_test::AssertionKeys expected(
+      std::string(__func__) + " expected", lazily_test::json_member(*root, "expected"));
   const auto& expected_ops =
       lazily_test::json_array(lazily_test::json_member(expected, "ops"));
   assert(ops.size() == expected_ops.size());
@@ -311,7 +314,8 @@ void test_stableid_alignment() {
   for (const auto& scenario_ptr : lazily_test::json_array(
            lazily_test::json_member(*root, "scenarios"))) {
     const auto& scenario = *scenario_ptr;
-    const auto& expect = lazily_test::json_member(scenario, "expect");
+    lazily_test::AssertionKeys expect(
+        std::string(__func__) + " expect", lazily_test::json_member(scenario, "expect"));
     if (scenario.has("blocks")) {
       const auto blocks =
           json_blocks(lazily_test::json_member(scenario, "blocks"));

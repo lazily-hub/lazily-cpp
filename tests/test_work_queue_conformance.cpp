@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -36,7 +37,8 @@ template <typename Queue> struct Readers {
     (void)graph.get(handles.dead_letter_len);
   }
 
-  void assert_invalidates(const Json &expected, const std::string &where) {
+  void assert_invalidates(lazily_test::AssertionKeys &expected,
+                          const std::string &where) {
     const Json *inv = expected.find("invalidates");
     REQUIRE(inv != nullptr, where + ": expected.invalidates is absent");
     const struct {
@@ -79,7 +81,7 @@ void assert_delivery(const WorkQueueDelivery<std::string> &got,
 }
 
 template <typename Queue>
-void assert_state(Queue &queue, const Json &expected,
+void assert_state(Queue &queue, lazily_test::AssertionKeys &expected,
                   const std::string &where) {
   const Json *pending = expected.find("pending");
   const Json *in_flight = expected.find("in_flight");
@@ -152,9 +154,10 @@ std::size_t replay(const std::string &fixture, const std::string &flavor) {
     const std::string where =
         flavor + " " + fixture + " step " + std::to_string(i);
     const Json *op = step.find("op");
-    const Json *expected = step.find("expected");
+    const Json *expected_block = step.find("expected");
     const Json *returns = step.find("returns");
-    REQUIRE(op && expected && returns, where + ": op/expected/returns absent");
+    REQUIRE(op && expected_block && returns,
+            where + ": op/expected/returns absent");
     readers.refresh();
 
     const std::string type = op->find("type")->as_str();
@@ -189,10 +192,11 @@ std::size_t replay(const std::string &fixture, const std::string &flavor) {
       REQUIRE(false, where + ": unsupported operation " + type);
     }
 
-    readers.assert_invalidates(*expected, where);
-    assert_state(queue, *expected, where);
+    lazily_test::AssertionKeys expected(where + " expected", *expected_block);
+    readers.assert_invalidates(expected, where);
+    assert_state(queue, expected, where);
     readers.refresh();
-    const Json *reads = expected->find("reads");
+    const Json *reads = expected.find("reads");
     REQUIRE(reads != nullptr, where + ": expected.reads is absent");
     REQUIRE(queue.pending_len(ctx) ==
                 static_cast<std::size_t>(reads->find("pending_len")->as_int()),

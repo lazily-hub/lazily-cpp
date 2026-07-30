@@ -50,6 +50,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -369,9 +370,9 @@ template <typename M> void materialize(M &model, const std::vector<Key> &keys) {
 }
 
 template <typename M>
-void assert_state(M &model, const Json &step, const std::string &where) {
-  const Json &expected = member(step, "expected", where);
-  const Json &scopes = member(expected, "scopes", where);
+void assert_state(M &model, lazily_test::AssertionKeys &expected,
+                  const std::string &where) {
+  const Json &scopes = expected.required("scopes");
   REQUIRE(scopes.is_object(), where + ": expected.scopes is not an object");
   for (const auto &entry : scopes.object) {
     const Key key = entry.first;
@@ -435,7 +436,7 @@ void assert_state(M &model, const Json &step, const std::string &where) {
     }
   }
 
-  const Json &receipts = member(expected, "receipts", where);
+  const Json &receipts = expected.required("receipts");
   REQUIRE(static_cast<std::uint64_t>(model.accepted_len()) ==
               json_u64(member(receipts, "accepted", where)),
           where + ": accepted receipts");
@@ -450,11 +451,11 @@ void assert_state(M &model, const Json &step, const std::string &where) {
 /// Assert `invalidates` in BOTH directions. `true` means the reader's cache went
 /// from valid to invalid across the op; `false` means it stayed valid -- so a
 /// shell that over-invalidates fails just as loudly as one that under-.
-void assert_invalidation(const Json &step, const ValiditySnapshot &before,
+void assert_invalidation(lazily_test::AssertionKeys &expected,
+                         const ValiditySnapshot &before,
                          const ValiditySnapshot &after,
                          const std::string &where) {
-  const Json &want =
-      member(member(step, "expected", where), "invalidates", where);
+  const Json &want = expected.required("invalidates");
   static const char *kKinds[4] = {"value", "readiness", "authority", "retry"};
   const Json &want_scopes = member(want, "scopes", where);
   REQUIRE(want_scopes.is_object(),
@@ -592,8 +593,15 @@ std::size_t replay(const Json &fixture, const std::string &label) {
     // Snapshot BEFORE asserting state: `assert_state` reads every reader, which
     // re-warms the caches and would erase the invalidation being measured.
     const ValiditySnapshot after = snapshot_validity(model, keys);
-    assert_state(model, step, where);
-    assert_invalidation(step, before, after, where);
+    // One guard over the step's whole `expected` block, shared by both
+    // helpers: every key it carries has to be claimed by one of them, so a key
+    // the corpus adds cannot be replayed and silently skipped
+    // (#lzassertunknownkeys).
+    lazily_test::AssertionKeys expected(where + " expected",
+                                        member(step, "expected", where));
+    assert_state(model, expected, where);
+    assert_invalidation(expected, before, after, where);
+    expected.finish();
     materialize(model, keys);
     ++executed;
   }

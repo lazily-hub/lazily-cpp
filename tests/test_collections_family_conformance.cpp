@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -280,8 +281,9 @@ void run_fixture(const std::string& fixture) {
         flavor + " " + fixture + " step " + std::to_string(i);
     const Json* op = step.find("op");
     REQUIRE(op != nullptr, where + ": missing op");
-    const Json* expected = step.find("expected");
-    REQUIRE(expected != nullptr, where + ": missing expected");
+    const Json* expected_block = step.find("expected");
+    REQUIRE(expected_block != nullptr, where + ": missing expected");
+    lazily_test::AssertionKeys expected(where + " expected", *expected_block);
 
     // Rebuild + prime readers from the CURRENT key set, so each step's
     // invalidation is measured against a fully settled graph rather than
@@ -343,13 +345,13 @@ void run_fixture(const std::string& fixture) {
     }
 
     // -- order + membership -----------------------------------------------
-    const std::vector<std::string> want_order = string_array(expected->find("order"));
+    const std::vector<std::string> want_order = string_array(expected.find("order"));
     const std::vector<std::string> got_order = model.keys_untracked();
     REQUIRE(want_order == got_order,
             where + ": order is [" + join(got_order) + "], expected [" +
                 join(want_order) + "]");
 
-    if (const Json* want_membership = expected->find("membership")) {
+    if (const Json* want_membership = expected.find("membership")) {
       // Bind the vector: iterators taken from two separate temporaries would
       // belong to different containers.
       const std::vector<std::string> want_keys = string_array(want_membership);
@@ -359,7 +361,7 @@ void run_fixture(const std::string& fixture) {
     }
 
     // -- values -------------------------------------------------------------
-    if (const Json* want_values = expected->find("values")) {
+    if (const Json* want_values = expected.find("values")) {
       for (const auto& kv : want_values->object) {
         auto got = model.value_untracked(kv.first);
         REQUIRE(got.has_value(), where + ": value for " + kv.first + " is absent");
@@ -373,7 +375,7 @@ void run_fixture(const std::string& fixture) {
     // -- the invalidation matrix -------------------------------------------
     //
     // Nested under `expected`, which is where the fixtures actually put it.
-    const Json* invalidates = expected->find("invalidates");
+    const Json* invalidates = expected.find("invalidates");
     REQUIRE(invalidates != nullptr,
             where + ": expected.invalidates is missing - the matrix is the "
                     "contract, so a step without one must fail loudly");
@@ -419,7 +421,7 @@ void run_fixture(const std::string& fixture) {
     //
     // The law that separates an atomic move from a remove + re-mint: a reorder
     // keeps the entry's node, so its dependents and CRDT lineage survive.
-    if (const Json* stable = expected->find("handle_stable")) {
+    if (const Json* stable = expected.find("handle_stable")) {
       for (const auto& kv : stable->object) {
         auto before = handles_before.count(kv.first)
                           ? handles_before[kv.first]

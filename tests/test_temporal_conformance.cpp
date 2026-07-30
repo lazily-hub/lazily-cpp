@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -60,7 +61,8 @@ TEST(test_timer_single_shot) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "tick");
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(timer.tick(ctx, now) ==
@@ -95,7 +97,8 @@ TEST(test_interval_periodic) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(iv.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
@@ -133,7 +136,8 @@ TEST(test_cron_pattern) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(cron.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
@@ -168,7 +172,8 @@ TEST(test_deadline_expiry) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(d.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));

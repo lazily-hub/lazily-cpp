@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -53,7 +54,9 @@ int main() {
         }
         folds.push_back(std::move(fold));
       }
-      const auto& expect = lazily_test::json_member(scenario, "expect");
+      lazily_test::AssertionKeys expect(
+          std::string("crdt-tree/algebra.json expect"),
+          lazily_test::json_member(scenario, "expect"));
       for (const auto& fold : folds) {
         if (lazily_test::json_bool(
                 lazily_test::json_member(expect, "texts_equal"))) {
@@ -73,7 +76,9 @@ int main() {
       TextCrdt restored(lazily_test::json_u64(
           lazily_test::json_member(scenario, "restore_peer")));
       assert(restored.apply_delta(snapshot));
-      const auto& expect = lazily_test::json_member(scenario, "expect");
+      lazily_test::AssertionKeys expect(
+          std::string("crdt-tree/algebra.json expect"),
+          lazily_test::json_member(scenario, "expect"));
       if (lazily_test::json_bool(
               lazily_test::json_member(expect, "restored_text_equal"))) {
         assert(restored.value() == source.value());
@@ -108,7 +113,9 @@ int main() {
              "version_vector()");
       auto steady = TextCrdt::from_str(peer, text);
       const auto empty = steady.delta_since(steady.version_vector());
-      const auto& expect = lazily_test::json_member(scenario, "expect");
+      lazily_test::AssertionKeys expect(
+          std::string("crdt-tree/algebra.json expect"),
+          lazily_test::json_member(scenario, "expect"));
       assert(empty.size() ==
              lazily_test::json_array(
                  lazily_test::json_member(expect, "delta")).size());

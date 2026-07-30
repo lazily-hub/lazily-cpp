@@ -16,6 +16,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -75,7 +76,8 @@ TEST(test_presence) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "heartbeat") {
@@ -118,7 +120,8 @@ TEST(test_awareness) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "set") {
@@ -159,7 +162,8 @@ TEST(test_ephemeral) {
        lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    const auto& expected = lazily_test::json_member(item, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "set") {

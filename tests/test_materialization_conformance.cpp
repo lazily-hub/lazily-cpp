@@ -39,6 +39,7 @@
 #include <utility>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -138,17 +139,25 @@ int main() {
     return it->second;
   };
 
-  const Json* expected = fixture->find("expected");
-  REQUIRE(expected != nullptr, "fixture has no expected block");
+  const Json* expected_block = fixture->find("expected");
+  REQUIRE(expected_block != nullptr, "fixture has no expected block");
+  lazily_test::AssertionKeys expected("materialization expected", *expected_block);
   const auto reads = strings_of(fixture->find("reads"), "fixture has no reads");
+  // The strategy a caller gets without asking for one. The fixture carried it
+  // and nothing read it, so this runner exercised both strategies while never
+  // stating which the corpus calls the default (#lzassertunknownkeys).
+  const std::string default_mode =
+      lazily_test::json_string(expected.required("default_mode"));
+  REQUIRE(default_mode == "eager" || default_mode == "lazy",
+          "default_mode must name a strategy this runner exercises");
   const auto eager_present =
-      strings_of(expected->find("eager_present"), "expected.eager_present");
-  const auto lazy_at_build = strings_of(expected->find("lazy_present_at_build"),
+      strings_of(expected.find("eager_present"), "expected.eager_present");
+  const auto lazy_at_build = strings_of(expected.find("lazy_present_at_build"),
                                         "expected.lazy_present_at_build");
   const auto lazy_after_reads =
-      strings_of(expected->find("lazy_present_after_reads"),
+      strings_of(expected.find("lazy_present_after_reads"),
                  "expected.lazy_present_after_reads");
-  const Json* observe = expected->find("observe");
+  const Json* observe = expected.find("observe");
   REQUIRE(observe != nullptr && observe->is_object(),
           "expected.observe must be an object");
 
@@ -222,6 +231,19 @@ int main() {
                  : eager_slots.get(eager_ctx, kv.first);
     REQUIRE(got == std::optional<uint32_t>(want),
             "an eagerly-materialized entry did not observe its canonical value");
+  }
+
+  // ... and the declared default's present-set is the one that has to hold
+  // for a map built without a strategy argument.
+  {
+    std::vector<std::string> default_keys = eager_cells.present_keys();
+    const auto& want_default =
+        default_mode == "eager" ? eager_present : lazy_after_reads;
+    for (const auto& key : eager_slots.present_keys())
+      default_keys.push_back(key);
+    REQUIRE(sorted(std::move(default_keys)) == sorted(want_default),
+            "the default-mode present-set does not match the expectation the "
+            "fixture names in `default_mode`");
   }
 
   REQUIRE_FIXTURES_LOADED(1);

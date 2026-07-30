@@ -20,9 +20,11 @@
 
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -35,6 +37,14 @@ using lazily_test::spec_fixture_text;
 namespace {
 
 int failures = 0;
+
+// Observations the fixture's `assertions` block makes claims about. Collected
+// during the replay so the block can be evaluated rather than skipped: comparing
+// frames against the transcript makes those claims TRUE, but it never makes them
+// ASSERTED -- it only says this binding emits what was recorded.
+std::vector<ServerWelcome> observed_welcomes;
+std::vector<PeerId> observed_forward_from;
+std::set<PeerId> registered_peers;
 
 void fail(int step, const std::string& what) {
   std::cout << "FAIL [step " << step << "]: " << what << std::endl;
@@ -158,6 +168,7 @@ int main() {
     // Frames the server hands straight back to the sender.
     std::vector<ServerMessage> direct;
     if (kind == "join") {
+      registered_peers.insert(static_cast<PeerId>(recv.find("peer")->number));
       direct = room.process(conn, ClientJoin{static_cast<PeerId>(recv.find("peer")->number), {}});
     } else if (kind == "offer") {
       direct = room.process(conn, ClientOffer{static_cast<PeerId>(recv.find("to")->number),
@@ -195,10 +206,55 @@ int main() {
                                       "` frame to conn " + to + " but nothing was delivered");
         continue;
       }
-      check_frame(static_cast<int>(i), queue.front(), want);
+      const ServerMessage& got = queue.front();
+      if (std::holds_alternative<ServerWelcome>(got))
+        observed_welcomes.push_back(std::get<ServerWelcome>(got));
+      else if (std::holds_alternative<ServerOffer>(got))
+        observed_forward_from.push_back(std::get<ServerOffer>(got).from);
+      else if (std::holds_alternative<ServerAnswer>(got))
+        observed_forward_from.push_back(std::get<ServerAnswer>(got).from);
+      else if (std::holds_alternative<ServerIce>(got))
+        observed_forward_from.push_back(std::get<ServerIce>(got).from);
+      else if (std::holds_alternative<ServerRelay>(got))
+        observed_forward_from.push_back(std::get<ServerRelay>(got).from);
+      check_frame(static_cast<int>(i), got, want);
       queue.erase(queue.begin());
       ++checked_frames;
     }
+  }
+
+  // The fixture's top-level `assertions` block. It was on disk and read by
+  // nobody: this runner hardcoded the equivalent checks inside `check_frame`, so
+  // a fixture that renamed, added or flipped a claim here changed nothing
+  // (#lzassertunknownkeys).
+  {
+    lazily_test::AssertionKeys keys("signaling/anti_spoof_session.json assertions",
+                                    lazily_test::json_member(*doc, "assertions"));
+    if (const Json* want = keys.optional("roster_excludes_self")) {
+      REQUIRE(!observed_welcomes.empty(), "roster_excludes_self: no welcome observed");
+      bool excludes = true;
+      for (const auto& w : observed_welcomes)
+        for (const PeerId p : w.peers)
+          if (p == w.peer) excludes = false;
+      if (excludes != want->as_bool()) fail(-1, "roster_excludes_self");
+    }
+    if (const Json* want = keys.optional("roster_sorted_ascending")) {
+      REQUIRE(!observed_welcomes.empty(), "roster_sorted_ascending: no welcome observed");
+      bool sorted = true;
+      for (const auto& w : observed_welcomes)
+        for (size_t i = 1; i < w.peers.size(); ++i)
+          if (w.peers[i - 1] >= w.peers[i]) sorted = false;
+      if (sorted != want->as_bool()) fail(-1, "roster_sorted_ascending");
+    }
+    if (const Json* want = keys.optional("forwarded_from_is_server_registered")) {
+      REQUIRE(!observed_forward_from.empty(),
+              "forwarded_from_is_server_registered: nothing was forwarded");
+      bool ok = true;
+      for (const PeerId from : observed_forward_from)
+        if (registered_peers.count(from) == 0) ok = false;
+      if (ok != want->as_bool()) fail(-1, "forwarded_from_is_server_registered");
+    }
+    keys.finish();
   }
 
   if (failures != 0) {

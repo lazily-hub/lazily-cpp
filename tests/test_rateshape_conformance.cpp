@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -63,7 +64,8 @@ static Fixture fixture(const std::string& file) {
   for (const auto& step_ptr : steps) {
     const auto& step = *step_ptr;
     const auto& op = json_member(step, "op");
-    const auto& expected = json_member(step, "expected");
+    lazily_test::AssertionKeys expected(
+        std::string(__func__) + " expected", json_member(step, "expected"));
     const auto& invalidates = json_member(expected, "invalidates");
     const auto type = json_string(json_member(op, "type"));
     const Json* now = op.find("now");
