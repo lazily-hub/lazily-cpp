@@ -127,9 +127,9 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Portable stdlib caller-driven `Timeout<T>` (`stdlib_timeout_v1`) — distinct from reactive `TimeoutCell` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Portable stdlib `RevisionBarrier` (`stdlib_revision_barrier_v1`) — register/recheck lost-wakeup guard | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Transport-agnostic reactive ingress (`IngressCell`) — keyed lifecycle scopes, generation/sequence/freshness envelopes, reorder buffer, accepted/dropped/error receipt readers (`#designimplementtransport`) | ✅ | — | — | — | — | — | — | — | — |
-| Ingress family — `Send + Sync` flavor (`ThreadSafeIngressCell`): one frontier walk per admission (`#designimplementtransport`) | ✅ | — | — | — | — | — | — | — | — |
-| Ingress family — async flavor (`AsyncIngressCell`): admission is not async-coloured (`#designimplementtransport`) | ✅ | — | — | — | — | — | — | — | — |
+| Transport-agnostic reactive ingress (`IngressCell`) — keyed lifecycle scopes, generation/sequence/freshness envelopes, reorder buffer, accepted/dropped/error receipt readers (`#designimplementtransport`) | ✅ | — | — | — | — | — | — | ✅ | — |
+| Ingress family — `Send + Sync` flavor (`ThreadSafeIngressCell`): one frontier walk per admission (`#designimplementtransport`) | ✅ | — | — | — | — | — | — | ✅ | — |
+| Ingress family — async flavor (`AsyncIngressCell`): admission is not async-coloured (`#designimplementtransport`) | ✅ | — | — | — | — | — | — | ✅ | — |
 <!-- coverage-table:end -->
 
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
@@ -506,6 +506,7 @@ target_link_libraries(your_target PRIVATE lazily)
 | `windowing.hpp` | Stream windowing — `TumblingCountWindow` / `TumblingTimeWindow` / `SlidingWindow` / `SessionWindow` over the merge algebra (`#lzwindow`) |
 | `resilience.hpp` | Fault tolerance — `CircuitBreakerCell` / `RetryPolicyCell` / `BulkheadCell` / `TimeoutCell` (`#lzresilience`) |
 | `service.hpp` | Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) |
+| `ingress.hpp` | Transport-agnostic reactive ingress — `IngressCore` admission algebra + `IngressCell` / `ThreadSafeIngressCell` / `AsyncIngressCell` shells; keyed lifecycle scopes, generation fence, reorder buffer, freshness horizon, three receipt channels, and the `IngressTransportSeam` / `InProcIngress` delivery seam (`#designimplementtransport`) |
 | `ffi.hpp` | C-ABI FFI boundary (LazilyFfiChannel, extern "C" exports) |
 
 ## Related Projects

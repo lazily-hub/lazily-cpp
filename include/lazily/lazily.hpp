@@ -13,6 +13,7 @@
 #include <lazily/crdt_tree.hpp>
 #include <lazily/ffi.hpp>
 #include <lazily/hlc.hpp>
+#include <lazily/ingress.hpp>
 #include <lazily/ipc.hpp>
 #include <lazily/membership.hpp>
 #include <lazily/merge.hpp>

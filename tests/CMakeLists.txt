@@ -181,6 +181,18 @@ add_executable(test_queue_family_conformance test_queue_family_conformance.cpp)
 target_link_libraries(test_queue_family_conformance PRIVATE lazily)
 add_test(NAME QueueFamilyConformance COMMAND test_queue_family_conformance)
 
+# Transport-agnostic reactive ingress (`#designimplementtransport`). The algebra
+# invariants + shell reactivity live in test_ingress; the canonical corpus replay
+# against all three flavours (with the enforced flavour ledger) lives in
+# test_ingress_conformance.
+add_executable(test_ingress test_ingress.cpp)
+target_link_libraries(test_ingress PRIVATE lazily)
+add_test(NAME ingress COMMAND test_ingress)
+
+add_executable(test_ingress_conformance test_ingress_conformance.cpp)
+target_link_libraries(test_ingress_conformance PRIVATE lazily)
+add_test(NAME IngressConformance COMMAND test_ingress_conformance)
+
 add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
 add_test(NAME family_sync COMMAND test_family_sync)
@@ -296,6 +308,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_work_queue_conformance
   test_signaling_conformance
   test_queue_family_conformance
+  test_ingress_conformance
   test_reactive_graph_conformance
   test_statechart_conformance
   test_receipts_conformance
@@ -321,6 +334,7 @@ set_tests_properties(
   MaterializationConformance
   CollectionsFixtureConformance
   ReactiveGraphConformance
+  IngressConformance
   # These four read the sibling checkout exactly like the rest but were missing
   # from this list, so an absent lazily-spec turned their exit-77 SKIP into a
   # hard ctest FAILURE instead of a skip.

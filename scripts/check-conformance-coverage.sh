@@ -48,11 +48,12 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-# The current suite replays 105 distinct fixtures. Six collections fixtures
+# The current suite replays 112 distinct fixtures. Six collections fixtures
 # (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
-# moved out of KNOWN_UNCOVERED in #lazilycppcollections; keep the floor aligned
-# so deleting that runner cannot hide behind older aggregate growth.
-MIN_FIXTURES="${MIN_FIXTURES:-105}"
+# moved out of KNOWN_UNCOVERED in #lazilycppcollections, and the seven ingress
+# schedules landed with the transport-agnostic ingress family; keep the floor
+# aligned so deleting a runner cannot hide behind older aggregate growth.
+MIN_FIXTURES="${MIN_FIXTURES:-112}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -75,6 +76,7 @@ REQUIRED_AREAS=(
   coordination
   crdt-tree
   distributed
+  ingress
   lossless-tree
   materialization
   membership
