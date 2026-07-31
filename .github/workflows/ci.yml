@@ -64,6 +64,13 @@ jobs:
         run: rm -f "$LAZILY_CONFORMANCE_MANIFEST"
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      # Cross-binding wire compatibility. `make check` builds and runs this peer;
+      # no binding's CI ran it anywhere (#lzinteroppeerci). It is the gate that
+      # matters most when nine bindings have to agree on a byte layout, and it
+      # was the one gate living exclusively on developer machines.
+      - name: Interop peer self-check (#lzinteroppeerci)
+        run: ./build/lazily_interop_peer --self-check
       # An absence guard proves the corpus exists; it cannot prove the suites
       # read it. Fail the run if ctest reported any conformance test as skipped.
       - name: Assert no conformance suite was skipped (#lzspecconf)
