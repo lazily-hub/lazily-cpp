@@ -115,6 +115,27 @@ REQUIRED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
+  # codec — the frame-codec round-trip obligation (#lzmsgpackparity).
+  # `codec` is deliberately NOT in REQUIRED_AREAS above: that list demands at
+  # least one replay per area, and this binding replays neither fixture yet.
+  # Add it there in the same change that lands the first codec replay.
+  # protocol.md § Frame codecs makes BOTH of these MUST-level, and until now
+  # the requirement was prose only, so neither gap was visible anywhere.
+  #
+  # `json` is the REFERENCE codec — the dependency-free interop floor every
+  # binding MUST speak. lazily-cpp has no JSON codec for the IpcMessage
+  # envelope at all (the same reason distributed/crdt_sync_frames.json is
+  # excused below); tests/test_json.hpp is a fixture READER, not a codec.
+  "codec/frame_roundtrip_json.json"
+  # `msgpack` is not simply missing here — it is DIVERGENT, which is worse,
+  # because include/lazily/codec.hpp made the binding look implemented. The
+  # spec frame is externally tagged (`{"Snapshot": {...}}`) over named-field
+  # maps whose keys match the json schema. codec.hpp writes an INTERNALLY
+  # tagged envelope (`{"type": 0, "value": ...}`), gives NodeState/IpcValue
+  # integer `kind` discriminators instead of the `Payload`/`Inline` external
+  # tags, and also ships a positional array form that protocol.md excludes
+  # outright. It is a good private codec and not the `msgpack` codec token.
+  "codec/frame_roundtrip_msgpack.json"
   # distributed — CrdtSync wire-serde frames; lazily-cpp has no JSON codec for
   # the IpcMessage envelope, so replaying `wire` needs an encoder first.
   "distributed/crdt_sync_frames.json"
