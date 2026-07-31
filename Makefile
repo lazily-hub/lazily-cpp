@@ -1,7 +1,7 @@
 # lazily-cpp — build, test, and verification targets.
 
 .PHONY: all configure build test test-interop-peer check fmt tidy clean \
-	conformance conformance-coverage bench
+	conformance conformance-coverage bench ci-reach
 
 BUILD_DIR ?= build
 
@@ -36,6 +36,13 @@ conformance: build
 conformance-coverage:
 	./scripts/check-conformance-coverage.sh $(CONFORMANCE_MANIFEST)
 
+# CI-reachability guard (#lzcheckcireachguard). Fails when a target above runs a
+# gate no CI workflow step reaches — the drift that hid #lzinteroppeerci in every
+# binding for months. It guards itself: `ci-reach` is in `check`, so CI has to run
+# it too or this target reports itself missing.
+ci-reach:
+	./scripts/check-ci-reach.sh
+
 test-interop-peer: build
 	./$(BUILD_DIR)/lazily_interop_peer --self-check
 
@@ -57,5 +64,5 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Full local gate — run before committing.
-check: build test test-interop-peer conformance-coverage
+check: build test test-interop-peer conformance-coverage ci-reach
 	@echo "lazily-cpp: check OK"

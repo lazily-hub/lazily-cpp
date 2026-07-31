@@ -110,12 +110,46 @@ jobs:
       # non-result, so treat a SKIP as a CI failure — the corpus is cloned and
       # asserted present above, so a SKIP here means path resolution broke, not
       # that there was nothing to check (#lzguardsnotinci).
+      #
+      # The manifest is spelled out here rather than passed through
+      # $LAZILY_CONFORMANCE_MANIFEST on purpose. `make check` invokes this script
+      # with a concrete path, and the CI-reachability guard below compares the
+      # ARGUMENTS a step passes, not the environment it inherits — an env-var
+      # indirection reduces to nothing it can match, so a step that genuinely
+      # runs this gate would still be reported unreachable. The equality check
+      # keeps the two spellings from drifting apart.
       - name: Assert canonical fixtures and scenarios were replayed (#lzguardsnotinci)
         shell: bash
         run: |
-          ./scripts/check-conformance-coverage.sh "$LAZILY_CONFORMANCE_MANIFEST" \
+          test "${{ github.workspace }}/build/conformance-fixtures-loaded.txt" = "$LAZILY_CONFORMANCE_MANIFEST" || {
+            echo "::error::this step's manifest path drifted from the job-level LAZILY_CONFORMANCE_MANIFEST"
+            exit 1
+          }
+          ./scripts/check-conformance-coverage.sh "${{ github.workspace }}/build/conformance-fixtures-loaded.txt" \
             2>&1 | tee conformance-coverage.log
           if grep -q '^SKIP:' conformance-coverage.log; then
             echo "::error::the conformance coverage guard SKIPPED — it audited nothing"
             exit 1
           fi
+
+      # The gate that keeps every step above honest (#lzcheckcireachguard). It
+      # compares `make check`'s prerequisite closure against the run: bodies in
+      # this file and fails on any target CI does not reach. Comments inside run:
+      # bodies are stripped first — a naive grep for "make check" reported all
+      # nine bindings as covered and every one of those hits was a comment.
+      #
+      # It lives in this matrix job, last, rather than in a job of its own: the
+      # gates it audits run here, so removing or re-triggering this job can never
+      # strip the auditor while leaving the audited steps behind. It is pure text
+      # processing over the Makefile and this file (`make -n`, never `make -p`,
+      # which would dump the job's whole environment into the log), so running it
+      # once per compiler costs seconds and depends on nothing the matrix varies.
+      - name: CI-reachability guard (#lzcheckcireachguard)
+        shell: bash
+        run: |
+          out=$(./scripts/check-ci-reach.sh 2>&1) || { echo "$out"; echo "::error::a make check gate is unreachable from CI"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q "check-ci-reach: OK" || {
+            echo "::error::the CI-reachability guard exited 0 without reaching its verdict"
+            exit 1
+          }
