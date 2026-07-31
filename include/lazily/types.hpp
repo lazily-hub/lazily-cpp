@@ -31,15 +31,12 @@ inline constexpr const char* kDefaultCodec = "msgpack";
 inline constexpr int64_t kDefaultMaxFrameSize = 1 << 20;
 inline constexpr const char* kBindingName = "lazily-cpp";
 
-}  // namespace lazily
+} // namespace lazily
 
 namespace std {
-template <>
-struct hash<lazily::SlotId> {
-  size_t operator()(const lazily::SlotId& id) const noexcept {
-    return hash<uint64_t>{}(id.value);
-  }
+template <> struct hash<lazily::SlotId> {
+  size_t operator()(const lazily::SlotId& id) const noexcept { return hash<uint64_t>{}(id.value); }
 };
-}  // namespace std
+} // namespace std
 
-#endif  // LAZILY_TYPES_HPP
+#endif // LAZILY_TYPES_HPP

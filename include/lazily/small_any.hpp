@@ -24,8 +24,7 @@ namespace lazily {
 /// Move-only (matches actual usage). Trivially-copyable types use a memcpy
 /// relocate + no-op destroy fast path; others use the heap path (one
 /// allocation at construction, pointer relocated on move).
-template <size_t BufSize = 2 * sizeof(void*)>
-class SmallAny {
+template <size_t BufSize = 2 * sizeof(void*)> class SmallAny {
   struct VTable {
     const void* (*raw)(const SmallAny*);
     void (*destroy)(SmallAny*) noexcept;
@@ -35,47 +34,41 @@ class SmallAny {
   alignas(std::max_align_t) unsigned char buffer_[BufSize];
   const VTable* vtable_ = nullptr;
 
-  template <typename T>
-  static const VTable* inline_vtable() {
-    static const VTable vt{
-        [](const SmallAny* s) -> const void* { return s->buffer_; },
-        [](SmallAny*) noexcept {},  // trivially-copyable ⇒ trivial destructor
-        [](SmallAny* src, SmallAny* dst) noexcept {
-          std::memcpy(dst->buffer_, src->buffer_, BufSize);
-        }};
+  template <typename T> static const VTable* inline_vtable() {
+    static const VTable vt{[](const SmallAny* s) -> const void* { return s->buffer_; },
+                           [](SmallAny*) noexcept {}, // trivially-copyable ⇒ trivial destructor
+                           [](SmallAny* src, SmallAny* dst) noexcept {
+                             std::memcpy(dst->buffer_, src->buffer_, BufSize);
+                           }};
     return &vt;
   }
 
-  template <typename T>
-  static const VTable* heap_vtable() {
+  template <typename T> static const VTable* heap_vtable() {
     using P = T*;
-    static const VTable vt{
-        [](const SmallAny* s) -> const void* {
-          return *reinterpret_cast<P*>(const_cast<unsigned char*>(s->buffer_));
-        },
-        [](SmallAny* s) noexcept {
-          P& p = *reinterpret_cast<P*>(s->buffer_);
-          delete p;
-          p = nullptr;
-        },
-        [](SmallAny* src, SmallAny* dst) noexcept {
-          P* sp = reinterpret_cast<P*>(src->buffer_);
-          P* dp = reinterpret_cast<P*>(dst->buffer_);
-          *dp = *sp;
-          *sp = nullptr;
-        }};
+    static const VTable vt{[](const SmallAny* s) -> const void* {
+                             return *reinterpret_cast<P*>(const_cast<unsigned char*>(s->buffer_));
+                           },
+                           [](SmallAny* s) noexcept {
+                             P& p = *reinterpret_cast<P*>(s->buffer_);
+                             delete p;
+                             p = nullptr;
+                           },
+                           [](SmallAny* src, SmallAny* dst) noexcept {
+                             P* sp = reinterpret_cast<P*>(src->buffer_);
+                             P* dp = reinterpret_cast<P*>(dst->buffer_);
+                             *dp = *sp;
+                             *sp = nullptr;
+                           }};
     return &vt;
   }
 
- public:
+public:
   SmallAny() noexcept = default;
   SmallAny(std::nullptr_t) noexcept {}
 
-  template <typename T, typename... Args>
-  static SmallAny make(Args&&... args) {
+  template <typename T, typename... Args> static SmallAny make(Args&&... args) {
     SmallAny s;
-    if constexpr (sizeof(T) <= BufSize &&
-                  alignof(T) <= alignof(std::max_align_t) &&
+    if constexpr (sizeof(T) <= BufSize && alignof(T) <= alignof(std::max_align_t) &&
                   std::is_trivially_copyable_v<T>) {
       s.vtable_ = inline_vtable<T>();
       new (s.buffer_) T(std::forward<Args>(args)...);
@@ -117,20 +110,12 @@ class SmallAny {
   }
 
   explicit operator bool() const noexcept { return vtable_ != nullptr; }
-  const void* raw() const noexcept {
-    return vtable_ ? vtable_->raw(this) : nullptr;
-  }
+  const void* raw() const noexcept { return vtable_ ? vtable_->raw(this) : nullptr; }
 
-  template <typename T>
-  const T* as() const noexcept {
-    return static_cast<const T*>(raw());
-  }
-  template <typename T>
-  T* as_mut() noexcept {
-    return static_cast<T*>(const_cast<void*>(raw()));
-  }
+  template <typename T> const T* as() const noexcept { return static_cast<const T*>(raw()); }
+  template <typename T> T* as_mut() noexcept { return static_cast<T*>(const_cast<void*>(raw())); }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_SMALL_ANY_HPP
+#endif // LAZILY_SMALL_ANY_HPP

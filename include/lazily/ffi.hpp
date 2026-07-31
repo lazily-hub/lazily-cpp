@@ -51,7 +51,7 @@ inline LazilyFfiBytes new_ffi_bytes(const std::vector<uint8_t>& data) {
 // -- FFI channel (in-process send→recv relay) --
 
 class LazilyFfiChannel {
- public:
+public:
   LazilyFfiChannel() = default;
 
   LazilyFfiStatus send_json_frame(const LazilyFfiBytes& frame) {
@@ -77,7 +77,7 @@ class LazilyFfiChannel {
 
   bool is_empty() const { return len() == 0; }
 
- private:
+private:
   mutable std::mutex mutex_;
   std::queue<std::vector<uint8_t>> queue_;
 };
@@ -119,7 +119,7 @@ inline std::pair<LazilyFfiBytes, LazilyFfiStatus> clone_json(const LazilyFfiByte
 
 inline constexpr bool kFfiHasCABI = true;
 
-}  // namespace lazily
+} // namespace lazily
 
 // -- C ABI exports (declared in header, defined in src/ffi.cpp) --
 
@@ -146,4 +146,4 @@ void lazily_ffi_bytes_free(lazily_ffi_bytes_t bytes);
 }
 #endif
 
-#endif  // LAZILY_FFI_HPP
+#endif // LAZILY_FFI_HPP

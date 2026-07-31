@@ -21,15 +21,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // -- Rust-parity unit tests --
@@ -37,7 +37,8 @@ static int test_passed = 0;
 TEST(test_eager_source_map_materializes_all_via_set) {
   ThreadSafeContext ctx;
   ThreadSafeSourceMap<uint32_t, bool> fam(ctx);
-  for (uint32_t k : {1u, 2u, 3u}) fam.set(ctx, k, true);
+  for (uint32_t k : {1u, 2u, 3u})
+    fam.set(ctx, k, true);
   assert(fam.entry_kind() == EntryKind::Source);
   assert(fam.present_count() == 3);
   assert(fam.is_present(1) && fam.is_present(2) && fam.is_present(3));
@@ -49,8 +50,7 @@ TEST(test_lazy_computed_map_defers_until_read) {
   ThreadSafeComputedMap<uint32_t, uint32_t> fam(ctx);
   assert(fam.present_count() == 0);
   assert(!fam.is_present(2));
-  assert(fam.get_or_insert_with(ctx, 2, [](const uint32_t& k) { return k * 10; }) ==
-         20);
+  assert(fam.get_or_insert_with(ctx, 2, [](const uint32_t& k) { return k * 10; }) == 20);
   assert(fam.is_present(2));
   assert(fam.present_count() == 1);
 }
@@ -80,7 +80,7 @@ TEST(test_present_set_grows_monotonically) {
   ThreadSafeComputedMap<uint32_t, uint32_t> fam(ctx);
   auto id = [](const uint32_t& k) { return k; };
   (void)fam.get_or_insert_with(ctx, 5, id);
-  (void)fam.get_or_insert_with(ctx, 5, id);  // repeat: no growth
+  (void)fam.get_or_insert_with(ctx, 5, id); // repeat: no growth
   (void)fam.get_or_insert_with(ctx, 9, id);
   assert(fam.present_count() == 2);
   assert((fam.present_keys() == std::vector<uint32_t>{5, 9}));
@@ -91,9 +91,11 @@ TEST(test_present_set_grows_monotonically) {
 TEST(test_derived_count_reacts_to_cell_writes) {
   ThreadSafeContext ctx;
   ThreadSafeSourceMap<uint32_t, bool> liveness(ctx);
-  for (uint32_t k : {10u, 20u, 30u}) liveness.set(ctx, k, true);
+  for (uint32_t k : {10u, 20u, 30u})
+    liveness.set(ctx, k, true);
   std::vector<Source<bool>> handles;
-  for (uint32_t k : {10u, 20u, 30u}) handles.push_back(*liveness.handle(k));
+  for (uint32_t k : {10u, 20u, 30u})
+    handles.push_back(*liveness.handle(k));
   auto live_count = ctx.computed<int>([handles](Compute& c) {
     int n = 0;
     for (const auto& h : handles)
@@ -111,15 +113,17 @@ TEST(test_derived_count_reacts_to_cell_writes) {
 TEST(test_shared_across_threads) {
   ThreadSafeContext ctx;
   ThreadSafeSourceMap<uint32_t, bool> fam(ctx);
-  for (uint32_t k : {1u, 2u, 3u, 4u}) fam.set(ctx, k, true);
+  for (uint32_t k : {1u, 2u, 3u, 4u})
+    fam.set(ctx, k, true);
   std::vector<std::thread> threads;
   std::vector<char> results(4, 0);
   for (uint32_t k = 1; k <= 4; ++k) {
-    threads.emplace_back(
-        [&, k]() { results[k - 1] = fam.observe(ctx, k).value_or(false); });
+    threads.emplace_back([&, k]() { results[k - 1] = fam.observe(ctx, k).value_or(false); });
   }
-  for (auto& t : threads) t.join();
-  for (char r : results) assert(r);
+  for (auto& t : threads)
+    t.join();
+  for (char r : results)
+    assert(r);
   assert(fam.present_count() == 4);
 }
 
@@ -141,7 +145,8 @@ TEST(test_conformance_observational_transparency) {
   assert(eager.present_keys() == keys);
 
   ThreadSafeComputedMap<uint32_t, uint32_t> lazy2(ctx);
-  for (uint32_t k : {1u, 5u}) lazy2.get_or_insert_with(ctx, k, factory);
+  for (uint32_t k : {1u, 5u})
+    lazy2.get_or_insert_with(ctx, k, factory);
   assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
 }
 
@@ -153,7 +158,8 @@ TEST(test_conformance_deferral_not_deallocation) {
   ThreadSafeComputedMap<uint32_t, uint32_t> eager(ctx);
   eager.materialize_all(ctx, keys, factory);
   assert(eager.present_keys() == keys);
-  for (uint32_t k : keys) assert(eager.observe(ctx, k) == std::optional<uint32_t>(k * 2));
+  for (uint32_t k : keys)
+    assert(eager.observe(ctx, k) == std::optional<uint32_t>(k * 2));
 
   ThreadSafeComputedMap<uint32_t, uint32_t> lazy(ctx);
   std::vector<size_t> present_after_each_read;
@@ -163,18 +169,15 @@ TEST(test_conformance_deferral_not_deallocation) {
   }
   assert((present_after_each_read == std::vector<size_t>{1, 2, 2, 3}));
   assert((lazy.present_keys() == std::vector<uint32_t>{2, 4, 5}));
-  for (uint32_t k : lazy.present_keys()) assert(eager.is_present(k));
+  for (uint32_t k : lazy.present_keys())
+    assert(eager.is_present(k));
 }
 
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
 TEST(test_conformance_entry_kind) {
   ThreadSafeContext ctx;
-  auto cell_val = [](const std::string& k) -> uint32_t {
-    return k == "in_a" ? 5 : 7;
-  };
-  auto slot_val = [](const std::string& k) -> uint32_t {
-    return k == "der_x" ? 12 : 35;
-  };
+  auto cell_val = [](const std::string& k) -> uint32_t { return k == "in_a" ? 5 : 7; };
+  auto slot_val = [](const std::string& k) -> uint32_t { return k == "der_x" ? 12 : 35; };
 
   ThreadSafeSourceMap<std::string, uint32_t> cells(ctx);
   cells.set(ctx, "in_a", cell_val("in_a"));

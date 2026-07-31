@@ -15,26 +15,25 @@ namespace {
 using lazily_test::Json;
 using lazily_test::JsonPtr;
 
-const Json &required(const Json &object, const std::string &key) {
-  const auto *value = object.find(key);
+const Json& required(const Json& object, const std::string& key) {
+  const auto* value = object.find(key);
   REQUIRE(value != nullptr, "missing fixture field");
   return *value;
 }
 
-std::string string_field(const Json &value, const std::string &key) {
+std::string string_field(const Json& value, const std::string& key) {
   return required(value, key).as_str();
 }
 
-std::uint64_t u64_field(const Json &value, const std::string &key) {
+std::uint64_t u64_field(const Json& value, const std::string& key) {
   return lazily_test::json_u64(required(value, key));
 }
 
-bool bool_field(const Json &value, const std::string &key) {
+bool bool_field(const Json& value, const std::string& key) {
   return required(value, key).as_bool();
 }
 
-std::optional<std::uint64_t> optional_u64_field(const Json &value,
-                                                const std::string &key) {
+std::optional<std::uint64_t> optional_u64_field(const Json& value, const std::string& key) {
   return lazily_test::json_optional_u64(required(value, key));
 }
 
@@ -50,39 +49,32 @@ struct Actual {
   std::optional<std::uint64_t> generation;
 };
 
-void assert_expected(const Json &expected, const Actual &actual) {
-  for (const auto &[key, value] : expected.object) {
+void assert_expected(const Json& expected, const Actual& actual) {
+  for (const auto& [key, value] : expected.object) {
     if (key == "outcome") {
       REQUIRE(actual.outcome == value->as_str(), "outcome mismatch");
     } else if (key == "deadline") {
-      REQUIRE(actual.deadline &&
-                  *actual.deadline == lazily_test::json_u64(*value),
+      REQUIRE(actual.deadline && *actual.deadline == lazily_test::json_u64(*value),
               "deadline mismatch");
     } else if (key == "fired_at") {
-      REQUIRE(actual.fired_at &&
-                  *actual.fired_at == lazily_test::json_u64(*value),
+      REQUIRE(actual.fired_at && *actual.fired_at == lazily_test::json_u64(*value),
               "fired_at mismatch");
     } else if (key == "reason") {
-      REQUIRE(actual.reason && *actual.reason == value->as_str(),
-              "reason mismatch");
+      REQUIRE(actual.reason && *actual.reason == value->as_str(), "reason mismatch");
     } else if (key == "value") {
-      REQUIRE(actual.value && *actual.value == value->as_str(),
-              "value mismatch");
+      REQUIRE(actual.value && *actual.value == value->as_str(), "value mismatch");
     } else if (key == "operation_calls") {
-      REQUIRE(actual.operation_calls &&
-                  *actual.operation_calls == lazily_test::json_u64(*value),
+      REQUIRE(actual.operation_calls && *actual.operation_calls == lazily_test::json_u64(*value),
               "operation_calls mismatch");
     } else if (key == "cancellation_calls") {
       REQUIRE(actual.cancellation_calls &&
                   *actual.cancellation_calls == lazily_test::json_u64(*value),
               "cancellation_calls mismatch");
     } else if (key == "revision") {
-      REQUIRE(actual.revision &&
-                  *actual.revision == lazily_test::json_u64(*value),
+      REQUIRE(actual.revision && *actual.revision == lazily_test::json_u64(*value),
               "revision mismatch");
     } else if (key == "generation") {
-      REQUIRE(actual.generation &&
-                  *actual.generation == lazily_test::json_u64(*value),
+      REQUIRE(actual.generation && *actual.generation == lazily_test::json_u64(*value),
               "generation mismatch");
     } else {
       REQUIRE(false, "unknown stdlib expectation field");
@@ -91,8 +83,7 @@ void assert_expected(const Json &expected, const Actual &actual) {
 }
 
 std::string timer_error(lazily::TimerError error) {
-  return error == lazily::TimerError::deadline_overflow ? "deadline_overflow"
-                                                        : "clock_regression";
+  return error == lazily::TimerError::deadline_overflow ? "deadline_overflow" : "clock_regression";
 }
 
 std::string timer_outcome(lazily::TimerObservation::Outcome outcome) {
@@ -107,22 +98,20 @@ std::string timer_outcome(lazily::TimerObservation::Outcome outcome) {
   return "unavailable";
 }
 
-void replay_timer(const Json &scenario) {
+void replay_timer(const Json& scenario) {
   std::unique_ptr<lazily::Timer> timer;
-  for (const auto &step_ptr : required(scenario, "steps").array) {
-    const auto &step = *step_ptr;
+  for (const auto& step_ptr : required(scenario, "steps").array) {
+    const auto& step = *step_ptr;
     Actual actual;
     const auto op = string_field(step, "op");
     if (op == "start") {
-      auto started = lazily::Timer::start(u64_field(step, "now"),
-                                          u64_field(step, "duration"));
+      auto started = lazily::Timer::start(u64_field(step, "now"), u64_field(step, "duration"));
       timer = std::move(started.first);
       if (started.second) {
-        actual = {"unavailable", std::nullopt, std::nullopt,
-                  timer_error(*started.second)};
+        actual = {"unavailable", std::nullopt, std::nullopt, timer_error(*started.second)};
       } else {
-        const auto deadline = lazily::checked_deadline(
-            u64_field(step, "now"), u64_field(step, "duration"));
+        const auto deadline =
+            lazily::checked_deadline(u64_field(step, "now"), u64_field(step, "duration"));
         actual = {"pending", deadline.value};
       }
     } else {
@@ -134,8 +123,7 @@ void replay_timer(const Json &scenario) {
         actual.deadline = observation.deadline;
       if (observation.outcome == lazily::TimerObservation::Outcome::fired)
         actual.fired_at = observation.fired_at;
-      if (observation.error)
-        actual.reason = timer_error(*observation.error);
+      if (observation.error) actual.reason = timer_error(*observation.error);
     }
     assert_expected(required(step, "expect"), actual);
   }
@@ -159,28 +147,26 @@ std::string timeout_outcome(TimeoutObservation::Outcome outcome) {
   return "unavailable";
 }
 
-lazily::TimeoutCancellation cancellation(const std::string &value) {
-  if (value == "cancelled")
-    return lazily::TimeoutCancellation::cancelled;
-  if (value == "unavailable")
-    return lazily::TimeoutCancellation::unavailable;
+lazily::TimeoutCancellation cancellation(const std::string& value) {
+  if (value == "cancelled") return lazily::TimeoutCancellation::cancelled;
+  if (value == "unavailable") return lazily::TimeoutCancellation::unavailable;
   return lazily::TimeoutCancellation::pending;
 }
 
-void replay_timeout(const Json &scenario) {
+void replay_timeout(const Json& scenario) {
   std::unique_ptr<lazily::Timeout<std::string>> timeout;
-  for (const auto &step_ptr : required(scenario, "steps").array) {
-    const auto &step = *step_ptr;
+  for (const auto& step_ptr : required(scenario, "steps").array) {
+    const auto& step = *step_ptr;
     Actual actual;
     const auto op = string_field(step, "op");
     if (op == "start") {
-      auto started = lazily::Timeout<std::string>::start(
-          u64_field(step, "now"), u64_field(step, "duration"));
+      auto started =
+          lazily::Timeout<std::string>::start(u64_field(step, "now"), u64_field(step, "duration"));
       REQUIRE(!started.second, "timeout start overflow");
       timeout = std::move(started.first);
-      actual = {"pending", lazily::checked_deadline(u64_field(step, "now"),
-                                                    u64_field(step, "duration"))
-                               .value};
+      actual = {
+          "pending",
+          lazily::checked_deadline(u64_field(step, "now"), u64_field(step, "duration")).value};
     } else {
       REQUIRE(timeout != nullptr, "timeout poll before start");
       std::uint64_t operation_calls = 0;
@@ -192,8 +178,7 @@ void replay_timeout(const Json &scenario) {
           [&] {
             ++operation_calls;
             if (operation == "completed")
-              return lazily::TimeoutOperation<std::string>::completed(
-                  string_field(step, "value"));
+              return lazily::TimeoutOperation<std::string>::completed(string_field(step, "value"));
             if (operation == "unavailable")
               return lazily::TimeoutOperation<std::string>::unavailable();
             return lazily::TimeoutOperation<std::string>::pending();
@@ -209,15 +194,13 @@ void replay_timeout(const Json &scenario) {
         actual.deadline = observation.deadline;
       if (observation.outcome == TimeoutObservation::Outcome::completed)
         actual.value = observation.value;
-      if (!observation.reason.empty())
-        actual.reason = observation.reason;
+      if (!observation.reason.empty()) actual.reason = observation.reason;
     }
     assert_expected(required(step, "expect"), actual);
   }
 }
 
-std::string
-barrier_outcome(lazily::RevisionBarrierObservation::Outcome outcome) {
+std::string barrier_outcome(lazily::RevisionBarrierObservation::Outcome outcome) {
   using Outcome = lazily::RevisionBarrierObservation::Outcome;
   switch (outcome) {
   case Outcome::pending:
@@ -236,42 +219,39 @@ barrier_outcome(lazily::RevisionBarrierObservation::Outcome outcome) {
   return "unavailable";
 }
 
-Actual barrier_actual(const lazily::RevisionBarrierObservation &observation) {
+Actual barrier_actual(const lazily::RevisionBarrierObservation& observation) {
   Actual actual;
   actual.outcome = barrier_outcome(observation.outcome);
   actual.revision = observation.revision;
   actual.generation = observation.generation;
-  if (!observation.reason.empty())
-    actual.reason = observation.reason;
+  if (!observation.reason.empty()) actual.reason = observation.reason;
   return actual;
 }
 
-void replay_barrier(const Json &scenario) {
+void replay_barrier(const Json& scenario) {
   std::unique_ptr<lazily::RevisionBarrier> barrier;
-  for (const auto &step_ptr : required(scenario, "steps").array) {
-    const auto &step = *step_ptr;
+  for (const auto& step_ptr : required(scenario, "steps").array) {
+    const auto& step = *step_ptr;
     const auto op = string_field(step, "op");
     lazily::RevisionBarrierObservation observation;
     std::uint64_t cancellation_calls = 0;
     if (op == "start") {
-      barrier = std::make_unique<lazily::RevisionBarrier>(
-          u64_field(step, "revision"), u64_field(step, "required_revision"),
-          optional_u64_field(step, "deadline"));
+      barrier = std::make_unique<lazily::RevisionBarrier>(u64_field(step, "revision"),
+                                                          u64_field(step, "required_revision"),
+                                                          optional_u64_field(step, "deadline"));
       observation = barrier->receipt("");
     } else if (op == "observe") {
       REQUIRE(barrier != nullptr, "barrier observe before start");
-      observation = barrier->observe(
-          u64_field(step, "now"), bool_field(step, "predicate"), [&] {
-            ++cancellation_calls;
-            return cancellation(string_field(step, "cancellation"));
-          });
+      observation = barrier->observe(u64_field(step, "now"), bool_field(step, "predicate"), [&] {
+        ++cancellation_calls;
+        return cancellation(string_field(step, "cancellation"));
+      });
     } else if (op == "register_recheck") {
-      observation = barrier->register_recheck(
-          u64_field(step, "now"), u64_field(step, "observed_revision"),
-          bool_field(step, "predicate"));
+      observation =
+          barrier->register_recheck(u64_field(step, "now"), u64_field(step, "observed_revision"),
+                                    bool_field(step, "predicate"));
     } else if (op == "advance") {
-      observation = barrier->advance(u64_field(step, "revision"),
-                                     bool_field(step, "predicate"));
+      observation = barrier->advance(u64_field(step, "revision"), bool_field(step, "predicate"));
     } else if (op == "dispose") {
       observation = barrier->dispose();
     } else if (op == "receipt") {
@@ -280,20 +260,17 @@ void replay_barrier(const Json &scenario) {
       REQUIRE(false, "unknown barrier op");
     }
     auto actual = barrier_actual(observation);
-    if (op == "observe")
-      actual.cancellation_calls = cancellation_calls;
+    if (op == "observe") actual.cancellation_calls = cancellation_calls;
     assert_expected(required(step, "expect"), actual);
   }
 }
 
-void validate_mutations(const Json &fixture,
-                        const std::set<std::string> &scenario_ids) {
-  for (const auto &mutation : required(fixture, "mutations").array) {
-    const auto &must_fail = required(*mutation, "must_fail").array;
+void validate_mutations(const Json& fixture, const std::set<std::string>& scenario_ids) {
+  for (const auto& mutation : required(fixture, "mutations").array) {
+    const auto& must_fail = required(*mutation, "must_fail").array;
     REQUIRE(!must_fail.empty(), "mutation has no required kill");
-    for (const auto &id : must_fail)
-      REQUIRE(scenario_ids.count(id->as_str()) == 1,
-              "mutation references missing scenario");
+    for (const auto& id : must_fail)
+      REQUIRE(scenario_ids.count(id->as_str()) == 1, "mutation references missing scenario");
   }
 }
 
@@ -301,35 +278,30 @@ void validate_reentrant_barrier_cancellation() {
   lazily::RevisionBarrier barrier(0, 1, std::nullopt);
   const auto observation = barrier.observe(0, false, [&] {
     const auto disposed = barrier.dispose();
-    REQUIRE(disposed.outcome ==
-                lazily::RevisionBarrierObservation::Outcome::disposed,
+    REQUIRE(disposed.outcome == lazily::RevisionBarrierObservation::Outcome::disposed,
             "reentrant disposal did not latch");
     return lazily::TimeoutCancellation::cancelled;
   });
-  REQUIRE(observation.outcome ==
-              lazily::RevisionBarrierObservation::Outcome::disposed,
+  REQUIRE(observation.outcome == lazily::RevisionBarrierObservation::Outcome::disposed,
           "later cancellation overwrote reentrant disposal");
 }
 
 } // namespace
 
 int main() {
-  const std::pair<const char *, const char *> fixtures[] = {
+  const std::pair<const char*, const char*> fixtures[] = {
       {"timer.json", "stdlib_timer_v1"},
       {"timeout.json", "stdlib_timeout_v1"},
       {"revision_barrier.json", "stdlib_revision_barrier_v1"},
   };
-  for (const auto &[name, feature] : fixtures) {
-    const auto fixture =
-        lazily_test::parse_json(lazily_test::spec_fixture_text("stdlib", name));
-    REQUIRE(string_field(*fixture, "feature") == feature,
-            "stdlib feature mismatch");
+  for (const auto& [name, feature] : fixtures) {
+    const auto fixture = lazily_test::parse_json(lazily_test::spec_fixture_text("stdlib", name));
+    REQUIRE(string_field(*fixture, "feature") == feature, "stdlib feature mismatch");
     std::set<std::string> scenario_ids;
-    const auto &scenarios = required(*fixture, "scenarios").array;
+    const auto& scenarios = required(*fixture, "scenarios").array;
     for (std::size_t i = 0; i < scenarios.size(); ++i) {
-      const auto &scenario = scenarios[i];
-      lazily_test::record_scenario_at(std::string("stdlib/") + name, *scenario,
-                                      i);
+      const auto& scenario = scenarios[i];
+      lazily_test::record_scenario_at(std::string("stdlib/") + name, *scenario, i);
       scenario_ids.insert(string_field(*scenario, "id"));
       if (std::string(feature) == "stdlib_timer_v1")
         replay_timer(*scenario);

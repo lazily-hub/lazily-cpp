@@ -30,15 +30,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // ── Fortification by construction ───────────────────────────────────────────
@@ -77,8 +77,7 @@ TEST(untracked_read_registers_no_edge) {
   Context ctx;
   auto a = ctx.source<int>(1);
   // Reads `a` through the explicit untracked escape — no edge should form.
-  auto d = ctx.computed<int>(
-      [a](Compute& cx) { return a.get(cx.untracked()) * 10; });
+  auto d = ctx.computed<int>([a](Compute& cx) { return a.get(cx.untracked()) * 10; });
 
   REQUIRE(d.get(ctx) == 10, "initial untracked compute");
   REQUIRE(ctx.dependency_count(d) == 0, "untracked read created no forward edge");
@@ -120,12 +119,10 @@ TEST(untracked_barrier_holds_under_nesting) {
   auto src = ctx.source<int>(1);
   auto leak = ctx.source<int>(100);
 
-  auto inner = ctx.computed<int>(
-      [leak](Compute& cx) { return leak.get(cx.untracked()); });
+  auto inner = ctx.computed<int>([leak](Compute& cx) { return leak.get(cx.untracked()); });
 
   // Legacy Context& closure — exercised via the ambient bridge.
-  auto outer = ctx.computed<int>(
-      [inner, src](Compute& c) { return inner.get(c) + src.get(c); });
+  auto outer = ctx.computed<int>([inner, src](Compute& c) { return inner.get(c) + src.get(c); });
 
   REQUIRE(outer.get(ctx) == 101, "outer composed inner + src");
   REQUIRE(ctx.dependent_count(leak) == 0,
@@ -144,8 +141,8 @@ TEST(untracked_write_from_compute) {
   auto trigger = ctx.source<int>(0);
   auto sink = ctx.source<int>(0);
   auto d = ctx.computed<int>([trigger, sink](Compute& cx) {
-    int t = cx.get(trigger);           // tracked
-    cx.untracked().set(sink, t + 1);   // untracked write, no edge to sink
+    int t = cx.get(trigger);         // tracked
+    cx.untracked().set(sink, t + 1); // untracked write, no edge to sink
     return t;
   });
 
@@ -159,8 +156,8 @@ TEST(untracked_write_from_compute) {
 }
 
 int main() {
-  std::cout << "compute_fortification: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "compute_fortification: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   REQUIRE(test_passed == test_count, "all compute_fortification tests passed");
   return 0;
 }

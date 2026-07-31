@@ -10,9 +10,8 @@
 
 namespace lazily {
 
-template <typename S, typename E>
-class StateMachine {
- public:
+template <typename S, typename E> class StateMachine {
+public:
   using TransitionFn = std::function<std::optional<S>(const S&, const E&)>;
 
   StateMachine(Context& ctx, S initial, TransitionFn transition)
@@ -33,8 +32,7 @@ class StateMachine {
 
   Source<S> state_handle() const { return state_; }
 
-  Effect on_transition(Context& ctx,
-                              std::function<void(const S&, const S&)> handler) {
+  Effect on_transition(Context& ctx, std::function<void(const S&, const S&)> handler) {
     auto state_handle = state_;
     auto prev = std::make_shared<std::optional<S>>();
     auto h = std::make_shared<std::function<void(const S&, const S&)>>(std::move(handler));
@@ -51,16 +49,15 @@ class StateMachine {
   // (`signal` is now the eager-computed convenience — `#lzcellkernel`.)
   Computed<bool> state_is(Context& ctx, S target) {
     auto state_handle = state_;
-    return ctx.signal<bool>([state_handle, target](Compute& c) {
-      return c.get(state_handle) == target;
-    });
+    return ctx.signal<bool>(
+        [state_handle, target](Compute& c) { return c.get(state_handle) == target; });
   }
 
- private:
+private:
   Source<S> state_;
   std::shared_ptr<TransitionFn> transition_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_STATE_MACHINE_HPP
+#endif // LAZILY_STATE_MACHINE_HPP

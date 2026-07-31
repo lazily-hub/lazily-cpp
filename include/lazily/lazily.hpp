@@ -15,16 +15,16 @@
 #include <lazily/hlc.hpp>
 #include <lazily/ingress.hpp>
 #include <lazily/ipc.hpp>
+#include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/membership.hpp>
 #include <lazily/merge.hpp>
-#include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/presence.hpp>
 #include <lazily/queue.hpp>
 #include <lazily/rateshape.hpp>
 #include <lazily/rc_ptr.hpp>
-#include <lazily/relay.hpp>
 #include <lazily/reactive_family.hpp>
 #include <lazily/receipt.hpp>
+#include <lazily/relay.hpp>
 #include <lazily/reliable_sync.hpp>
 #include <lazily/resilience.hpp>
 #include <lazily/sem_tree.hpp>
@@ -45,4 +45,4 @@
 #include <lazily/windowing.hpp>
 #include <lazily/work_queue.hpp>
 
-#endif  // LAZILY_LAZILY_HPP
+#endif // LAZILY_LAZILY_HPP

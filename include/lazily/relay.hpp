@@ -22,8 +22,8 @@
 #ifndef LAZILY_RELAY_HPP
 #define LAZILY_RELAY_HPP
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -93,24 +93,20 @@ struct BackpressurePolicy {
 
   BackpressurePolicy(Context& ctx, BoundDim dimension_, std::uint64_t high_water_,
                      std::uint64_t low_water_, Overflow overflow_)
-      : dimension(ctx.source(dimension_)),
-        high_water(ctx.source(high_water_)),
-        low_water(ctx.source(low_water_)),
-        overflow(ctx.source(overflow_)) {}
+      : dimension(ctx.source(dimension_)), high_water(ctx.source(high_water_)),
+        low_water(ctx.source(low_water_)), overflow(ctx.source(overflow_)) {}
 };
 
 /// The algebra-typed conflating relay (Phase 2, in-proc core). The hot head is a
 /// cell; `depth`/`is_full`/`is_empty` are demand-driven slots, so an unobserved
 /// relay costs `N·⊕` and no more (the merge cost law). `Policy` is a compile-time
 /// type (a static `merge` + `static constexpr conflates`).
-template <typename T, typename Policy>
-class RelayCell {
- public:
+template <typename T, typename Policy> class RelayCell {
+public:
   /// Build a relay over `policy`, validating the initial overflow against the
   /// policy's algebra flags (analysis §4.3): `Conflate` requires
   /// `Policy::conflates`. Throws `RelayConfigException` otherwise.
-  RelayCell(Context& ctx, BackpressurePolicy policy)
-      : ctx_(&ctx), policy_(policy) {
+  RelayCell(Context& ctx, BackpressurePolicy policy) : ctx_(&ctx), policy_(policy) {
     if (ctx.get(policy_.overflow) == Overflow::Conflate && !Policy::conflates) {
       throw RelayConfigException(RelayConfigError::ConflateNotBounding);
     }
@@ -119,14 +115,11 @@ class RelayCell {
     auto pending = pending_;
     auto head = head_;
     auto high_water = policy_.high_water;
-    depth_ = ctx.computed<std::uint64_t>(
-        [pending](Compute& c) { return c.get(pending); });
+    depth_ = ctx.computed<std::uint64_t>([pending](Compute& c) { return c.get(pending); });
     auto depth = depth_;
-    is_full_ = ctx.computed<bool>([depth, high_water](Compute& c) {
-      return c.get(depth) >= c.get(high_water);
-    });
-    is_empty_ = ctx.computed<bool>(
-        [head](Compute& c) { return !c.get(head).has_value(); });
+    is_full_ = ctx.computed<bool>(
+        [depth, high_water](Compute& c) { return c.get(depth) >= c.get(high_water); });
+    is_empty_ = ctx.computed<bool>([head](Compute& c) { return !c.get(head).has_value(); });
   }
 
   /// Whether the current overflow choice is legal for `Policy` — a runtime guard
@@ -156,21 +149,21 @@ class RelayCell {
 
     if (read_full()) {
       switch (ctx_->get(policy_.overflow)) {
-        case Overflow::Block:
-          return IngressOutcome::Blocked;
-        case Overflow::DropNewest:
-          return IngressOutcome::Dropped;
-        case Overflow::DropOldest:
-          // Discard the accumulated window, restart from this op.
-          ctx_->set(head_, std::optional<T>(std::move(op)));
-          ctx_->set<std::uint64_t>(pending_, 1);
-          return IngressOutcome::Dropped;
-        // Conflate keeps merging (the coalescence is the bound); Spill is Phase 3
-        // and, until wired, degrades to Conflate for a bounding policy. Both fall
-        // through to the merge below.
-        case Overflow::Conflate:
-        case Overflow::Spill:
-          break;
+      case Overflow::Block:
+        return IngressOutcome::Blocked;
+      case Overflow::DropNewest:
+        return IngressOutcome::Dropped;
+      case Overflow::DropOldest:
+        // Discard the accumulated window, restart from this op.
+        ctx_->set(head_, std::optional<T>(std::move(op)));
+        ctx_->set<std::uint64_t>(pending_, 1);
+        return IngressOutcome::Dropped;
+      // Conflate keeps merging (the coalescence is the bound); Spill is Phase 3
+      // and, until wired, degrades to Conflate for a bounding policy. Both fall
+      // through to the merge below.
+      case Overflow::Conflate:
+      case Overflow::Spill:
+        break;
       }
     }
 
@@ -194,16 +187,13 @@ class RelayCell {
   /// Peek the current coalesced window without draining.
   std::optional<T> peek() const { return ctx_->get(head_); }
 
- private:
-  bool read_full() const {
-    return ctx_->get(pending_) >= ctx_->get(policy_.high_water);
-  }
+private:
+  bool read_full() const { return ctx_->get(pending_) >= ctx_->get(policy_.high_water); }
 
   void merge_into_head(T op) {
     auto cur = ctx_->get(head_);
-    T next = cur.has_value()
-                 ? Policy::template merge<T>(cur.value(), std::move(op))
-                 : std::move(op);
+    T next =
+        cur.has_value() ? Policy::template merge<T>(cur.value(), std::move(op)) : std::move(op);
     ctx_->set(head_, std::optional<T>(std::move(next)));
   }
 
@@ -229,8 +219,7 @@ enum class SpillMode {
 };
 
 /// One immutable cold page: a coalesced window summary plus its manifest entry.
-template <typename T>
-struct SpillPage {
+template <typename T> struct SpillPage {
   std::uint64_t id;
   T summary;
   std::uint64_t bytes;
@@ -239,9 +228,8 @@ struct SpillPage {
 /// A paged durable tail for a `RelayCell` (Phase 3, in-memory reference backend).
 /// Holds cold pages plus a bounded manifest, an egress cursor, and
 /// ack-before-reclaim. Memory is `O(hot) + O(manifest)`.
-template <typename T, typename Policy>
-class SpillStore {
- public:
+template <typename T, typename Policy> class SpillStore {
+public:
   SpillStore(SpillMode mode, std::uint64_t page_size)
       : mode_(mode), page_size_(page_size < 1 ? 1 : page_size) {}
 
@@ -268,7 +256,8 @@ class SpillStore {
   std::vector<std::pair<std::uint64_t, std::uint64_t>> manifest() const {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> out;
     out.reserve(pages_.size());
-    for (const auto& p : pages_) out.emplace_back(p.id, p.bytes);
+    for (const auto& p : pages_)
+      out.emplace_back(p.id, p.bytes);
     return out;
   }
 
@@ -281,7 +270,8 @@ class SpillStore {
 
   /// Ack every page through `id` (inclusive), advancing the reclaim cursor.
   void ack_through(std::uint64_t id) {
-    while (acked_ < pages_.size() && pages_[acked_].id <= id) ++acked_;
+    while (acked_ < pages_.size() && pages_[acked_].id <= id)
+      ++acked_;
   }
 
   /// Drop acked pages (durable reclaim). Manifest/cursor stay consistent.
@@ -295,7 +285,8 @@ class SpillStore {
   /// Fold every live cold page (oldest first) into `s0`.
   T fold_pages(T s0) const {
     T acc = std::move(s0);
-    for (const auto& p : pages_) acc = Policy::template merge<T>(acc, p.summary);
+    for (const auto& p : pages_)
+      acc = Policy::template merge<T>(acc, p.summary);
     return acc;
   }
 
@@ -317,7 +308,7 @@ class SpillStore {
     return acc;
   }
 
- private:
+private:
   void push_page(T summary, std::uint64_t bytes) {
     pages_.push_back(SpillPage<T>{next_id_, std::move(summary), bytes});
     ++next_id_;
@@ -341,9 +332,8 @@ class SpillStore {
 
 /// A pluggable delivery mechanism for relay ops. `deliver` enqueues; `poll` pulls
 /// the next transport-defined frame; `has_pending` reports buffered ops.
-template <typename T>
-class Transport {
- public:
+template <typename T> class Transport {
+public:
   virtual ~Transport() = default;
   virtual void deliver(T op) = 0;
   virtual std::vector<T> poll() = 0;
@@ -351,9 +341,8 @@ class Transport {
 };
 
 /// `InProc` — direct delivery: every buffered op is handed over in one frame.
-template <typename T>
-class InProcTransport : public Transport<T> {
- public:
+template <typename T> class InProcTransport : public Transport<T> {
+public:
   void deliver(T op) override { buf_.push_back(std::move(op)); }
   std::vector<T> poll() override {
     std::vector<T> out = std::move(buf_);
@@ -362,18 +351,16 @@ class InProcTransport : public Transport<T> {
   }
   bool has_pending() const override { return !buf_.empty(); }
 
- private:
+private:
   std::vector<T> buf_;
 };
 
 /// A *framed* transport — models `CrossThread`/`Ipc`/`Ws`: ops are delivered in
 /// bounded frames of at most `frame_size` (an MTU / batch boundary). Different
 /// `frame_size`s are different framings of the same op stream.
-template <typename T>
-class FramedTransport : public Transport<T> {
- public:
-  explicit FramedTransport(std::size_t frame_size)
-      : frame_size_(frame_size < 1 ? 1 : frame_size) {}
+template <typename T> class FramedTransport : public Transport<T> {
+public:
+  explicit FramedTransport(std::size_t frame_size) : frame_size_(frame_size < 1 ? 1 : frame_size) {}
   void deliver(T op) override { buf_.push_back(std::move(op)); }
   std::vector<T> poll() override {
     std::size_t n = frame_size_ < buf_.size() ? frame_size_ : buf_.size();
@@ -384,7 +371,7 @@ class FramedTransport : public Transport<T> {
   }
   bool has_pending() const override { return !buf_.empty(); }
 
- private:
+private:
   std::vector<T> buf_;
   std::size_t frame_size_;
 };
@@ -398,9 +385,8 @@ class FramedTransport : public Transport<T> {
 
 /// The app → transport send side (analysis §4.7). Backpressures the local
 /// producer directly via `is_full`. Default overflow `Conflate` (state broadcast).
-template <typename T, typename Policy>
-class Outbox {
- public:
+template <typename T, typename Policy> class Outbox {
+public:
   Outbox(Context& ctx, std::uint64_t high_water, BoundDim dimension = BoundDim::Count,
          Overflow overflow = Overflow::Conflate)
       : relay_(ctx, BackpressurePolicy(ctx, dimension, high_water, high_water / 2, overflow)) {}
@@ -418,20 +404,18 @@ class Outbox {
   /// Access the underlying relay (for wiring extra egress stages).
   RelayCell<T, Policy>& relay() { return relay_; }
 
- private:
+private:
   RelayCell<T, Policy> relay_;
 };
 
 /// The transport → app receive side (analysis §4.7). Cannot block the remote
 /// directly; backpressure is a credit meter the app replenishes.
-template <typename T, typename Policy>
-class Inbox {
- public:
+template <typename T, typename Policy> class Inbox {
+public:
   Inbox(Context& ctx, std::uint64_t high_water, std::uint64_t max_credits,
         Overflow overflow = Overflow::Conflate)
       : relay_(ctx, BackpressurePolicy(ctx, BoundDim::Count, high_water, high_water / 2, overflow)),
-        credits_(max_credits),
-        max_credits_(max_credits) {}
+        credits_(max_credits), max_credits_(max_credits) {}
 
   /// Whether the transport may deliver another message (a credit is available).
   /// When `false`, the transport must stop reading → the remote throttles.
@@ -458,7 +442,7 @@ class Inbox {
 
   RelayCell<T, Policy>& relay() { return relay_; }
 
- private:
+private:
   RelayCell<T, Policy> relay_;
   std::uint64_t credits_;
   std::uint64_t max_credits_;
@@ -474,7 +458,7 @@ class Inbox {
 /// token is available. Refilled `refill_per_tick` tokens per logical tick, capped
 /// at `capacity`.
 class RatePolicy {
- public:
+public:
   RatePolicy(std::uint64_t capacity, std::uint64_t refill_per_tick)
       : capacity_(capacity), tokens_(capacity), refill_per_tick_(refill_per_tick) {}
 
@@ -492,7 +476,7 @@ class RatePolicy {
   /// Advance the logical clock, refilling the bucket (saturating at capacity).
   void tick() { tokens_ = std::min(tokens_ + refill_per_tick_, capacity_); }
 
- private:
+private:
   std::uint64_t capacity_;
   std::uint64_t tokens_;
   std::uint64_t refill_per_tick_;
@@ -502,9 +486,8 @@ class RatePolicy {
 /// `window_ops` ops or on an explicit `tick`. A window is just a flush group, so
 /// associativity keeps the converged state unchanged (flushGroupingIrrelevant).
 class WindowPolicy {
- public:
-  explicit WindowPolicy(std::uint64_t window_ops)
-      : window_ops_(window_ops < 1 ? 1 : window_ops) {}
+public:
+  explicit WindowPolicy(std::uint64_t window_ops) : window_ops_(window_ops < 1 ? 1 : window_ops) {}
 
   /// Record one ingress; returns `true` when the window is full and should flush.
   bool on_ingress() {
@@ -525,7 +508,7 @@ class WindowPolicy {
     return false;
   }
 
- private:
+private:
   std::uint64_t window_ops_;
   std::uint64_t pending_ = 0;
 };
@@ -533,7 +516,7 @@ class WindowPolicy {
 /// Case 10 — TTL / deadline expiry. Drops elements whose age exceeds `ttl` against
 /// a logical clock. Lossy-by-age (explicit); used to shed cold data.
 class ExpiryPolicy {
- public:
+public:
   explicit ExpiryPolicy(std::uint64_t ttl) : ttl_(ttl) {}
 
   void advance(std::uint64_t by) { now_ += by; }
@@ -554,7 +537,7 @@ class ExpiryPolicy {
     return out;
   }
 
- private:
+private:
   std::uint64_t ttl_;
   std::uint64_t now_ = 0;
 };
@@ -562,9 +545,8 @@ class ExpiryPolicy {
 /// Case 11 — priority egress. Ingress carries a priority; egress pops the highest
 /// priority first (not FIFO), FIFO within equal priority. Reordering, so sound for
 /// a commutative merge downstream (reorder_adjacent).
-template <typename T>
-class PriorityStorage {
- public:
+template <typename T> class PriorityStorage {
+public:
   void push(std::uint64_t priority, T value) {
     items_.push_back(Item{priority, seq_, std::move(value)});
     ++seq_;
@@ -577,8 +559,7 @@ class PriorityStorage {
     for (std::size_t i = 1; i < items_.size(); ++i) {
       const Item& a = items_[i];
       const Item& b = items_[best];
-      if (a.priority > b.priority ||
-          (a.priority == b.priority && a.seq < b.seq)) {
+      if (a.priority > b.priority || (a.priority == b.priority && a.seq < b.seq)) {
         best = i;
       }
     }
@@ -590,7 +571,7 @@ class PriorityStorage {
   std::size_t size() const { return items_.size(); }
   bool is_empty() const { return items_.empty(); }
 
- private:
+private:
   struct Item {
     std::uint64_t priority;
     std::uint64_t seq;
@@ -603,9 +584,8 @@ class PriorityStorage {
 /// Case 18 — keyed sharding. N independent relays keyed by `K`; an op routes to
 /// its key's shard. Merging across shards requires a commutative merge. The
 /// converged per-key state equals a single relay per key.
-template <typename K, typename T, typename Policy>
-class KeyedRelay {
- public:
+template <typename K, typename T, typename Policy> class KeyedRelay {
+public:
   KeyedRelay(Context& ctx, std::uint64_t high_water, Overflow overflow)
       : ctx_(&ctx), high_water_(high_water), overflow_(overflow) {}
 
@@ -633,17 +613,18 @@ class KeyedRelay {
   std::vector<K> keys() const {
     std::vector<K> out;
     out.reserve(shards_.size());
-    for (const auto& kv : shards_) out.push_back(kv.first);
+    for (const auto& kv : shards_)
+      out.push_back(kv.first);
     return out;
   }
 
- private:
+private:
   Context* ctx_;
   std::uint64_t high_water_;
   Overflow overflow_;
   std::unordered_map<K, RelayCell<T, Policy>> shards_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_RELAY_HPP
+#endif // LAZILY_RELAY_HPP

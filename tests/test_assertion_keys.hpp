@@ -67,8 +67,7 @@ namespace lazily_test {
 
 // Prose keys that carry no assertion and are documentation only.
 inline const std::set<std::string>& assertion_narrative_keys() {
-  static const std::set<std::string> keys = {"note", "notes", "comment",
-                                             "description", "why"};
+  static const std::set<std::string> keys = {"note", "notes", "comment", "description", "why"};
   return keys;
 }
 
@@ -76,28 +75,32 @@ inline const std::set<std::string>& assertion_narrative_keys() {
 // actually said rather than only which key disagreed.
 inline std::string json_debug(const Json& value) {
   switch (value.type) {
-    case Json::Type::Null: return "null";
-    case Json::Type::Bool: return value.boolean ? "true" : "false";
-    case Json::Type::Number: return value.number_token;
-    case Json::Type::String: return "\"" + value.str + "\"";
-    case Json::Type::Array: {
-      std::string out = "[";
-      for (std::size_t i = 0; i < value.array.size(); ++i) {
-        if (i != 0) out += ",";
-        out += json_debug(*value.array[i]);
-      }
-      return out + "]";
+  case Json::Type::Null:
+    return "null";
+  case Json::Type::Bool:
+    return value.boolean ? "true" : "false";
+  case Json::Type::Number:
+    return value.number_token;
+  case Json::Type::String:
+    return "\"" + value.str + "\"";
+  case Json::Type::Array: {
+    std::string out = "[";
+    for (std::size_t i = 0; i < value.array.size(); ++i) {
+      if (i != 0) out += ",";
+      out += json_debug(*value.array[i]);
     }
-    default: {
-      std::string out = "{";
-      bool first = true;
-      for (const auto& kv : value.object) {
-        if (!first) out += ",";
-        first = false;
-        out += "\"" + kv.first + "\":" + json_debug(*kv.second);
-      }
-      return out + "}";
+    return out + "]";
+  }
+  default: {
+    std::string out = "{";
+    bool first = true;
+    for (const auto& kv : value.object) {
+      if (!first) out += ",";
+      first = false;
+      out += "\"" + kv.first + "\":" + json_debug(*kv.second);
     }
+    return out + "}";
+  }
   }
 }
 
@@ -106,12 +109,8 @@ inline std::string json_debug(const Json& value) {
 // spelling and an unsupported type is a compile error naming the call site
 // instead of a silent narrowing.
 inline bool parse_fixture_scalar(const Json& v, bool*) { return json_bool(v); }
-inline std::string parse_fixture_scalar(const Json& v, std::string*) {
-  return json_string(v);
-}
-inline double parse_fixture_scalar(const Json& v, double*) {
-  return json_number(v);
-}
+inline std::string parse_fixture_scalar(const Json& v, std::string*) { return json_string(v); }
+inline double parse_fixture_scalar(const Json& v, double*) { return json_number(v); }
 inline int parse_fixture_scalar(const Json& v, int*) {
   REQUIRE(v.type == Json::Type::Number, "expected JSON number");
   return static_cast<int>(v.as_int());
@@ -130,13 +129,12 @@ inline unsigned parse_fixture_scalar(const Json& v, unsigned*) {
 inline unsigned long parse_fixture_scalar(const Json& v, unsigned long*) {
   return static_cast<unsigned long>(json_u64(v));
 }
-inline unsigned long long parse_fixture_scalar(const Json& v,
-                                               unsigned long long*) {
+inline unsigned long long parse_fixture_scalar(const Json& v, unsigned long long*) {
   return static_cast<unsigned long long>(json_u64(v));
 }
 
 class AssertionKeys {
- public:
+public:
   AssertionKeys(std::string where, const Json& object)
       : where_(std::move(where)), object_(&object) {
     REQUIRE(object.is_object(), "assertion block must be a JSON object");
@@ -191,7 +189,8 @@ class AssertionKeys {
   // satisfy it.
   std::vector<std::string> keys() const {
     std::vector<std::string> out;
-    for (const auto& kv : object_->object) out.push_back(kv.first);
+    for (const auto& kv : object_->object)
+      out.push_back(kv.first);
     return out;
   }
 
@@ -199,8 +198,7 @@ class AssertionKeys {
   // corpus's parameterised spellings (`resync_after_epoch_10`), where the
   // suffix is data rather than a distinct assertion. Each match must still be
   // asserted or excused by name.
-  std::vector<std::pair<std::string, const Json*>> with_prefix(
-      const std::string& prefix) {
+  std::vector<std::pair<std::string, const Json*>> with_prefix(const std::string& prefix) {
     std::vector<std::pair<std::string, const Json*>> out;
     for (const auto& kv : object_->object) {
       if (kv.first.rfind(prefix, 0) == 0) {
@@ -223,19 +221,16 @@ class AssertionKeys {
   }
 
   // Scalar form: the fixture value is parsed as `actual`'s own type.
-  template <typename T>
-  void assert_key(const std::string& key, const T& actual) {
+  template <typename T> void assert_key(const std::string& key, const T& actual) {
     const Json& want = required(key);
     asserted_.insert(key);
-    if (!(actual == parse_fixture_scalar(want, static_cast<T*>(nullptr))))
-      fail_mismatch(key, want);
+    if (!(actual == parse_fixture_scalar(want, static_cast<T*>(nullptr)))) fail_mismatch(key, want);
   }
 
   // As `assert_key`, but a no-op when the fixture omits the key. Returns
   // whether the key was present, and therefore asserted.
   template <typename T, typename Parse>
-  bool assert_key_if_present(const std::string& key, const T& actual,
-                             Parse parse) {
+  bool assert_key_if_present(const std::string& key, const T& actual, Parse parse) {
     const Json* want = optional(key);
     if (want == nullptr) return false;
     asserted_.insert(key);
@@ -243,8 +238,7 @@ class AssertionKeys {
     return true;
   }
 
-  template <typename T>
-  bool assert_key_if_present(const std::string& key, const T& actual) {
+  template <typename T> bool assert_key_if_present(const std::string& key, const T& actual) {
     const Json* want = optional(key);
     if (want == nullptr) return false;
     asserted_.insert(key);
@@ -256,16 +250,14 @@ class AssertionKeys {
   // For comparisons that are not equality -- a tolerance, set containment, a
   // walk into a nested sub-object. `check` receives the fixture's own value and
   // returns whether the library agreed. Marks the key asserted.
-  template <typename Check>
-  void assert_key_with(const std::string& key, Check check) {
+  template <typename Check> void assert_key_with(const std::string& key, Check check) {
     const Json& want = required(key);
     asserted_.insert(key);
     if (!check(want)) fail_mismatch(key, want);
   }
 
   // As `assert_key_with`, but a no-op when the fixture omits the key.
-  template <typename Check>
-  bool assert_key_with_if_present(const std::string& key, Check check) {
+  template <typename Check> bool assert_key_with_if_present(const std::string& key, Check check) {
     const Json* want = optional(key);
     if (want == nullptr) return false;
     asserted_.insert(key);
@@ -280,16 +272,15 @@ class AssertionKeys {
   // same block also asserts, or for a key the block does not carry, is stale
   // and fails.
   void excuse_key(const std::string& key, const std::string& reason) {
-    REQUIRE(!reason.empty(),
-            "excuse_key requires a non-empty reason -- an excuse without one "
-            "is the allowlist this class exists to replace");
+    REQUIRE(!reason.empty(), "excuse_key requires a non-empty reason -- an excuse without one "
+                             "is the allowlist this class exists to replace");
     consumed_.insert(key);
     excused_.emplace(key, reason);
   }
 
-  void excuse_keys(std::initializer_list<const char*> keys,
-                   const std::string& reason) {
-    for (const char* key : keys) excuse_key(key, reason);
+  void excuse_keys(std::initializer_list<const char*> keys, const std::string& reason) {
+    for (const char* key : keys)
+      excuse_key(key, reason);
   }
 
   // -- verification -------------------------------------------------------
@@ -317,8 +308,8 @@ class AssertionKeys {
       const bool is_excused = excused_.count(key) != 0;
       const bool is_asserted = asserted_.count(key) != 0;
       if (is_excused && is_asserted) {
-        std::cout << "FAIL: " << where_ << ": assertion key '" << key
-                  << "' is excused (\"" << excused_.at(key)
+        std::cout << "FAIL: " << where_ << ": assertion key '" << key << "' is excused (\""
+                  << excused_.at(key)
                   << "\") and also asserted in the same replay. The excuse is "
                      "stale and now hides nothing -- delete it "
                      "(#lzconsumednotasserted)"
@@ -343,8 +334,8 @@ class AssertionKeys {
     // outlived the shape it was written for.
     for (const auto& kv : excused_) {
       if (object_->find(kv.first) == nullptr) {
-        std::cout << "FAIL: " << where_ << ": assertion key '" << kv.first
-                  << "' is excused (\"" << kv.second
+        std::cout << "FAIL: " << where_ << ": assertion key '" << kv.first << "' is excused (\""
+                  << kv.second
                   << "\") but the fixture does not carry it. The excuse is "
                      "stale -- delete it (#lzconsumednotasserted)"
                   << std::endl;
@@ -353,12 +344,10 @@ class AssertionKeys {
     }
   }
 
- private:
-  [[noreturn]] void fail_mismatch(const std::string& key,
-                                  const Json& want) const {
+private:
+  [[noreturn]] void fail_mismatch(const std::string& key, const Json& want) const {
     std::cout << "FAIL: " << where_ << ": assertion key '" << key
-              << "' disagreed with the fixture value " << json_debug(want)
-              << std::endl;
+              << "' disagreed with the fixture value " << json_debug(want) << std::endl;
     std::abort();
   }
 
@@ -377,6 +366,6 @@ inline const Json& json_member(AssertionKeys& keys, const std::string& key) {
   return keys.required(key);
 }
 
-}  // namespace lazily_test
+} // namespace lazily_test
 
-#endif  // LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
+#endif // LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP

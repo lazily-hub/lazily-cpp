@@ -18,15 +18,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                     \
-  static void name();                  \
-  struct name##_runner {               \
-    name##_runner() {                  \
-      ++test_count;                    \
-      name();                          \
-      ++test_passed;                   \
-    }                                  \
-  } name##_instance;                   \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // Build a wide-open relay (default effectively-unbounded high_water) unless the
@@ -40,11 +40,11 @@ static RelayCell<long, Policy> make_relay(Context& ctx, std::uint64_t high_water
 
 // -- Phase 2 -----------------------------------------------------------------
 
-template <typename Policy>
-static void converged_egress_case() {
+template <typename Policy> static void converged_egress_case() {
   std::vector<long> ops{3, 1, 4, 1, 5, 9, 2, 6};
   long flat = ops[0];
-  for (std::size_t i = 1; i < ops.size(); ++i) flat = Policy::template merge<long>(flat, ops[i]);
+  for (std::size_t i = 1; i < ops.size(); ++i)
+    flat = Policy::template merge<long>(flat, ops[i]);
 
   // drain-every schedule
   Context ctxA;
@@ -54,15 +54,17 @@ static void converged_egress_case() {
     rA.ingress(op);
     auto d = rA.drain();
     if (!d.has_value()) continue;
-    accA = accA.has_value() ? std::optional<long>(Policy::template merge<long>(accA.value(), d.value()))
-                            : d;
+    accA = accA.has_value()
+               ? std::optional<long>(Policy::template merge<long>(accA.value(), d.value()))
+               : d;
   }
   assert(accA.has_value() && accA.value() == flat);
 
   // drain-once schedule
   Context ctxB;
   auto rB = make_relay<Policy>(ctxB);
-  for (long op : ops) rB.ingress(op);
+  for (long op : ops)
+    rB.ingress(op);
   auto once = rB.drain();
   assert(once.has_value() && once.value() == flat);
 }
@@ -106,9 +108,9 @@ TEST(test_reactive_readers_via_effect) {
   });
   assert(fulls == 0);
   r.ingress(1);
-  r.ingress(1);  // depth 2 == high_water → is_full flips true, effect fires
+  r.ingress(1); // depth 2 == high_water → is_full flips true, effect fires
   assert(fulls == 1);
-  r.drain();     // is_full false again
+  r.drain(); // is_full false again
   assert(fulls == 1);
 }
 
@@ -160,17 +162,20 @@ TEST(test_spill_lossless_both_modes) {
   for (SpillMode mode : {SpillMode::CompactOnWrite, SpillMode::AppendCompact}) {
     SpillStore<long, Sum> store(mode, 2);
     std::vector<long> windows{1, 2, 3, 4, 5};
-    for (long w : windows) store.spill(w, 1);
+    for (long w : windows)
+      store.spill(w, 1);
     long hot = 10;
     long flat = hot;
-    for (long w : windows) flat += w;
+    for (long w : windows)
+      flat += w;
     assert(store.reconstruct(0, std::optional<long>(hot)) == flat);
   }
 }
 
 TEST(test_spill_replay_idempotent) {
   SpillStore<long, Max> store(SpillMode::AppendCompact, 1);
-  for (long w : {3L, 7L, 5L}) store.spill(w, 1);
+  for (long w : {3L, 7L, 5L})
+    store.spill(w, 1);
   long once = store.replay_unacked(0);
   long twice = store.replay_unacked(once);
   assert(once == twice);
@@ -179,7 +184,8 @@ TEST(test_spill_replay_idempotent) {
 
 TEST(test_compact_on_write_bounds_and_ack_reclaims) {
   SpillStore<long, Sum> store(SpillMode::CompactOnWrite, 2);
-  for (int i = 0; i < 5; ++i) store.spill(1, 1);  // page size 2 → 3 pages
+  for (int i = 0; i < 5; ++i)
+    store.spill(1, 1); // page size 2 → 3 pages
   assert(store.page_count() == 3);
   auto first_id = store.manifest()[0].first;
   store.ack_through(first_id);
@@ -210,11 +216,11 @@ TEST(test_relay_spill_overflow_end_to_end) {
 
 // -- Phase 4 -----------------------------------------------------------------
 
-template <typename Policy>
-static void transport_case() {
+template <typename Policy> static void transport_case() {
   std::vector<long> ops{3, 1, 4, 1, 5, 9};
   long flat = ops[0];
-  for (std::size_t i = 1; i < ops.size(); ++i) flat = Policy::template merge<long>(flat, ops[i]);
+  for (std::size_t i = 1; i < ops.size(); ++i)
+    flat = Policy::template merge<long>(flat, ops[i]);
 
   std::vector<std::unique_ptr<Transport<long>>> transports;
   transports.push_back(std::make_unique<InProcTransport<long>>());
@@ -222,11 +228,13 @@ static void transport_case() {
   transports.push_back(std::make_unique<FramedTransport<long>>(3));
 
   for (auto& transport : transports) {
-    for (long op : ops) transport->deliver(op);
+    for (long op : ops)
+      transport->deliver(op);
     Context ctx;
     auto r = make_relay<Policy>(ctx);
     while (transport->has_pending()) {
-      for (long op : transport->poll()) r.ingress(op);
+      for (long op : transport->poll())
+        r.ingress(op);
     }
     assert(r.drain().value() == flat);
   }
@@ -276,13 +284,16 @@ TEST(test_outbox_inbox_link_converges) {
   Inbox<long, Sum> inbox(ctx, 64, 64);
   InProcTransport<long> transport;
   std::vector<long> ops{1, 2, 3, 4};
-  for (long op : ops) out.send(op);
+  for (long op : ops)
+    out.send(op);
   transport.deliver(out.drain().value());
   while (transport.has_pending()) {
-    for (long frame : transport.poll()) inbox.receive(frame);
+    for (long frame : transport.poll())
+      inbox.receive(frame);
   }
   long sum = 0;
-  for (long op : ops) sum += op;
+  for (long op : ops)
+    sum += op;
   assert(inbox.consume(64).value() == sum);
 }
 
@@ -310,8 +321,7 @@ TEST(test_window_policy_flush_on_fill_and_tick) {
 TEST(test_expiry_policy_drops_aged) {
   ExpiryPolicy expiry(5);
   expiry.advance(10);
-  std::vector<std::pair<std::uint64_t, std::string>> batch{
-      {3, "old"}, {7, "fresh"}, {10, "now"}};
+  std::vector<std::pair<std::uint64_t, std::string>> batch{{3, "old"}, {7, "fresh"}, {10, "now"}};
   auto live = expiry.retain_live(batch);
   assert((live == std::vector<std::string>{"fresh", "now"}));
 }

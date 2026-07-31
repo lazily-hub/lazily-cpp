@@ -53,7 +53,8 @@ constexpr const char* kArea = "collections";
 int order_digest(const std::vector<std::string>& keys) {
   int acc = 17;
   for (const auto& k : keys) {
-    for (char c : k) acc = acc * 31 + static_cast<int>(c);
+    for (char c : k)
+      acc = acc * 31 + static_cast<int>(c);
     acc = acc * 31 + 7;
   }
   return acc;
@@ -73,12 +74,8 @@ struct SyncModel {
   void insert(const std::string& k, int v) { map.entry(ctx, k, v); }
   void remove(const std::string& k) { map.remove(ctx, k); }
   void move_to(const std::string& k, std::size_t i) { map.move_to(ctx, k, i); }
-  void move_before(const std::string& k, const std::string& a) {
-    map.move_before(ctx, k, a);
-  }
-  void move_after(const std::string& k, const std::string& a) {
-    map.move_after(ctx, k, a);
-  }
+  void move_before(const std::string& k, const std::string& a) { map.move_before(ctx, k, a); }
+  void move_after(const std::string& k, const std::string& a) { map.move_after(ctx, k, a); }
 
   std::vector<std::string> keys_untracked() { return map.present_keys(); }
   std::optional<int> value_untracked(const std::string& k) {
@@ -93,16 +90,13 @@ struct SyncModel {
   }
 
   Computed<int> value_reader(const std::string& k) {
-    return ctx.computed<int>(
-        [this, k](Compute& c) { return map.get(c, k).value_or(-1); });
+    return ctx.computed<int>([this, k](Compute& c) { return map.get(c, k).value_or(-1); });
   }
   Computed<int> membership_reader() {
-    return ctx.computed<int>(
-        [this](Compute& c) { return static_cast<int>(map.len(c)); });
+    return ctx.computed<int>([this](Compute& c) { return static_cast<int>(map.len(c)); });
   }
   Computed<int> order_reader() {
-    return ctx.computed<int>(
-        [this](Compute& c) { return order_digest(map.keys(c)); });
+    return ctx.computed<int>([this](Compute& c) { return order_digest(map.keys(c)); });
   }
 
   void prime(const Computed<int>& r) { (void)ctx.get(r); }
@@ -125,12 +119,8 @@ struct ThreadSafeModel {
   }
   void remove(const std::string& k) { map.remove(ts, k); }
   void move_to(const std::string& k, std::size_t i) { map.move_to(ts, k, i); }
-  void move_before(const std::string& k, const std::string& a) {
-    map.move_before(ts, k, a);
-  }
-  void move_after(const std::string& k, const std::string& a) {
-    map.move_after(ts, k, a);
-  }
+  void move_before(const std::string& k, const std::string& a) { map.move_before(ts, k, a); }
+  void move_after(const std::string& k, const std::string& a) { map.move_after(ts, k, a); }
 
   std::vector<std::string> keys_untracked() { return map.present_keys(); }
   std::optional<int> value_untracked(const std::string& k) {
@@ -153,12 +143,10 @@ struct ThreadSafeModel {
     });
   }
   Computed<int> membership_reader() {
-    return ts.context().computed<int>(
-        [this](Compute& c) { return static_cast<int>(map.len(c)); });
+    return ts.context().computed<int>([this](Compute& c) { return static_cast<int>(map.len(c)); });
   }
   Computed<int> order_reader() {
-    return ts.context().computed<int>(
-        [this](Compute& c) { return order_digest(map.keys(c)); });
+    return ts.context().computed<int>([this](Compute& c) { return order_digest(map.keys(c)); });
   }
 
   void prime(const Computed<int>& r) { (void)ts.context().get(r); }
@@ -180,15 +168,9 @@ struct AsyncModel {
     map.get_or_insert_handle(actx, k, [v](const std::string&) { return v; });
   }
   void remove(const std::string& k) { map.remove(actx, k); }
-  void move_to(const std::string& k, std::size_t i) {
-    map.move_to(actx, k, i);
-  }
-  void move_before(const std::string& k, const std::string& a) {
-    map.move_before(actx, k, a);
-  }
-  void move_after(const std::string& k, const std::string& a) {
-    map.move_after(actx, k, a);
-  }
+  void move_to(const std::string& k, std::size_t i) { map.move_to(actx, k, i); }
+  void move_before(const std::string& k, const std::string& a) { map.move_before(actx, k, a); }
+  void move_after(const std::string& k, const std::string& a) { map.move_after(actx, k, a); }
 
   std::vector<std::string> keys_untracked() { return map.present_keys(); }
   std::optional<int> value_untracked(const std::string& k) {
@@ -213,8 +195,7 @@ struct AsyncModel {
         [this](Compute& c) { return static_cast<int>(map.len(c)); });
   }
   Computed<int> order_reader() {
-    return actx.context().computed<int>(
-        [this](Compute& c) { return order_digest(map.keys(c)); });
+    return actx.context().computed<int>([this](Compute& c) { return order_digest(map.keys(c)); });
   }
 
   void prime(const Computed<int>& r) { (void)actx.context().get(r); }
@@ -228,7 +209,8 @@ struct AsyncModel {
 std::vector<std::string> string_array(const Json* node) {
   std::vector<std::string> out;
   if (node == nullptr || !node->is_array()) return out;
-  for (const auto& item : node->array) out.push_back(item->as_str());
+  for (const auto& item : node->array)
+    out.push_back(item->as_str());
   return out;
 }
 
@@ -241,14 +223,12 @@ std::string join(const std::vector<std::string>& items) {
   return out;
 }
 
-template <typename Model>
-void run_fixture(const std::string& fixture) {
+template <typename Model> void run_fixture(const std::string& fixture) {
   const std::string flavor = Model::kFlavor;
   const std::string text = lazily_test::spec_fixture_text(kArea, fixture);
   JsonParser parser(text);
   JsonPtr root = parser.parse();
-  REQUIRE(root && root->is_object(),
-          flavor + ": fixture " + fixture + " is not a JSON object");
+  REQUIRE(root && root->is_object(), flavor + ": fixture " + fixture + " is not a JSON object");
 
   Model model;
 
@@ -257,8 +237,7 @@ void run_fixture(const std::string& fixture) {
   REQUIRE(initial != nullptr, flavor + ": fixture " + fixture + " has no initial state");
   const std::vector<std::string> seed_order = string_array(initial->find("order"));
   const Json* seed_values = initial->find("values");
-  REQUIRE(!seed_order.empty(),
-          flavor + ": fixture " + fixture + " seeds no keys");
+  REQUIRE(!seed_order.empty(), flavor + ": fixture " + fixture + " seeds no keys");
   for (const auto& key : seed_order) {
     const Json* v = seed_values ? seed_values->find(key) : nullptr;
     REQUIRE(v != nullptr, flavor + ": no initial value for key " + key);
@@ -270,15 +249,13 @@ void run_fixture(const std::string& fixture) {
           flavor + ": fixture " + fixture + " has no steps array");
   // A zero-step replay asserts nothing while still reporting green.
   REQUIRE(!steps->array.empty(),
-          flavor + ": fixture " + fixture +
-              " has no steps - a vacuous replay would report green");
+          flavor + ": fixture " + fixture + " has no steps - a vacuous replay would report green");
 
   std::size_t asserted_invalidations = 0;
 
   for (std::size_t i = 0; i < steps->array.size(); ++i) {
     const Json& step = *steps->array[i];
-    const std::string where =
-        flavor + " " + fixture + " step " + std::to_string(i);
+    const std::string where = flavor + " " + fixture + " step " + std::to_string(i);
     const Json* op = step.find("op");
     REQUIRE(op != nullptr, where + ": missing op");
     const Json* expected_block = step.find("expected");
@@ -294,7 +271,8 @@ void run_fixture(const std::string& fixture) {
       value_readers.emplace(key, model.value_reader(key));
     Computed<int> membership = model.membership_reader();
     Computed<int> order = model.order_reader();
-    for (auto& kv : value_readers) model.prime(kv.second);
+    for (auto& kv : value_readers)
+      model.prime(kv.second);
     model.prime(membership);
     model.prime(order);
     // A reader that failed to prime is trivially "invalidated" by the next op,
@@ -313,8 +291,7 @@ void run_fixture(const std::string& fixture) {
     // -- apply ------------------------------------------------------------
     const std::string type = op->find("type")->as_str();
     if (type == "set_value") {
-      model.set_value(op->find("key")->as_str(),
-                      static_cast<int>(op->find("value")->as_int()));
+      model.set_value(op->find("key")->as_str(), static_cast<int>(op->find("value")->as_int()));
     } else if (type == "insert") {
       const std::string key = op->find("key")->as_str();
       model.insert(key, static_cast<int>(op->find("value")->as_int()));
@@ -335,8 +312,7 @@ void run_fixture(const std::string& fixture) {
       model.move_to(op->find("key")->as_str(),
                     static_cast<std::size_t>(op->find("index")->as_int()));
     } else if (type == "move_before") {
-      model.move_before(op->find("key")->as_str(),
-                        op->find("before")->as_str());
+      model.move_before(op->find("key")->as_str(), op->find("before")->as_str());
     } else if (type == "move_after") {
       model.move_after(op->find("key")->as_str(), op->find("after")->as_str());
     } else {
@@ -349,22 +325,19 @@ void run_fixture(const std::string& fixture) {
     expected.assert_key_with("order", [&](const Json& want) {
       const std::vector<std::string> want_order = string_array(&want);
       REQUIRE(want_order == got_order,
-              where + ": order is [" + join(got_order) + "], expected [" +
-                  join(want_order) + "]");
+              where + ": order is [" + join(got_order) + "], expected [" + join(want_order) + "]");
       return true;
     });
 
-    expected.assert_key_with_if_present(
-        "membership", [&](const Json& want_membership) {
-          // Bind the vector: iterators taken from two separate temporaries
-          // would belong to different containers.
-          const std::vector<std::string> want_keys =
-              string_array(&want_membership);
-          const std::set<std::string> want(want_keys.begin(), want_keys.end());
-          const std::set<std::string> got(got_order.begin(), got_order.end());
-          REQUIRE(want == got, where + ": membership set diverged");
-          return true;
-        });
+    expected.assert_key_with_if_present("membership", [&](const Json& want_membership) {
+      // Bind the vector: iterators taken from two separate temporaries
+      // would belong to different containers.
+      const std::vector<std::string> want_keys = string_array(&want_membership);
+      const std::set<std::string> want(want_keys.begin(), want_keys.end());
+      const std::set<std::string> got(got_order.begin(), got_order.end());
+      REQUIRE(want == got, where + ": membership set diverged");
+      return true;
+    });
 
     // -- values -------------------------------------------------------------
     expected.assert_key_with_if_present("values", [&](const Json& want_values) {
@@ -372,8 +345,7 @@ void run_fixture(const std::string& fixture) {
         auto got = model.value_untracked(kv.first);
         REQUIRE(got.has_value(), where + ": value for " + kv.first + " is absent");
         REQUIRE(*got == static_cast<int>(kv.second->as_int()),
-                where + ": value for " + kv.first + " is " +
-                    std::to_string(*got) + ", expected " +
+                where + ": value for " + kv.first + " is " + std::to_string(*got) + ", expected " +
                     std::to_string(kv.second->as_int()));
       }
       return true;
@@ -384,10 +356,8 @@ void run_fixture(const std::string& fixture) {
     // Nested under `expected`, which is where the fixtures actually put it.
     expected.assert_key_with("invalidates", [&](const Json& invalidates) {
       ++asserted_invalidations;
-      const std::vector<std::string> dirty_values =
-          string_array(invalidates.find("value"));
-      const std::set<std::string> dirty(dirty_values.begin(),
-                                        dirty_values.end());
+      const std::vector<std::string> dirty_values = string_array(invalidates.find("value"));
+      const std::set<std::string> dirty(dirty_values.begin(), dirty_values.end());
       // Only survivors are checked: a key this op removed has no entry left to
       // read, and a key it added had no reader to invalidate.
       const std::set<std::string> survivors(got_order.begin(), got_order.end());
@@ -396,8 +366,8 @@ void run_fixture(const std::string& fixture) {
         const bool want_dirty = dirty.count(kv.first) > 0;
         const bool still_cached = model.cached(kv.second);
         if (want_dirty) {
-          REQUIRE(!still_cached, where + ": value reader for " + kv.first +
-                                     " should have been invalidated");
+          REQUIRE(!still_cached,
+                  where + ": value reader for " + kv.first + " should have been invalidated");
         } else {
           REQUIRE(still_cached, where + ": value reader for " + kv.first +
                                     " should have stayed cached - per-entry "
@@ -429,27 +399,22 @@ void run_fixture(const std::string& fixture) {
     //
     // The law that separates an atomic move from a remove + re-mint: a reorder
     // keeps the entry's node, so its dependents and CRDT lineage survive.
-    expected.assert_key_with_if_present(
-        "handle_stable", [&](const Json& stable) {
-          for (const auto& kv : stable.object) {
-            auto before = handles_before.count(kv.first)
-                              ? handles_before[kv.first]
-                              : std::nullopt;
-            auto after = model.handle_id(kv.first);
-            if (kv.second->as_bool()) {
-              REQUIRE(
-                  before.has_value() && after.has_value() && *before == *after,
+    expected.assert_key_with_if_present("handle_stable", [&](const Json& stable) {
+      for (const auto& kv : stable.object) {
+        auto before = handles_before.count(kv.first) ? handles_before[kv.first] : std::nullopt;
+        auto after = model.handle_id(kv.first);
+        if (kv.second->as_bool()) {
+          REQUIRE(before.has_value() && after.has_value() && *before == *after,
                   where + ": handle for " + kv.first +
                       " must survive the move - a reorder that re-mints is a "
                       "remove + insert, not a move");
-            } else {
-              REQUIRE(
-                  !after.has_value() || !before.has_value() || *before != *after,
+        } else {
+          REQUIRE(!after.has_value() || !before.has_value() || *before != *after,
                   where + ": handle for " + kv.first + " should have changed");
-            }
-          }
-          return true;
-        });
+        }
+      }
+      return true;
+    });
   }
 
   // The matrix is the contract. A fixture whose `invalidates` block never
@@ -460,9 +425,8 @@ void run_fixture(const std::string& fixture) {
               " asserted no invalidation matrix - the reader-independence "
               "contract was never checked");
 
-  std::cout << "ok  " << flavor << "  " << fixture << "  ("
-            << steps->array.size() << " steps, " << asserted_invalidations
-            << " invalidation matrices)" << std::endl;
+  std::cout << "ok  " << flavor << "  " << fixture << "  (" << steps->array.size() << " steps, "
+            << asserted_invalidations << " invalidation matrices)" << std::endl;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,83 +444,76 @@ void run_fixture(const std::string& fixture) {
 // produced `[b,c,d,a]` instead of `[b,c,a,d]`. The canonical corpus would have
 // scored that binding green. Until the corpus covers both directions, each
 // binding has to cover them itself.
-template <typename Model>
-void check_directional_moves() {
+template <typename Model> void check_directional_moves() {
   const std::string flavor = Model::kFlavor;
   const std::vector<std::string> seed = {"a", "b", "c", "d"};
 
   auto build = [&](Model& m) {
     int v = 1;
-    for (const auto& k : seed) m.insert(k, v++);
+    for (const auto& k : seed)
+      m.insert(k, v++);
   };
 
-  {  // key precedes anchor: the `anchor - 1` branch.
+  { // key precedes anchor: the `anchor - 1` branch.
     Model m;
     build(m);
     const auto before_id = m.handle_id("a");
     m.move_before("a", "d");
     const std::vector<std::string> want = {"b", "c", "a", "d"};
     REQUIRE(m.keys_untracked() == want,
-            flavor + ": move_before(a, d) on [a,b,c,d] gave [" +
-                join(m.keys_untracked()) +
+            flavor + ": move_before(a, d) on [a,b,c,d] gave [" + join(m.keys_untracked()) +
                 "], expected [b,c,a,d] - the target must be computed on the "
                 "pre-removal list");
     REQUIRE(before_id.has_value() && m.handle_id("a") == before_id,
             flavor + ": move_before must keep the entry's node");
   }
-  {  // key follows anchor: the `anchor` branch.
+  { // key follows anchor: the `anchor` branch.
     Model m;
     build(m);
     m.move_before("d", "b");
     const std::vector<std::string> want = {"a", "d", "b", "c"};
-    REQUIRE(m.keys_untracked() == want,
-            flavor + ": move_before(d, b) gave [" + join(m.keys_untracked()) +
-                "], expected [a,d,b,c]");
+    REQUIRE(m.keys_untracked() == want, flavor + ": move_before(d, b) gave [" +
+                                            join(m.keys_untracked()) + "], expected [a,d,b,c]");
   }
-  {  // move_after, key precedes anchor.
+  { // move_after, key precedes anchor.
     Model m;
     build(m);
     m.move_after("a", "c");
     const std::vector<std::string> want = {"b", "c", "a", "d"};
-    REQUIRE(m.keys_untracked() == want,
-            flavor + ": move_after(a, c) gave [" + join(m.keys_untracked()) +
-                "], expected [b,c,a,d]");
+    REQUIRE(m.keys_untracked() == want, flavor + ": move_after(a, c) gave [" +
+                                            join(m.keys_untracked()) + "], expected [b,c,a,d]");
   }
-  {  // move_after, key follows anchor.
+  { // move_after, key follows anchor.
     Model m;
     build(m);
     m.move_after("d", "a");
     const std::vector<std::string> want = {"a", "d", "b", "c"};
-    REQUIRE(m.keys_untracked() == want,
-            flavor + ": move_after(d, a) gave [" + join(m.keys_untracked()) +
-                "], expected [a,d,b,c]");
+    REQUIRE(m.keys_untracked() == want, flavor + ": move_after(d, a) gave [" +
+                                            join(m.keys_untracked()) + "], expected [a,d,b,c]");
   }
-  {  // out-of-range index clamps rather than desyncing entries from order.
+  { // out-of-range index clamps rather than desyncing entries from order.
     Model m;
     build(m);
     m.move_to("a", 99);
     const std::vector<std::string> want = {"b", "c", "d", "a"};
     REQUIRE(m.keys_untracked() == want,
-            flavor + ": move_to past the end must clamp, gave [" +
-                join(m.keys_untracked()) + "]");
+            flavor + ": move_to past the end must clamp, gave [" + join(m.keys_untracked()) + "]");
   }
-  {  // a move naming an absent key must not mutate the order.
+  { // a move naming an absent key must not mutate the order.
     Model m;
     build(m);
     m.move_before("zz", "a");
     m.move_to("zz", 0);
-    REQUIRE(m.keys_untracked() == seed,
-            flavor + ": a move on an absent key must be a no-op");
+    REQUIRE(m.keys_untracked() == seed, flavor + ": a move on an absent key must be a no-op");
   }
 
   std::cout << "ok  " << flavor << "  directional move coverage" << std::endl;
 }
 
-}  // namespace
+} // namespace
 
 int main() {
-  for (const char* fixture :
-       {"cellmap_atomic_move.json", "cellmap_independence.json"}) {
+  for (const char* fixture : {"cellmap_atomic_move.json", "cellmap_independence.json"}) {
     run_fixture<SyncModel>(fixture);
     run_fixture<ThreadSafeModel>(fixture);
     run_fixture<AsyncModel>(fixture);
@@ -568,7 +525,6 @@ int main() {
 
   // Both canonical fixtures, read for real.
   REQUIRE_FIXTURES_LOADED(2);
-  std::cout << "collections family conformance: 2 fixtures x 3 flavors"
-            << std::endl;
+  std::cout << "collections family conformance: 2 fixtures x 3 flavors" << std::endl;
   return 0;
 }

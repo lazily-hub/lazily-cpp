@@ -37,17 +37,14 @@ namespace lazily {
 // Traits abstracting over the two async map handle kinds — `AsyncSource<V>`
 // (input cells, always resolved) and `AsyncComputed<V>` (derived slots, resolve
 // asynchronously). The `AsyncContext` analog of `MapHandleTraits`.
-template <typename H>
-struct AsyncMapHandleTraits;  // primary template intentionally undefined
+template <typename H> struct AsyncMapHandleTraits; // primary template intentionally undefined
 
-template <typename V>
-struct AsyncMapHandleTraits<AsyncSource<V>> {
+template <typename V> struct AsyncMapHandleTraits<AsyncSource<V>> {
   static constexpr EntryKind kind = EntryKind::Source;
 
   template <typename K>
-  static AsyncSource<V> materialize(
-      AsyncContext& ctx, const K& key,
-      const std::function<V(const K&)>& factory) {
+  static AsyncSource<V> materialize(AsyncContext& ctx, const K& key,
+                                    const std::function<V(const K&)>& factory) {
     return ctx.template source<V>(factory(key));
   }
 
@@ -56,38 +53,28 @@ struct AsyncMapHandleTraits<AsyncSource<V>> {
     return std::optional<V>(h.get());
   }
 
-  static void clear_dependents(AsyncSource<V> h, AsyncContext&) {
-    h.clear_dependents();
-  }
+  static void clear_dependents(AsyncSource<V> h, AsyncContext&) { h.clear_dependents(); }
 };
 
-template <typename V>
-struct AsyncMapHandleTraits<AsyncComputed<V>> {
+template <typename V> struct AsyncMapHandleTraits<AsyncComputed<V>> {
   static constexpr EntryKind kind = EntryKind::Computed;
 
   // A derived node whose async recompute yields the sync factory value. Resolve
   // it with `get_async()` on the returned handle.
   template <typename K>
-  static AsyncComputed<V> materialize(
-      AsyncContext& ctx, const K& key,
-      const std::function<V(const K&)>& factory) {
+  static AsyncComputed<V> materialize(AsyncContext& ctx, const K& key,
+                                      const std::function<V(const K&)>& factory) {
     K k = key;
-    return ctx.template computed<V>(
-        std::function<V()>([factory, k]() -> V { return factory(k); }));
+    return ctx.template computed<V>(std::function<V()>([factory, k]() -> V { return factory(k); }));
   }
 
   // Non-blocking read: a value once resolved, else `std::nullopt`.
-  static std::optional<V> observe(AsyncComputed<V> h, AsyncContext&) {
-    return h.get();
-  }
+  static std::optional<V> observe(AsyncComputed<V> h, AsyncContext&) { return h.get(); }
 
-  static void clear_dependents(AsyncComputed<V> h, AsyncContext&) {
-    h.clear_dependents();
-  }
+  static void clear_dependents(AsyncComputed<V> h, AsyncContext&) { h.clear_dependents(); }
 };
 
-template <typename K, typename H>
-struct AsyncReactiveMapInner {
+template <typename K, typename H> struct AsyncReactiveMapInner {
   mutable std::mutex state_mutex;
   KeyedOrder<K, H> keyed;
   // Membership and order signals minted on THIS flavor's graph. Ordering is not
@@ -105,9 +92,8 @@ struct AsyncReactiveMapInner {
 //
 // Cheap to copy (a `shared_ptr` to shared inner state). See the eventual-
 // transparency law above.
-template <typename K, typename V, typename H>
-class AsyncReactiveMap {
- public:
+template <typename K, typename V, typename H> class AsyncReactiveMap {
+public:
   using Handle = H;
   using Traits = AsyncMapHandleTraits<H>;
 
@@ -123,8 +109,7 @@ class AsyncReactiveMap {
   // Get the entry handle for `key`, minting it via `factory(key)` on first access
   // and caching it. For a slot map this is the `AsyncComputed` to drive with
   // `get_async()`.
-  H get_or_insert_handle(AsyncContext& ctx, const K& key,
-                         std::function<V(const K&)> factory) {
+  H get_or_insert_handle(AsyncContext& ctx, const K& key, std::function<V(const K&)> factory) {
     return mint_with(ctx, key, factory);
   }
 
@@ -162,27 +147,23 @@ class AsyncReactiveMap {
   // Reactive snapshot of the keys in their current order. Generic over the read
   // surface for the same reason the other two flavors are: only a `Compute&`
   // registers the edge.
-  template <typename Cx>
-  std::vector<K> keys(Cx& ctx) {
+  template <typename Cx> std::vector<K> keys(Cx& ctx) {
     (void)ctx.get(inner_->order_signal);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     return inner_->keyed.keys();
   }
 
   // Reactive entry count. Subscribes to membership changes only.
-  template <typename Cx>
-  size_t len(Cx& ctx) {
+  template <typename Cx> size_t len(Cx& ctx) {
     (void)ctx.get(inner_->membership);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     return inner_->keyed.len();
   }
 
-  template <typename Cx>
-  bool is_empty(Cx& ctx) { return len(ctx) == 0; }
+  template <typename Cx> bool is_empty(Cx& ctx) { return len(ctx) == 0; }
 
   // Reactive membership test for `key`.
-  template <typename Cx>
-  bool contains_key(Cx& ctx, const K& key) {
+  template <typename Cx> bool contains_key(Cx& ctx, const K& key) {
     (void)ctx.get(inner_->membership);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     return inner_->keyed.contains(key);
@@ -243,14 +224,13 @@ class AsyncReactiveMap {
 
   EntryKind entry_kind() const { return Traits::kind; }
 
- protected:
+protected:
   std::shared_ptr<AsyncReactiveMapInner<K, H>> inner_;
 
-  H mint_with(AsyncContext& ctx, const K& key,
-              const std::function<V(const K&)>& factory) {
+  H mint_with(AsyncContext& ctx, const K& key, const std::function<V(const K&)>& factory) {
     {
       std::lock_guard<std::mutex> g(inner_->state_mutex);
-      if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
+      if (auto warm = inner_->keyed.get(key)) return *warm; // warm.
     }
     H handle = Traits::materialize(ctx, key, factory);
     // `H` is not required to be default-constructible (an `AsyncSource`
@@ -300,7 +280,7 @@ class AsyncReactiveMap {
 // `AsyncSource<V>`. Adds cell-only `set`.
 template <typename K, typename V>
 class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncSource<V>> {
- public:
+public:
   using Base = AsyncReactiveMap<K, V, AsyncSource<V>>;
   using Base::Base;
 
@@ -311,8 +291,7 @@ class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncSource<V>> {
       h->set(std::move(value));
       return;
     }
-    this->get_or_insert_handle(ctx, key,
-                               [value](const K&) -> V { return value; });
+    this->get_or_insert_handle(ctx, key, [value](const K&) -> V { return value; });
   }
 };
 
@@ -320,7 +299,7 @@ class AsyncSourceMap : public AsyncReactiveMap<K, V, AsyncSource<V>> {
 // on access or eagerly via `materialize_all`, resolved via `get_async()`.
 template <typename K, typename V>
 class AsyncComputedMap : public AsyncReactiveMap<K, V, AsyncComputed<V>> {
- public:
+public:
   using Base = AsyncReactiveMap<K, V, AsyncComputed<V>>;
   using Base::Base;
 
@@ -342,12 +321,10 @@ class AsyncComputedMap : public AsyncReactiveMap<K, V, AsyncComputed<V>> {
 // followed. The old names remain as alias templates so existing callers keep
 // compiling — they are not removed.
 template <typename K, typename V>
-using AsyncCellMap [[deprecated("renamed to AsyncSourceMap")]] =
-    AsyncSourceMap<K, V>;
+using AsyncCellMap [[deprecated("renamed to AsyncSourceMap")]] = AsyncSourceMap<K, V>;
 template <typename K, typename V>
-using AsyncSlotMap [[deprecated("renamed to AsyncComputedMap")]] =
-    AsyncComputedMap<K, V>;
+using AsyncSlotMap [[deprecated("renamed to AsyncComputedMap")]] = AsyncComputedMap<K, V>;
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_ASYNC_REACTIVE_FAMILY_HPP
+#endif // LAZILY_ASYNC_REACTIVE_FAMILY_HPP

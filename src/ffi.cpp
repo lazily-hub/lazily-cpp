@@ -67,10 +67,8 @@ int lazily_ffi_ipc_message_clone_json(const uint8_t* ptr, size_t len, lazily_ffi
   return static_cast<int>(status);
 }
 
-void lazily_ffi_bytes_free(lazily_ffi_bytes_t bytes) {
-  std::free(bytes.ptr);
-}
+void lazily_ffi_bytes_free(lazily_ffi_bytes_t bytes) { std::free(bytes.ptr); }
 
 int lazily_protocol_version(void) { return lazily::kProtocolVersion; }
 
-}  // extern "C"
+} // extern "C"

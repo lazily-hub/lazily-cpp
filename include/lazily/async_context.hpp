@@ -1,8 +1,8 @@
 #ifndef LAZILY_ASYNC_CONTEXT_HPP
 #define LAZILY_ASYNC_CONTEXT_HPP
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 #include <lazily/rc_ptr.hpp>
 #include <lazily/small_fn.hpp>
 #include <lazily/types.hpp>
@@ -36,28 +36,26 @@ enum class AsyncComputedState { Empty, Computing, Resolved, Error };
 //     / EffectFnPtr). AsyncContext is single-owner; the refcount is mutated
 //     only on the owner thread while the async compute thread accesses the
 //     node through a stable raw pointer captured by value.
-template <typename T>
-struct AsyncComputedNode {
+template <typename T> struct AsyncComputedNode {
   SmallFn<T()> compute;
   std::optional<T> value;
   std::optional<std::string> error;
-AsyncComputedState state = AsyncComputedState::Empty;
+  AsyncComputedState state = AsyncComputedState::Empty;
   int revision = 0;
   SmallFn<bool(const T&, const T&)> equals;
 };
 
-template <typename T>
-struct AsyncComputed {
-using NodePtr = RcPtr<RcBox<AsyncComputedNode<T>>>;
+template <typename T> struct AsyncComputed {
+  using NodePtr = RcPtr<RcBox<AsyncComputedNode<T>>>;
 
   uint64_t id;
   NodePtr node;
 
-AsyncComputedState state() const { return node->value.state; }
+  AsyncComputedState state() const { return node->value.state; }
   int revision() const { return node->value.revision; }
 
   std::optional<T> get() {
-if (node->value.state == AsyncComputedState::Resolved && node->value.value) {
+    if (node->value.state == AsyncComputedState::Resolved && node->value.value) {
       return node->value.value;
     }
     return std::nullopt;
@@ -71,12 +69,12 @@ if (node->value.state == AsyncComputedState::Resolved && node->value.value) {
   void clear_dependents() {
     node->value.value.reset();
     node->value.error.reset();
-node->value.state = AsyncComputedState::Empty;
+    node->value.state = AsyncComputedState::Empty;
   }
 
   std::future<T> get_async() {
     return std::async(std::launch::async, [this]() -> T {
-node->value.state = AsyncComputedState::Computing;
+      node->value.state = AsyncComputedState::Computing;
       node->value.revision++;
       try {
         T result = node->value.compute();
@@ -86,11 +84,11 @@ node->value.state = AsyncComputedState::Computing;
         } else {
           node->value.value = result;
         }
-node->value.state = AsyncComputedState::Resolved;
+        node->value.state = AsyncComputedState::Resolved;
         node->value.error.reset();
         return *node->value.value;
       } catch (const std::exception& e) {
-node->value.state = AsyncComputedState::Error;
+        node->value.state = AsyncComputedState::Error;
         node->value.error = e.what();
         throw;
       }
@@ -98,11 +96,10 @@ node->value.state = AsyncComputedState::Error;
   }
 };
 
-template <typename T>
-struct AsyncSource {
-Context* ctx;
-Source<T> cell;  // #lzcellkernel: was CellHandle<T>
-AsyncSource(Context& c, T value) : ctx(&c), cell(c.source(std::move(value))) {}
+template <typename T> struct AsyncSource {
+  Context* ctx;
+  Source<T> cell; // #lzcellkernel: was CellHandle<T>
+  AsyncSource(Context& c, T value) : ctx(&c), cell(c.source(std::move(value))) {}
   T peek() { return ctx->get(cell); }
   T get() { return ctx->get(cell); }
   void set(T value) { ctx->set(cell, std::move(value)); }
@@ -115,11 +112,9 @@ AsyncSource(Context& c, T value) : ctx(&c), cell(c.source(std::move(value))) {}
 // canonical async value kinds above.
 using AsyncSlotState [[deprecated("use AsyncComputedState")]] = AsyncComputedState;
 
-template <typename T>
-using AsyncCellHandle [[deprecated("use AsyncSource")]] = AsyncSource<T>;
+template <typename T> using AsyncCellHandle [[deprecated("use AsyncSource")]] = AsyncSource<T>;
 
-template <typename T>
-using AsyncSlotHandle [[deprecated("use AsyncComputed")]] = AsyncComputed<T>;
+template <typename T> using AsyncSlotHandle [[deprecated("use AsyncComputed")]] = AsyncComputed<T>;
 
 struct AsyncEffectHandle {
   SmallFn<void()> cleanup_fn;
@@ -134,7 +129,7 @@ struct AsyncEffectHandle {
 };
 
 class AsyncContext {
- public:
+public:
   // Effect body returns a cleanup closure. Both layers use SmallFn so the
   // caller's body lambda is stored inline when it fits (no std::function
   // heap alloc). The cleanup uses the same 32-byte inline buffer as the
@@ -149,51 +144,46 @@ class AsyncContext {
   AsyncContext(const AsyncContext&) = delete;
   AsyncContext& operator=(const AsyncContext&) = delete;
 
-template <typename T>
-AsyncSource<T> source(T value) {
-return AsyncSource<T>(ctx_, std::move(value));
-}
+  template <typename T> AsyncSource<T> source(T value) {
+    return AsyncSource<T>(ctx_, std::move(value));
+  }
 
-// Accept any callable (std::function, lambdas, function pointers) via
-// SmallFn's converting constructor; T must be explicit.
-template <typename T, typename F>
-AsyncComputed<T> computed(F&& compute) {
-auto id = next_id_++;
-auto* raw = new RcBox<AsyncComputedNode<T>>();
-raw->value.compute = std::forward<F>(compute);
-typename AsyncComputed<T>::NodePtr node(
-raw, typename AsyncComputed<T>::NodePtr::adopt_t{});
-return AsyncComputed<T>{id, std::move(node)};
-}
+  // Accept any callable (std::function, lambdas, function pointers) via
+  // SmallFn's converting constructor; T must be explicit.
+  template <typename T, typename F> AsyncComputed<T> computed(F&& compute) {
+    auto id = next_id_++;
+    auto* raw = new RcBox<AsyncComputedNode<T>>();
+    raw->value.compute = std::forward<F>(compute);
+    typename AsyncComputed<T>::NodePtr node(raw, typename AsyncComputed<T>::NodePtr::adopt_t{});
+    return AsyncComputed<T>{id, std::move(node)};
+  }
 
-template <typename T, typename F, typename E>
-AsyncComputed<T> computed(F&& compute, E&& eq) {
-auto id = next_id_++;
-auto* raw = new RcBox<AsyncComputedNode<T>>();
-raw->value.compute = std::forward<F>(compute);
-raw->value.equals = std::forward<E>(eq);
-typename AsyncComputed<T>::NodePtr node(
-raw, typename AsyncComputed<T>::NodePtr::adopt_t{});
-return AsyncComputed<T>{id, std::move(node)};
-}
+  template <typename T, typename F, typename E> AsyncComputed<T> computed(F&& compute, E&& eq) {
+    auto id = next_id_++;
+    auto* raw = new RcBox<AsyncComputedNode<T>>();
+    raw->value.compute = std::forward<F>(compute);
+    raw->value.equals = std::forward<E>(eq);
+    typename AsyncComputed<T>::NodePtr node(raw, typename AsyncComputed<T>::NodePtr::adopt_t{});
+    return AsyncComputed<T>{id, std::move(node)};
+  }
 
-template <typename T>
-[[deprecated("use source")]]
-AsyncSource<T> cell(T value) {
-return source<T>(std::move(value));
-}
+  template <typename T>
+  [[deprecated("use source")]]
+  AsyncSource<T> cell(T value) {
+    return source<T>(std::move(value));
+  }
 
-template <typename T, typename F>
-[[deprecated("use computed")]]
-AsyncComputed<T> slot(F&& compute) {
-return computed<T>(std::forward<F>(compute));
-}
+  template <typename T, typename F>
+  [[deprecated("use computed")]]
+  AsyncComputed<T> slot(F&& compute) {
+    return computed<T>(std::forward<F>(compute));
+  }
 
-template <typename T, typename F, typename E>
-[[deprecated("memo is a guarded computed; use computed(compute, equals)")]]
-AsyncComputed<T> memo(F&& compute, E&& eq) {
-return computed<T>(std::forward<F>(compute), std::forward<E>(eq));
-}
+  template <typename T, typename F, typename E>
+  [[deprecated("memo is a guarded computed; use computed(compute, equals)")]]
+  AsyncComputed<T> memo(F&& compute, E&& eq) {
+    return computed<T>(std::forward<F>(compute), std::forward<E>(eq));
+  }
 
   EffectHandlePtr effect(EffectBody body) {
     auto* raw = new RcBox<AsyncEffectHandle>();
@@ -216,13 +206,12 @@ return computed<T>(std::forward<F>(compute), std::forward<E>(eq));
 
   Context& context() { return ctx_; }
 
-  template <typename F>
-  void batch(F&& fn) {
+  template <typename F> void batch(F&& fn) {
     std::lock_guard<std::mutex> lock(mutex_);
     ctx_.batch([&](Context&) { fn(); });
   }
 
- private:
+private:
   Context ctx_;
   std::mutex mutex_;
   std::atomic<uint64_t> next_id_{0};
@@ -249,13 +238,12 @@ return computed<T>(std::forward<F>(compute), std::forward<E>(eq));
         auto cleanup = body();
         handle->value.cleanup_fn = std::move(cleanup);
         handle->value.running.store(false);
-      } while (!handle->value.disposed.load() &&
-               handle->value.rerun_scheduled.exchange(false) &&
+      } while (!handle->value.disposed.load() && handle->value.rerun_scheduled.exchange(false) &&
                handle->value.running.exchange(true));
     }).detach();
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_ASYNC_CONTEXT_HPP
+#endif // LAZILY_ASYNC_CONTEXT_HPP

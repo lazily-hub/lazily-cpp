@@ -26,8 +26,8 @@
 #include <type_traits>
 #include <utility>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -43,20 +43,17 @@ struct Durable {};
 
 /// Trait: does `T` witness the `Ephemeral` marker? Types opt in by declaring
 /// `using plane_marker = Ephemeral;`.
-template <typename T, typename = void>
-struct is_ephemeral : std::false_type {};
+template <typename T, typename = void> struct is_ephemeral : std::false_type {};
 
 template <typename T>
 struct is_ephemeral<T, std::void_t<typename T::plane_marker>>
     : std::is_same<typename T::plane_marker, Ephemeral> {};
 
-template <typename T>
-inline constexpr bool is_ephemeral_v = is_ephemeral<T>::value;
+template <typename T> inline constexpr bool is_ephemeral_v = is_ephemeral<T>::value;
 
 /// A newtype witnessing the `Ephemeral` marker (used by the compile-time
 /// rejection demo and by ephemeral payloads).
-template <typename T>
-struct EphemeralValue {
+template <typename T> struct EphemeralValue {
   using plane_marker = Ephemeral;
   T value;
 };
@@ -64,14 +61,11 @@ struct EphemeralValue {
 /// A durable sink: statically rejects ephemeral values. Mirrors the Rust
 /// `fn persist<T: Durable>(_v: T)` — handing it an ephemeral value fails to
 /// compile.
-template <typename T>
-void durable_persist(const T&) {
-  static_assert(!is_ephemeral_v<T>,
-                "lazily: cannot persist a value on the ephemeral plane");
+template <typename T> void durable_persist(const T&) {
+  static_assert(!is_ephemeral_v<T>, "lazily: cannot persist a value on the ephemeral plane");
 }
 
-static_assert(is_ephemeral_v<EphemeralValue<int>>,
-              "EphemeralValue witnesses the Ephemeral marker");
+static_assert(is_ephemeral_v<EphemeralValue<int>>, "EphemeralValue witnesses the Ephemeral marker");
 static_assert(!is_ephemeral_v<int>, "plain values are not ephemeral");
 
 // ===========================================================================
@@ -79,9 +73,8 @@ static_assert(!is_ephemeral_v<int>, "plain values are not ephemeral");
 // ===========================================================================
 
 /// Single-value auto-expiry compute core — "the last value seen in window N".
-template <typename T>
-class EphemeralCore {
- public:
+template <typename T> class EphemeralCore {
+public:
   using plane_marker = Ephemeral;
 
   EphemeralCore() = default;
@@ -99,19 +92,17 @@ class EphemeralCore {
 
   const std::optional<T>& value() const { return value_; }
 
- private:
+private:
   std::optional<T> value_;
   uint64_t expiry_ = 0;
 };
 
 /// Reactive single-value ephemeral cell.
-template <typename T>
-class EphemeralCell {
- public:
+template <typename T> class EphemeralCell {
+public:
   using plane_marker = Ephemeral;
 
-  explicit EphemeralCell(Context& ctx)
-      : value_(ctx.source(std::optional<T>{})) {}
+  explicit EphemeralCell(Context& ctx) : value_(ctx.source(std::optional<T>{})) {}
 
   void set(Context& ctx, T value, uint64_t now, uint64_t ttl) {
     core_.set(std::move(value), now, ttl);
@@ -127,7 +118,7 @@ class EphemeralCell {
 
   Source<std::optional<T>> value_cell() const { return value_; }
 
- private:
+private:
   void refresh(Context& ctx) { value_.set(ctx, core_.value()); }
 
   EphemeralCore<T> core_;
@@ -141,9 +132,8 @@ class EphemeralCell {
 /// Per-key ephemeral map with TTL eviction — the shared core behind presence
 /// and awareness. Each entry carries an expiry; `tick` evicts lapsed entries.
 /// `std::map` (ordered) mirrors the Rust `BTreeMap`.
-template <typename K, typename V>
-class EphemeralMapCore {
- public:
+template <typename K, typename V> class EphemeralMapCore {
+public:
   using plane_marker = Ephemeral;
 
   EphemeralMapCore() = default;
@@ -182,18 +172,16 @@ class EphemeralMapCore {
     return out;
   }
 
- private:
+private:
   std::map<K, std::pair<V, uint64_t>> entries_;
 };
 
 /// Reactive per-peer presence: heartbeat-kept, membership- and TTL-evicted.
-template <typename K, typename V>
-class PresenceCell {
- public:
+template <typename K, typename V> class PresenceCell {
+public:
   using plane_marker = Ephemeral;
 
-  PresenceCell(Context& ctx, uint64_t ttl)
-      : present_(ctx.source(std::map<K, V>{})), ttl_(ttl) {}
+  PresenceCell(Context& ctx, uint64_t ttl) : present_(ctx.source(std::map<K, V>{})), ttl_(ttl) {}
 
   /// Heartbeat a peer's presence (expiring at `now + ttl`).
   void heartbeat(Context& ctx, K peer, V value, uint64_t now) {
@@ -216,10 +204,8 @@ class PresenceCell {
 
   Source<std::map<K, V>> present_cell() const { return present_; }
 
- private:
-  void refresh(Context& ctx, uint64_t now) {
-    present_.set(ctx, core_.present(now));
-  }
+private:
+  void refresh(Context& ctx, uint64_t now) { present_.set(ctx, core_.present(now)); }
 
   EphemeralMapCore<K, V> core_;
   Source<std::map<K, V>> present_;
@@ -228,13 +214,11 @@ class PresenceCell {
 
 /// Reactive typed ephemeral broadcast (cursors / selections): last-writer-per-
 /// peer with a TTL.
-template <typename K, typename V>
-class AwarenessCell {
- public:
+template <typename K, typename V> class AwarenessCell {
+public:
   using plane_marker = Ephemeral;
 
-  AwarenessCell(Context& ctx, uint64_t ttl)
-      : present_(ctx.source(std::map<K, V>{})), ttl_(ttl) {}
+  AwarenessCell(Context& ctx, uint64_t ttl) : present_(ctx.source(std::map<K, V>{})), ttl_(ttl) {}
 
   /// Set a peer's awareness value (last-writer wins, no merge).
   void set(Context& ctx, K peer, V value, uint64_t now) {
@@ -247,24 +231,20 @@ class AwarenessCell {
     refresh(ctx, now);
   }
 
-  std::optional<V> get(const K& peer, uint64_t now) const {
-    return core_.get(peer, now);
-  }
+  std::optional<V> get(const K& peer, uint64_t now) const { return core_.get(peer, now); }
 
   std::map<K, V> present(Context& ctx) { return present_.get(ctx); }
 
   Source<std::map<K, V>> present_cell() const { return present_; }
 
- private:
-  void refresh(Context& ctx, uint64_t now) {
-    present_.set(ctx, core_.present(now));
-  }
+private:
+  void refresh(Context& ctx, uint64_t now) { present_.set(ctx, core_.present(now)); }
 
   EphemeralMapCore<K, V> core_;
   Source<std::map<K, V>> present_;
   uint64_t ttl_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_PRESENCE_HPP
+#endif // LAZILY_PRESENCE_HPP

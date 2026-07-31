@@ -54,15 +54,17 @@ namespace lazily {
 
 struct ResyncAction {
   enum class Kind {
-    Apply,            // Apply the frame and advance the receiver epoch.
-    RequestSnapshot,  // A gap was detected; request a fresh Snapshot covering from_epoch.
-    Ignore,           // Drop the frame (re-delivery, empty, suppressed duplicate, or control frame).
+    Apply,           // Apply the frame and advance the receiver epoch.
+    RequestSnapshot, // A gap was detected; request a fresh Snapshot covering from_epoch.
+    Ignore,          // Drop the frame (re-delivery, empty, suppressed duplicate, or control frame).
   };
   Kind kind;
-  Epoch from_epoch = 0;  // valid only when kind == RequestSnapshot
+  Epoch from_epoch = 0; // valid only when kind == RequestSnapshot
 
   static ResyncAction apply() { return {Kind::Apply, 0}; }
-  static ResyncAction request_snapshot(Epoch from_epoch) { return {Kind::RequestSnapshot, from_epoch}; }
+  static ResyncAction request_snapshot(Epoch from_epoch) {
+    return {Kind::RequestSnapshot, from_epoch};
+  }
   static ResyncAction ignore() { return {Kind::Ignore, 0}; }
 
   bool is_apply() const { return kind == Kind::Apply; }
@@ -77,7 +79,7 @@ struct ResyncAction {
 // advances `last_epoch` on Apply; the caller MUST fold the frame's ops on Apply.
 // Mirrors `ReliableSync.step`.
 class ResyncCoordinator {
- public:
+public:
   explicit ResyncCoordinator(Epoch last_epoch = 0) : last_epoch_(last_epoch) {}
 
   Epoch last_epoch() const { return last_epoch_; }
@@ -91,14 +93,14 @@ class ResyncCoordinator {
         resyncing_ = false;
         return ResyncAction::apply();
       }
-      return ResyncAction::ignore();  // empty/backward epoch
+      return ResyncAction::ignore(); // empty/backward epoch
     }
     if (delta.base_epoch < last_epoch_) {
-      return ResyncAction::ignore();  // already applied — re-delivery
+      return ResyncAction::ignore(); // already applied — re-delivery
     }
     // gap: base_epoch > last_epoch
     if (resyncing_) {
-      return ResyncAction::ignore();  // suppress duplicate request
+      return ResyncAction::ignore(); // suppress duplicate request
     }
     resyncing_ = true;
     return ResyncAction::request_snapshot(last_epoch_);
@@ -119,13 +121,13 @@ class ResyncCoordinator {
       return ingest_snapshot(std::get<IpcMessageSnapshot>(msg).value.epoch);
     if (std::holds_alternative<IpcMessageDelta>(msg))
       return ingest_delta(std::get<IpcMessageDelta>(msg).value);
-    return ResyncAction::ignore();  // CrdtSync / ResyncRequest / OutboxAck
+    return ResyncAction::ignore(); // CrdtSync / ResyncRequest / OutboxAck
   }
 
   // The OutboxAck message advertising this receiver's resume cursor.
   IpcMessage ack() const { return ipc_outbox_ack(last_epoch_); }
 
- private:
+private:
   Epoch last_epoch_;
   bool resyncing_ = false;
 };
@@ -137,7 +139,7 @@ class ResyncCoordinator {
 // everything unacked. With the receiver's idempotent Ignore of already-applied
 // deltas this is at-least-once delivery with exactly-once effect.
 class DurableOutbox {
- public:
+public:
   virtual ~DurableOutbox() = default;
 
   // Persist `msg` at `epoch` before the send is attempted.
@@ -161,34 +163,29 @@ struct StoredOutboxFrame {
 };
 
 // C++17 structural form of the five-operation ordered-byte store contract.
-template <typename Store, typename = void>
-struct OutboxStore : std::false_type {};
+template <typename Store, typename = void> struct OutboxStore : std::false_type {};
 
 template <typename Store>
-struct OutboxStore<Store, std::void_t<
-    decltype(std::declval<Store&>().put(
-        std::declval<Epoch>(), std::declval<const std::vector<uint8_t>&>())),
-    decltype(std::declval<Store&>().delete_through(std::declval<Epoch>())),
-    decltype(std::declval<const Store&>().scan_after(std::declval<Epoch>())),
-    decltype(std::declval<const Store&>().load_cursor()),
-    decltype(std::declval<Store&>().save_cursor(std::declval<Epoch>()))>>
-    : std::integral_constant<bool,
-          std::is_same<decltype(std::declval<const Store&>().scan_after(
-                           std::declval<Epoch>())),
+struct OutboxStore<
+    Store, std::void_t<decltype(std::declval<Store&>().put(
+                           std::declval<Epoch>(), std::declval<const std::vector<uint8_t>&>())),
+                       decltype(std::declval<Store&>().delete_through(std::declval<Epoch>())),
+                       decltype(std::declval<const Store&>().scan_after(std::declval<Epoch>())),
+                       decltype(std::declval<const Store&>().load_cursor()),
+                       decltype(std::declval<Store&>().save_cursor(std::declval<Epoch>()))>>
+    : std::integral_constant<
+          bool,
+          std::is_same<decltype(std::declval<const Store&>().scan_after(std::declval<Epoch>())),
                        std::vector<StoredOutboxFrame>>::value &&
-          std::is_same<decltype(std::declval<const Store&>().load_cursor()),
-                       Epoch>::value> {};
+              std::is_same<decltype(std::declval<const Store&>().load_cursor()), Epoch>::value> {};
 
-template <typename Store>
-inline constexpr bool is_outbox_store_v = OutboxStore<Store>::value;
+template <typename Store> inline constexpr bool is_outbox_store_v = OutboxStore<Store>::value;
 
 // Ordered process-local byte store. The generic protocol below owns encoding,
 // cursor monotonicity, pruning, and replay ordering.
 class InMemoryStore {
 public:
-  void put(Epoch epoch, const std::vector<uint8_t>& frame) {
-    entries_[epoch] = frame;
-  }
+  void put(Epoch epoch, const std::vector<uint8_t>& frame) { entries_[epoch] = frame; }
 
   void delete_through(Epoch epoch) {
     entries_.erase(entries_.begin(), entries_.upper_bound(epoch));
@@ -212,8 +209,7 @@ private:
 
 // The one ack/prune/replay implementation shared by every C++ byte backend.
 // `StoredOutbox` avoids colliding with RelayCell's existing `Outbox<T>` role.
-template <typename Store>
-class StoredOutbox : public DurableOutbox {
+template <typename Store> class StoredOutbox : public DurableOutbox {
   static_assert(is_outbox_store_v<Store>, "Store must satisfy OutboxStore");
 
 public:
@@ -224,9 +220,7 @@ public:
   explicit StoredOutbox(Store store)
       : store_(std::move(store)), acked_through_(store_.load_cursor()) {}
 
-  void append(Epoch epoch, const IpcMessage& msg) override {
-    store_.put(epoch, encode(msg));
-  }
+  void append(Epoch epoch, const IpcMessage& msg) override { store_.put(epoch, encode(msg)); }
 
   void ack_through(Epoch epoch) override {
     const Epoch target = std::max({acked_through_, epoch, store_.load_cursor()});
@@ -242,10 +236,9 @@ public:
   std::vector<std::pair<Epoch, IpcMessage>> replay_from(Epoch cursor) const override {
     const Epoch effective = std::max({cursor, acked_through_, store_.load_cursor()});
     auto stored = store_.scan_after(effective);
-    std::sort(stored.begin(), stored.end(),
-              [](const StoredOutboxFrame& a, const StoredOutboxFrame& b) {
-                return a.epoch < b.epoch;
-              });
+    std::sort(
+        stored.begin(), stored.end(),
+        [](const StoredOutboxFrame& a, const StoredOutboxFrame& b) { return a.epoch < b.epoch; });
     std::vector<std::pair<Epoch, IpcMessage>> out;
     out.reserve(stored.size());
     for (const auto& entry : stored) {
@@ -259,14 +252,13 @@ public:
     auto stored = store_.scan_after(effective);
     std::vector<Epoch> out;
     out.reserve(stored.size());
-    for (const auto& entry : stored) out.push_back(entry.epoch);
+    for (const auto& entry : stored)
+      out.push_back(entry.epoch);
     std::sort(out.begin(), out.end());
     return out;
   }
 
-  Epoch acked_through() const {
-    return std::max(acked_through_, store_.load_cursor());
-  }
+  Epoch acked_through() const { return std::max(acked_through_, store_.load_cursor()); }
 
   Store& store() { return store_; }
   const Store& store() const { return store_; }
@@ -290,17 +282,11 @@ public:
     ensure_file();
   }
 
-  void put(Epoch epoch, const std::vector<uint8_t>& frame) {
-    append_record(kPut, epoch, frame);
-  }
+  void put(Epoch epoch, const std::vector<uint8_t>& frame) { append_record(kPut, epoch, frame); }
 
-  void delete_through(Epoch epoch) {
-    append_record(kDelete, epoch, {});
-  }
+  void delete_through(Epoch epoch) { append_record(kDelete, epoch, {}); }
 
-  void save_cursor(Epoch epoch) {
-    append_record(kCursor, epoch, {});
-  }
+  void save_cursor(Epoch epoch) { append_record(kCursor, epoch, {}); }
 
   Epoch load_cursor() const {
     Epoch cursor = 0;
@@ -375,8 +361,7 @@ private:
     append_bytes(record);
   }
 
-  template <typename Visitor>
-  void for_each_record(Visitor&& visitor) const {
+  template <typename Visitor> void for_each_record(Visitor&& visitor) const {
     const auto bytes = read_all();
     size_t offset = 0;
     while (bytes.size() - offset >= kHeaderSize) {
@@ -486,11 +471,12 @@ using FileOutbox = StoredOutbox<FileOutboxStore>;
 // (add-wins over a stale remove). Join is the union of both tag sets — a
 // semilattice, so out-of-order and duplicate delivery converge.
 class OrSet {
- public:
+public:
   void add(const std::string& tag) { adds_.insert(tag); }
 
   void remove_observed(const std::vector<std::string>& tags) {
-    for (const auto& t : tags) removes_.insert(t);
+    for (const auto& t : tags)
+      removes_.insert(t);
   }
 
   bool present() const {
@@ -505,7 +491,7 @@ class OrSet {
     removes_.insert(other.removes_.begin(), other.removes_.end());
   }
 
- private:
+private:
   std::set<std::string> adds_;
   std::set<std::string> removes_;
 };
@@ -521,9 +507,8 @@ inline bool wire_stamp_greater(const WireStamp& a, const WireStamp& b) {
   return a.peer > b.peer;
 }
 
-template <class V>
-class WireLwwRegister {
- public:
+template <class V> class WireLwwRegister {
+public:
   WireLwwRegister(WireStamp stamp, V value) : stamp_(stamp), value_(std::move(value)) {}
 
   const WireStamp& stamp() const { return stamp_; }
@@ -540,7 +525,7 @@ class WireLwwRegister {
   // Join another replica's register (keep the higher stamp).
   void join(const WireLwwRegister<V>& other) { set(other.stamp_, other.value_); }
 
- private:
+private:
   WireStamp stamp_;
   V value_;
 };
@@ -581,20 +566,19 @@ using SnapshotProvider = std::function<IpcMessage(Epoch)>;
 // failure, by contrast, is retain-and-stall (reported through Progress/stall
 // signals), NOT an exception.
 class SyncDriverSourceException : public std::runtime_error {
- public:
+public:
   SyncDriverSourceException()
-      : std::runtime_error(
-            "inbound IpcSource read failed — reconnect and call on_reconnect()") {}
+      : std::runtime_error("inbound IpcSource read failed — reconnect and call on_reconnect()") {}
 };
 
 // What one `SyncDriver::tick` accomplished (spec § SyncDriver).
 struct Progress {
-  int sent = 0;                       // data frames pushed to the sink this tick
-  std::vector<IpcMessage> applied;    // inbound frames the host must fold into its projection
-  bool resync_requested = false;      // a gap was detected inbound and a ResyncRequest emitted
-  int snapshots_served = 0;           // inbound ResyncRequests answered with a provider snapshot
-  Epoch peer_acked_through = 0;       // the peer's ack cursor after this tick
-  int retained = 0;                   // outbox frames still unacked
+  int sent = 0;                    // data frames pushed to the sink this tick
+  std::vector<IpcMessage> applied; // inbound frames the host must fold into its projection
+  bool resync_requested = false;   // a gap was detected inbound and a ResyncRequest emitted
+  int snapshots_served = 0;        // inbound ResyncRequests answered with a provider snapshot
+  Epoch peer_acked_through = 0;    // the peer's ack cursor after this tick
+  int retained = 0;                // outbox frames still unacked
 };
 
 // Full-duplex reliable-sync loop driver (spec § SyncDriver). One driver drives
@@ -615,24 +599,18 @@ struct Progress {
 // The driver owns no threads, no clock source, and no storage engine — the host
 // injects all three and decides the tick cadence.
 class SyncDriver {
- public:
-  SyncDriver(IpcSink sink, IpcSource source, std::shared_ptr<DurableOutbox> outbox,
-             Clock clock, SnapshotProvider provider, Epoch last_epoch = 0)
-      : sink_(std::move(sink)),
-        source_(std::move(source)),
-        outbox_(std::move(outbox)),
-        clock_(std::move(clock)),
-        provider_(std::move(provider)),
-        coordinator_(last_epoch) {}
+public:
+  SyncDriver(IpcSink sink, IpcSource source, std::shared_ptr<DurableOutbox> outbox, Clock clock,
+             SnapshotProvider provider, Epoch last_epoch = 0)
+      : sink_(std::move(sink)), source_(std::move(source)), outbox_(std::move(outbox)),
+        clock_(std::move(clock)), provider_(std::move(provider)), coordinator_(last_epoch) {}
 
   // Borrowable outbox (diagnostics / durable-store flush).
   DurableOutbox& outbox() { return *outbox_; }
 
   // Stage an outbound data frame at `epoch` for the next tick's drain. `epoch` is
   // the frame's accepted-event count; it becomes the outbox retention key.
-  void enqueue(Epoch epoch, const IpcMessage& msg) {
-    pending_.emplace_back(epoch, msg);
-  }
+  void enqueue(Epoch epoch, const IpcMessage& msg) { pending_.emplace_back(epoch, msg); }
 
   // Signal that the transport was re-established; the next tick replays the
   // unacked outbox suffix and re-advertises our receiver cursor.
@@ -667,7 +645,7 @@ class SyncDriver {
           prog.sent += 1;
         } else {
           stalled_since_ = now;
-          replay_pending_ = true;  // finish the replay after the next reconnect
+          replay_pending_ = true; // finish the replay after the next reconnect
           break;
         }
       }
@@ -709,24 +687,30 @@ class SyncDriver {
       } else if (std::holds_alternative<IpcMessageResyncRequest>(msg)) {
         Epoch from = std::get<IpcMessageResyncRequest>(msg).value.from_epoch;
         IpcMessage snap = provider_(from);
-        if (sink_(snap)) prog.snapshots_served += 1; else stalled_since_ = now;
+        if (sink_(snap))
+          prog.snapshots_served += 1;
+        else
+          stalled_since_ = now;
       } else if (std::holds_alternative<IpcMessageCrdtSync>(msg)) {
         // Idempotent anti-entropy plane — the host folds it directly.
         prog.applied.push_back(msg);
-      } else {  // Snapshot / Delta
+      } else { // Snapshot / Delta
         ResyncAction action = coordinator_.ingest(msg);
         switch (action.kind) {
-          case ResyncAction::Kind::Apply:
-            ack_owed_ = true;
-            prog.applied.push_back(msg);
-            break;
-          case ResyncAction::Kind::RequestSnapshot: {
-            IpcMessage req = ipc_resync_request(action.from_epoch);
-            if (sink_(req)) prog.resync_requested = true; else stalled_since_ = now;
-            break;
-          }
-          case ResyncAction::Kind::Ignore:
-            break;
+        case ResyncAction::Kind::Apply:
+          ack_owed_ = true;
+          prog.applied.push_back(msg);
+          break;
+        case ResyncAction::Kind::RequestSnapshot: {
+          IpcMessage req = ipc_resync_request(action.from_epoch);
+          if (sink_(req))
+            prog.resync_requested = true;
+          else
+            stalled_since_ = now;
+          break;
+        }
+        case ResyncAction::Kind::Ignore:
+          break;
         }
       }
     }
@@ -741,7 +725,7 @@ class SyncDriver {
     return prog;
   }
 
- private:
+private:
   IpcSink sink_;
   IpcSource source_;
   std::shared_ptr<DurableOutbox> outbox_;
@@ -756,6 +740,6 @@ class SyncDriver {
   std::optional<int64_t> stalled_since_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_RELIABLE_SYNC_HPP
+#endif // LAZILY_RELIABLE_SYNC_HPP

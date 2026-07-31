@@ -1,8 +1,8 @@
 #ifndef LAZILY_COLLECTIONS_HPP
 #define LAZILY_COLLECTIONS_HPP
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 #include <lazily/reactive_family.hpp>
 
 #include <algorithm>
@@ -19,8 +19,7 @@ namespace lazily {
 
 // -- SourceTree: ordered keyed reactive tree --
 
-template <typename Id, typename V>
-struct SourceTreeNode {
+template <typename Id, typename V> struct SourceTreeNode {
   Id id;
   Source<V> value;
   std::optional<SourceMap<Id, bool>> order;
@@ -28,11 +27,9 @@ struct SourceTreeNode {
   std::vector<std::shared_ptr<SourceTreeNode<Id, V>>> children;
 };
 
-template <typename Id, typename V>
-class SourceTree {
- public:
-  SourceTree(Context& ctx, Id id, V value)
-      : inner_(std::make_shared<SourceTreeNode<Id, V>>()) {
+template <typename Id, typename V> class SourceTree {
+public:
+  SourceTree(Context& ctx, Id id, V value) : inner_(std::make_shared<SourceTreeNode<Id, V>>()) {
     inner_->id = std::move(id);
     inner_->value = ctx.source(std::move(value));
     inner_->order.emplace(ctx);
@@ -50,8 +47,7 @@ class SourceTree {
 
   SourceTree insert_child(Context& ctx, Id child_id, V value) {
     auto it = inner_->child_index.find(child_id);
-    if (it != inner_->child_index.end())
-      return SourceTree(inner_->children[it->second]);
+    if (it != inner_->child_index.end()) return SourceTree(inner_->children[it->second]);
 
     auto child = std::make_shared<SourceTreeNode<Id, V>>();
     child->id = child_id;
@@ -91,28 +87,26 @@ class SourceTree {
 
     for (auto& [k, v] : inner_->child_index) {
       if (from < to) {
-        if (v == from) v = to;
-        else if (v > from && v <= to) v--;
+        if (v == from)
+          v = to;
+        else if (v > from && v <= to)
+          v--;
       } else {
-        if (v == from) v = to;
-        else if (v >= to && v < from) v++;
+        if (v == from)
+          v = to;
+        else if (v >= to && v < from)
+          v++;
       }
     }
     inner_->order->move_to(ctx, child_id, to);
     return true;
   }
 
-  std::vector<Id> child_ids(Context& ctx) {
-    return inner_->order->keys(ctx);
-  }
+  std::vector<Id> child_ids(Context& ctx) { return inner_->order->keys(ctx); }
 
-  size_t child_count(Context& ctx) {
-    return inner_->order->len(ctx);
-  }
+  size_t child_count(Context& ctx) { return inner_->order->len(ctx); }
 
-  bool has_child(const Id& child_id) const {
-    return inner_->child_index.count(child_id) > 0;
-  }
+  bool has_child(const Id& child_id) const { return inner_->child_index.count(child_id) > 0; }
 
   std::optional<SourceTree> child(const Id& child_id) const {
     auto it = inner_->child_index.find(child_id);
@@ -120,17 +114,15 @@ class SourceTree {
     return SourceTree(inner_->children[it->second]);
   }
 
- private:
+private:
   std::shared_ptr<SourceTreeNode<Id, V>> inner_;
 
-  explicit SourceTree(std::shared_ptr<SourceTreeNode<Id, V>> node)
-      : inner_(std::move(node)) {}
+  explicit SourceTree(std::shared_ptr<SourceTreeNode<Id, V>> node) : inner_(std::move(node)) {}
 };
 
 // -- Keyed reconciliation (LIS move-minimized) --
 
-template <typename K, typename V>
-struct DiffOp {
+template <typename K, typename V> struct DiffOp {
   enum class Kind { Insert, Remove, Move, Update };
   Kind kind;
   K key;
@@ -140,12 +132,8 @@ struct DiffOp {
   static DiffOp insert(K key, V value, size_t index) {
     return {Kind::Insert, std::move(key), std::move(value), index};
   }
-  static DiffOp remove(K key) {
-    return {Kind::Remove, std::move(key), std::nullopt, 0};
-  }
-  static DiffOp move(K key, size_t to) {
-    return {Kind::Move, std::move(key), std::nullopt, to};
-  }
+  static DiffOp remove(K key) { return {Kind::Remove, std::move(key), std::nullopt, 0}; }
+  static DiffOp move(K key, size_t to) { return {Kind::Move, std::move(key), std::nullopt, to}; }
   static DiffOp update(K key, V value) {
     return {Kind::Update, std::move(key), std::move(value), 0};
   }
@@ -184,23 +172,24 @@ inline std::vector<size_t> longest_increasing_subsequence(const std::vector<size
 
 template <typename K, typename V>
 std::vector<DiffOp<K, V>> reconcile(const std::vector<std::pair<K, V>>& old_seq,
-                                     const std::vector<std::pair<K, V>>& new_seq) {
+                                    const std::vector<std::pair<K, V>>& new_seq) {
   std::unordered_map<K, size_t> old_pos;
   for (size_t i = 0; i < old_seq.size(); ++i)
     old_pos[old_seq[i].first] = i;
 
   std::unordered_map<K, const V*> old_val;
-  for (auto& [k, v] : old_seq) old_val[k] = &v;
+  for (auto& [k, v] : old_seq)
+    old_val[k] = &v;
 
   std::unordered_set<K> new_keys;
-  for (auto& [k, v] : new_seq) new_keys.insert(k);
+  for (auto& [k, v] : new_seq)
+    new_keys.insert(k);
 
   std::vector<DiffOp<K, V>> ops;
 
   // 1. Removes
   for (auto& [k, v] : old_seq) {
-    if (!new_keys.count(k))
-      ops.push_back(DiffOp<K, V>::remove(k));
+    if (!new_keys.count(k)) ops.push_back(DiffOp<K, V>::remove(k));
   }
 
   // 2. Common keys in new order → LIS
@@ -215,14 +204,14 @@ std::vector<DiffOp<K, V>> reconcile(const std::vector<std::pair<K, V>>& old_seq,
   }
   auto lis = longest_increasing_subsequence(seq);
   std::unordered_set<size_t> stable;
-  for (auto j : lis) stable.insert(common_new_idx[j]);
+  for (auto j : lis)
+    stable.insert(common_new_idx[j]);
 
   // 3. Inserts + Moves
   for (size_t i = 0; i < new_seq.size(); ++i) {
     const K& k = new_seq[i].first;
     if (old_pos.count(k)) {
-      if (!stable.count(i))
-        ops.push_back(DiffOp<K, V>::move(k, i));
+      if (!stable.count(i)) ops.push_back(DiffOp<K, V>::move(k, i));
     } else {
       ops.push_back(DiffOp<K, V>::insert(k, new_seq[i].second, i));
     }
@@ -231,61 +220,56 @@ std::vector<DiffOp<K, V>> reconcile(const std::vector<std::pair<K, V>>& old_seq,
   // 4. Updates
   for (auto& [k, v] : new_seq) {
     auto it = old_val.find(k);
-    if (it != old_val.end() && *it->second != v)
-      ops.push_back(DiffOp<K, V>::update(k, v));
+    if (it != old_val.end() && *it->second != v) ops.push_back(DiffOp<K, V>::update(k, v));
   }
 
   return ops;
 }
 
 template <typename K, typename V>
-void apply_to_map(Context& ctx, SourceMap<K, V>& map,
-                   const std::vector<DiffOp<K, V>>& ops) {
+void apply_to_map(Context& ctx, SourceMap<K, V>& map, const std::vector<DiffOp<K, V>>& ops) {
   for (auto& op : ops) {
     switch (op.kind) {
-      case DiffOp<K, V>::Kind::Remove:
-        map.remove(ctx, op.key);
-        break;
-      case DiffOp<K, V>::Kind::Insert:
-        map.entry(ctx, op.key, *op.value);
-        map.move_to(ctx, op.key, op.index);
-        break;
-      case DiffOp<K, V>::Kind::Move:
-        map.move_to(ctx, op.key, op.index);
-        break;
-      case DiffOp<K, V>::Kind::Update:
-        map.set(ctx, op.key, *op.value);
-        break;
+    case DiffOp<K, V>::Kind::Remove:
+      map.remove(ctx, op.key);
+      break;
+    case DiffOp<K, V>::Kind::Insert:
+      map.entry(ctx, op.key, *op.value);
+      map.move_to(ctx, op.key, op.index);
+      break;
+    case DiffOp<K, V>::Kind::Move:
+      map.move_to(ctx, op.key, op.index);
+      break;
+    case DiffOp<K, V>::Kind::Update:
+      map.set(ctx, op.key, *op.value);
+      break;
     }
   }
 }
 
 template <typename K, typename V>
-void apply_to_tree(Context& ctx, SourceTree<K, V>& tree,
-                   const std::vector<DiffOp<K, V>>& ops) {
+void apply_to_tree(Context& ctx, SourceTree<K, V>& tree, const std::vector<DiffOp<K, V>>& ops) {
   for (auto& op : ops) {
     switch (op.kind) {
-      case DiffOp<K, V>::Kind::Remove:
-        tree.remove_child(ctx, op.key);
-        break;
-      case DiffOp<K, V>::Kind::Insert:
-        tree.insert_child(ctx, op.key, *op.value);
-        tree.move_child(ctx, op.key, op.index);
-        break;
-      case DiffOp<K, V>::Kind::Move:
-        tree.move_child(ctx, op.key, op.index);
-        break;
-      case DiffOp<K, V>::Kind::Update:
-        if (auto child = tree.child(op.key))
-          child->set(ctx, *op.value);
-        break;
+    case DiffOp<K, V>::Kind::Remove:
+      tree.remove_child(ctx, op.key);
+      break;
+    case DiffOp<K, V>::Kind::Insert:
+      tree.insert_child(ctx, op.key, *op.value);
+      tree.move_child(ctx, op.key, op.index);
+      break;
+    case DiffOp<K, V>::Kind::Move:
+      tree.move_child(ctx, op.key, op.index);
+      break;
+    case DiffOp<K, V>::Kind::Update:
+      if (auto child = tree.child(op.key)) child->set(ctx, *op.value);
+      break;
     }
   }
 }
 
 template <typename K, typename V>
-void SourceMap<K, V>::reconcile(Context& ctx,
-                               const std::vector<std::pair<K, V>>& new_seq) {
+void SourceMap<K, V>::reconcile(Context& ctx, const std::vector<std::pair<K, V>>& new_seq) {
   std::vector<std::pair<K, V>> old_seq;
   for (auto& k : this->keys(ctx)) {
     auto v = this->get(ctx, k);
@@ -301,11 +285,10 @@ void SourceMap<K, V>::reconcile(Context& ctx,
 // names followed. The old names remain as alias templates so existing callers
 // keep compiling — they are not removed.
 template <typename Id, typename V>
-using CellTreeNode [[deprecated("renamed to SourceTreeNode")]] =
-    SourceTreeNode<Id, V>;
+using CellTreeNode [[deprecated("renamed to SourceTreeNode")]] = SourceTreeNode<Id, V>;
 template <typename Id, typename V>
 using CellTree [[deprecated("renamed to SourceTree")]] = SourceTree<Id, V>;
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_COLLECTIONS_HPP
+#endif // LAZILY_COLLECTIONS_HPP

@@ -21,32 +21,68 @@ namespace lazily {
 enum class SignalingMode { Open, Allowlist };
 
 // Client → Server messages (internally tagged by "type")
-struct ClientJoin { PeerId peer; std::vector<std::string> capabilities; };
-struct ClientOffer { PeerId to; std::string sdp; };
-struct ClientAnswer { PeerId to; std::string sdp; };
-struct ClientIce { PeerId to; std::string candidate; };
-struct ClientRelay { PeerId to; std::string payload; };
+struct ClientJoin {
+  PeerId peer;
+  std::vector<std::string> capabilities;
+};
+struct ClientOffer {
+  PeerId to;
+  std::string sdp;
+};
+struct ClientAnswer {
+  PeerId to;
+  std::string sdp;
+};
+struct ClientIce {
+  PeerId to;
+  std::string candidate;
+};
+struct ClientRelay {
+  PeerId to;
+  std::string payload;
+};
 struct ClientLeave {};
 
-using ClientMessage = std::variant<ClientJoin, ClientOffer, ClientAnswer,
-                                      ClientIce, ClientRelay, ClientLeave>;
+using ClientMessage =
+    std::variant<ClientJoin, ClientOffer, ClientAnswer, ClientIce, ClientRelay, ClientLeave>;
 
 // Server → Client messages
-struct ServerWelcome { PeerId peer; std::vector<PeerId> peers; };
-struct ServerPeerJoined { PeerId peer; };
-struct ServerPeerLeft { PeerId peer; };
-struct ServerOffer { PeerId from; std::string sdp; };
-struct ServerAnswer { PeerId from; std::string sdp; };
-struct ServerIce { PeerId from; std::string candidate; };
-struct ServerRelay { PeerId from; std::string payload; };
-struct ServerError { std::string code; std::string message; };
+struct ServerWelcome {
+  PeerId peer;
+  std::vector<PeerId> peers;
+};
+struct ServerPeerJoined {
+  PeerId peer;
+};
+struct ServerPeerLeft {
+  PeerId peer;
+};
+struct ServerOffer {
+  PeerId from;
+  std::string sdp;
+};
+struct ServerAnswer {
+  PeerId from;
+  std::string sdp;
+};
+struct ServerIce {
+  PeerId from;
+  std::string candidate;
+};
+struct ServerRelay {
+  PeerId from;
+  std::string payload;
+};
+struct ServerError {
+  std::string code;
+  std::string message;
+};
 
-using ServerMessage = std::variant<ServerWelcome, ServerPeerJoined, ServerPeerLeft,
-                                      ServerOffer, ServerAnswer, ServerIce,
-                                      ServerRelay, ServerError>;
+using ServerMessage = std::variant<ServerWelcome, ServerPeerJoined, ServerPeerLeft, ServerOffer,
+                                   ServerAnswer, ServerIce, ServerRelay, ServerError>;
 
 class SignalingRoom {
- public:
+public:
   using ConnID = uint64_t;
 
   explicit SignalingRoom(SignalingMode mode = SignalingMode::Open)
@@ -186,8 +222,8 @@ class SignalingRoom {
       }
       if (!delivered) {
         // Answer the sender rather than dropping the frame.
-        results.push_back(ServerError{
-            "unknown_target", "peer " + std::to_string(target) + " is not in this session"});
+        results.push_back(ServerError{"unknown_target", "peer " + std::to_string(target) +
+                                                            " is not in this session"});
       }
     }
     return results;
@@ -203,7 +239,7 @@ class SignalingRoom {
     return result;
   }
 
- private:
+private:
   struct ConnState {
     std::optional<PeerId> peer;
     std::vector<ServerMessage> outbound;
@@ -229,6 +265,6 @@ class SignalingRoom {
   std::unordered_map<PeerId, std::unordered_set<PeerId>> signal_allowed_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_SIGNALING_HPP
+#endif // LAZILY_SIGNALING_HPP

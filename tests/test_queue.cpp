@@ -12,15 +12,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                                             \
-  static void name();                                                          \
-  struct name##_runner {                                                       \
-    name##_runner() {                                                          \
-      ++test_count;                                                            \
-      name();                                                                  \
-      ++test_passed;                                                           \
-    }                                                                          \
-  } name##_instance;                                                           \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // Helper: a reactive reader that caches the observed value of a QueueCell
@@ -43,7 +43,7 @@ TEST(test_queue_backpressure_effect) {
 
   int resume_count = 0;
   bool last_full = false;
-  auto eff = ctx.effect_void([&](Compute &c) {
+  auto eff = ctx.effect_void([&](Compute& c) {
     bool f = q.is_full(c);
     if (f != last_full || resume_count == 0) {
       last_full = f;
@@ -68,10 +68,8 @@ public:
   explicit RingStorage(size_t cap) : buf_(cap), cap_(cap) {}
 
   PushResult try_push(T v) {
-    if (closed_)
-      return PushResult::Closed;
-    if (count_ == cap_)
-      return PushResult::Full;
+    if (closed_) return PushResult::Closed;
+    if (count_ == cap_) return PushResult::Full;
     buf_[tail_] = std::move(v);
     tail_ = (tail_ + 1) % cap_;
     ++count_;
@@ -79,8 +77,7 @@ public:
   }
 
   PopResult<T> try_pop() {
-    if (count_ == 0)
-      return closed_ ? PopResult<T>::closed() : PopResult<T>::empty();
+    if (count_ == 0) return closed_ ? PopResult<T>::closed() : PopResult<T>::empty();
     T v = std::move(buf_[head_]);
     head_ = (head_ + 1) % cap_;
     --count_;
@@ -88,8 +85,7 @@ public:
   }
 
   std::optional<T> head() const {
-    if (count_ == 0)
-      return std::nullopt;
+    if (count_ == 0) return std::nullopt;
     return buf_[head_];
   }
   size_t len() const { return count_; }
@@ -139,14 +135,12 @@ TEST(test_queue_closed_distinct_from_empty) {
 template <typename T> class MinimalFifo {
 public:
   PushResult try_push(T v) {
-    if (closed_)
-      return PushResult::Closed;
+    if (closed_) return PushResult::Closed;
     buf_.push_back(std::move(v));
     return PushResult::Ok;
   }
   PopResult<T> try_pop() {
-    if (buf_.empty())
-      return closed_ ? PopResult<T>::closed() : PopResult<T>::empty();
+    if (buf_.empty()) return closed_ ? PopResult<T>::closed() : PopResult<T>::empty();
     T v = std::move(buf_.front());
     buf_.pop_front();
     return PopResult<T>::with_value(std::move(v));
@@ -192,7 +186,7 @@ TEST(test_queue_raw_channel_reader_reactive) {
   Context ctx;
   QueueCell<int, MinimalFifo<int>> q(ctx, MinimalFifo<int>());
   std::vector<size_t> log;
-  auto eff = ctx.effect_void([&](Compute &c) { log.push_back(q.len(c)); });
+  auto eff = ctx.effect_void([&](Compute& c) { log.push_back(q.len(c)); });
   (void)eff;
 
   assert(log.size() == 1 && log[0] == 0);
@@ -214,7 +208,7 @@ TEST(test_thread_safe_queue_concurrent_producers_are_confluent) {
         q.push(ctx, producer * per_producer + i);
     });
   }
-  for (auto &thread : threads)
+  for (auto& thread : threads)
     thread.join();
 
   assert(q.len(ctx) == producers * per_producer);
@@ -239,7 +233,7 @@ TEST(test_thread_safe_topic_concurrent_publish_is_confluent) {
         topic.publish(ctx, publisher * per_publisher + i);
     });
   }
-  for (auto &thread : threads)
+  for (auto& thread : threads)
     thread.join();
 
   const auto stream = topic.read_stream(ctx, "subscriber");
@@ -283,8 +277,7 @@ TEST(test_topic_durable_replay_and_gc) {
   topic.publish(ctx, "c");
   assert(topic.gc() == 1);
   topic.reconnect(ctx, "slow");
-  assert(topic.read_stream(ctx, "slow") ==
-         (std::vector<std::string>{"b", "c"}));
+  assert(topic.read_stream(ctx, "slow") == (std::vector<std::string>{"b", "c"}));
 
   Context restored_ctx;
   TopicCell<std::string> restored(restored_ctx, topic.snapshot());
@@ -330,20 +323,19 @@ TEST(test_topic_tail_and_offline_advance_are_noops) {
 TEST(test_topic_snapshot_rejects_disconnected_ephemeral) {
   Context ctx;
   TopicSnapshot<std::string> snapshot;
-  snapshot.subscriptions.push_back(
-      {"viewer", 0, TopicDurability::Ephemeral, false});
+  snapshot.subscriptions.push_back({"viewer", 0, TopicDurability::Ephemeral, false});
   bool rejected = false;
   try {
     TopicCell<std::string> topic(ctx, snapshot);
     (void)topic;
-  } catch (const std::invalid_argument &) {
+  } catch (const std::invalid_argument&) {
     rejected = true;
   }
   assert(rejected);
 }
 
 int main() {
-  std::cout << "lazily-cpp queue tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp queue tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

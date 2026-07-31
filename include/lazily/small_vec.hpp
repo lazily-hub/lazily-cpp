@@ -16,8 +16,7 @@ namespace lazily {
 /// Uses a union layout so that heap metadata (pointer + capacity) overlaps with
 /// the inline buffer. For InlineCapacity=2 with 8-byte T, the total size equals
 /// std::vector (24 bytes), but with zero heap allocation for 0-2 elements.
-template <typename T, size_t InlineCapacity>
-class SmallVec {
+template <typename T, size_t InlineCapacity> class SmallVec {
   static constexpr size_t kInlineBytes = InlineCapacity * sizeof(T);
   static constexpr size_t kHeapMetaBytes = sizeof(T*) + sizeof(size_t);
   static constexpr size_t kBufBytes =
@@ -25,7 +24,7 @@ class SmallVec {
   static constexpr size_t kHeapBit = size_t(1) << (sizeof(size_t) * 8 - 1);
   static constexpr bool kTrivial = std::is_trivially_copyable_v<T>;
 
- public:
+public:
   static constexpr size_t kInlineCapacity = InlineCapacity;
 
   SmallVec() noexcept = default;
@@ -84,13 +83,9 @@ class SmallVec {
 
   size_t size() const noexcept { return raw_size_ & ~kHeapBit; }
   bool empty() const noexcept { return size() == 0; }
-  size_t capacity() const noexcept {
-    return is_heap() ? heap_cap() : InlineCapacity;
-  }
+  size_t capacity() const noexcept { return is_heap() ? heap_cap() : InlineCapacity; }
 
-  T* data() noexcept {
-    return is_heap() ? heap_ptr() : reinterpret_cast<T*>(buf_);
-  }
+  T* data() noexcept { return is_heap() ? heap_ptr() : reinterpret_cast<T*>(buf_); }
   const T* data() const noexcept {
     return is_heap() ? heap_ptr() : reinterpret_cast<const T*>(buf_);
   }
@@ -150,7 +145,7 @@ class SmallVec {
     pop_back();
   }
 
- private:
+private:
   alignas(T) unsigned char buf_[kBufBytes];
   size_t raw_size_ = 0;
 
@@ -158,21 +153,17 @@ class SmallVec {
   void set_inline_size(size_t s) noexcept { raw_size_ = s; }
   void set_heap_size(size_t s) noexcept { raw_size_ = s | kHeapBit; }
   void set_size(size_t s) noexcept {
-    if (is_heap()) set_heap_size(s);
-    else set_inline_size(s);
+    if (is_heap())
+      set_heap_size(s);
+    else
+      set_inline_size(s);
   }
 
   T*& heap_ptr_ref() noexcept { return *reinterpret_cast<T**>(buf_); }
   T* heap_ptr() noexcept { return heap_ptr_ref(); }
-  const T* heap_ptr() const noexcept {
-    return *reinterpret_cast<T* const*>(buf_);
-  }
-  size_t& heap_cap_ref() noexcept {
-    return *reinterpret_cast<size_t*>(buf_ + sizeof(T*));
-  }
-  size_t heap_cap() const noexcept {
-    return *reinterpret_cast<const size_t*>(buf_ + sizeof(T*));
-  }
+  const T* heap_ptr() const noexcept { return *reinterpret_cast<T* const*>(buf_); }
+  size_t& heap_cap_ref() noexcept { return *reinterpret_cast<size_t*>(buf_ + sizeof(T*)); }
+  size_t heap_cap() const noexcept { return *reinterpret_cast<const size_t*>(buf_ + sizeof(T*)); }
   void set_heap(T* ptr, size_t cap, size_t sz) noexcept {
     heap_ptr_ref() = ptr;
     heap_cap_ref() = cap;
@@ -198,12 +189,14 @@ class SmallVec {
     if (other.is_heap()) {
       size_t cap = other.heap_cap();
       T* ptr = static_cast<T*>(::operator new(cap * sizeof(T)));
-      for (size_t i = 0; i < s; ++i) new (ptr + i) T(other.heap_ptr()[i]);
+      for (size_t i = 0; i < s; ++i)
+        new (ptr + i) T(other.heap_ptr()[i]);
       set_heap(ptr, cap, s);
     } else {
       const T* src = reinterpret_cast<const T*>(other.buf_);
       T* dst = reinterpret_cast<T*>(buf_);
-      for (size_t i = 0; i < s; ++i) new (dst + i) T(src[i]);
+      for (size_t i = 0; i < s; ++i)
+        new (dst + i) T(src[i]);
       set_inline_size(s);
     }
   }
@@ -235,9 +228,11 @@ class SmallVec {
       buf[s] = std::move(extra);
     } else {
       T* src = data();
-      for (size_t i = 0; i < s; ++i) new (buf + i) T(std::move(src[i]));
+      for (size_t i = 0; i < s; ++i)
+        new (buf + i) T(std::move(src[i]));
       new (buf + s) T(std::move(extra));
-      for (size_t i = 0; i < s; ++i) src[i].~T();
+      for (size_t i = 0; i < s; ++i)
+        src[i].~T();
     }
     set_heap(buf, new_cap, s + 1);
   }
@@ -263,7 +258,8 @@ class SmallVec {
 
   void destroy_release() noexcept {
     T* p = data();
-    for (size_t i = 0; i < size(); ++i) p[i].~T();
+    for (size_t i = 0; i < size(); ++i)
+      p[i].~T();
     if (is_heap()) ::operator delete(heap_ptr());
   }
 
@@ -273,6 +269,6 @@ class SmallVec {
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_SMALL_VEC_HPP
+#endif // LAZILY_SMALL_VEC_HPP

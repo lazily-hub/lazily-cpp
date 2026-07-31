@@ -53,7 +53,7 @@ struct Json {
   std::string number_token;
   std::string str;
   std::vector<JsonPtr> array;
-  std::vector<std::pair<std::string, JsonPtr>> object;  // ordered for determinism
+  std::vector<std::pair<std::string, JsonPtr>> object; // ordered for determinism
 
   const Json* find(const std::string& key) const {
     for (const auto& kv : object)
@@ -77,8 +77,8 @@ struct JsonParser {
   explicit JsonParser(const std::string& s) : src(s) {}
 
   void skip_ws() {
-    while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' ||
-                                src[pos] == '\n' || src[pos] == '\r'))
+    while (pos < src.size() &&
+           (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r'))
       ++pos;
   }
 
@@ -87,10 +87,14 @@ struct JsonParser {
     for (int i = 0; i < 4; ++i) {
       const char c = src[at + i];
       v <<= 4;
-      if (c >= '0' && c <= '9') v |= static_cast<std::uint32_t>(c - '0');
-      else if (c >= 'a' && c <= 'f') v |= static_cast<std::uint32_t>(c - 'a' + 10);
-      else if (c >= 'A' && c <= 'F') v |= static_cast<std::uint32_t>(c - 'A' + 10);
-      else REQUIRE(false, "bad hex digit in \\u escape");
+      if (c >= '0' && c <= '9')
+        v |= static_cast<std::uint32_t>(c - '0');
+      else if (c >= 'a' && c <= 'f')
+        v |= static_cast<std::uint32_t>(c - 'a' + 10);
+      else if (c >= 'A' && c <= 'F')
+        v |= static_cast<std::uint32_t>(c - 'A' + 10);
+      else
+        REQUIRE(false, "bad hex digit in \\u escape");
     }
     return v;
   }
@@ -110,9 +114,12 @@ struct JsonParser {
   JsonPtr parse_object() {
     auto node = std::make_shared<Json>();
     node->type = Json::Type::Object;
-    ++pos;  // '{'
+    ++pos; // '{'
     skip_ws();
-    if (pos < src.size() && src[pos] == '}') { ++pos; return node; }
+    if (pos < src.size() && src[pos] == '}') {
+      ++pos;
+      return node;
+    }
     while (true) {
       skip_ws();
       auto key = parse_string();
@@ -122,7 +129,10 @@ struct JsonParser {
       node->object.emplace_back(key->str, parse());
       skip_ws();
       REQUIRE(pos < src.size(), "unterminated JSON object");
-      if (src[pos] == ',') { ++pos; continue; }
+      if (src[pos] == ',') {
+        ++pos;
+        continue;
+      }
       REQUIRE(src[pos] == '}', "expected ',' or '}' in JSON object");
       ++pos;
       return node;
@@ -132,14 +142,20 @@ struct JsonParser {
   JsonPtr parse_array() {
     auto node = std::make_shared<Json>();
     node->type = Json::Type::Array;
-    ++pos;  // '['
+    ++pos; // '['
     skip_ws();
-    if (pos < src.size() && src[pos] == ']') { ++pos; return node; }
+    if (pos < src.size() && src[pos] == ']') {
+      ++pos;
+      return node;
+    }
     while (true) {
       node->array.push_back(parse());
       skip_ws();
       REQUIRE(pos < src.size(), "unterminated JSON array");
-      if (src[pos] == ',') { ++pos; continue; }
+      if (src[pos] == ',') {
+        ++pos;
+        continue;
+      }
       REQUIRE(src[pos] == ']', "expected ',' or ']' in JSON array");
       ++pos;
       return node;
@@ -156,28 +172,40 @@ struct JsonParser {
         ++pos;
         REQUIRE(pos < src.size(), "unterminated JSON escape");
         switch (src[pos]) {
-          case 'n': node->str += '\n'; break;
-          case 't': node->str += '\t'; break;
-          case 'r': node->str += '\r'; break;
-          case 'b': node->str += '\b'; break;
-          case 'f': node->str += '\f'; break;
-          case 'u': {
-            REQUIRE(pos + 4 < src.size(), "truncated \\u escape");
-            std::uint32_t cp = hex4(pos + 1);
-            pos += 4;
-            // Combine a UTF-16 surrogate pair into one scalar.
-            if (cp >= 0xD800 && cp <= 0xDBFF && pos + 6 < src.size() &&
-                src[pos + 1] == '\\' && src[pos + 2] == 'u') {
-              std::uint32_t lo = hex4(pos + 3);
-              if (lo >= 0xDC00 && lo <= 0xDFFF) {
-                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                pos += 6;
-              }
+        case 'n':
+          node->str += '\n';
+          break;
+        case 't':
+          node->str += '\t';
+          break;
+        case 'r':
+          node->str += '\r';
+          break;
+        case 'b':
+          node->str += '\b';
+          break;
+        case 'f':
+          node->str += '\f';
+          break;
+        case 'u': {
+          REQUIRE(pos + 4 < src.size(), "truncated \\u escape");
+          std::uint32_t cp = hex4(pos + 1);
+          pos += 4;
+          // Combine a UTF-16 surrogate pair into one scalar.
+          if (cp >= 0xD800 && cp <= 0xDBFF && pos + 6 < src.size() && src[pos + 1] == '\\' &&
+              src[pos + 2] == 'u') {
+            std::uint32_t lo = hex4(pos + 3);
+            if (lo >= 0xDC00 && lo <= 0xDFFF) {
+              cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+              pos += 6;
             }
-            append_utf8(node->str, cp);
-            break;
           }
-          default: node->str += src[pos]; break;
+          append_utf8(node->str, cp);
+          break;
+        }
+        default:
+          node->str += src[pos];
+          break;
         }
         ++pos;
         continue;
@@ -185,17 +213,20 @@ struct JsonParser {
       node->str += src[pos++];
     }
     REQUIRE(pos < src.size(), "unterminated JSON string");
-    ++pos;  // closing quote
+    ++pos; // closing quote
     return node;
   }
 
   JsonPtr parse_bool() {
     auto node = std::make_shared<Json>();
     node->type = Json::Type::Bool;
-    if (src.compare(pos, 4, "true") == 0) { node->boolean = true; pos += 4; }
-    else {
+    if (src.compare(pos, 4, "true") == 0) {
+      node->boolean = true;
+      pos += 4;
+    } else {
       REQUIRE(src.compare(pos, 5, "false") == 0, "malformed JSON boolean");
-      node->boolean = false; pos += 5;
+      node->boolean = false;
+      pos += 5;
     }
     return node;
   }
@@ -256,8 +287,7 @@ inline std::uint64_t json_u64(const Json& value) {
   REQUIRE(token != nullptr && !token->empty(),
           "expected non-negative JSON integer or decimal string");
   for (const auto ch : *token)
-    REQUIRE(std::isdigit(static_cast<unsigned char>(ch)) != 0,
-            "expected unsigned decimal integer");
+    REQUIRE(std::isdigit(static_cast<unsigned char>(ch)) != 0, "expected unsigned decimal integer");
   return static_cast<std::uint64_t>(std::stoull(*token));
 }
 
@@ -281,6 +311,6 @@ inline std::optional<std::uint64_t> json_optional_u64(const Json& value) {
   return json_u64(value);
 }
 
-}  // namespace lazily_test
+} // namespace lazily_test
 
-#endif  // LAZILY_TESTS_TEST_JSON_HPP
+#endif // LAZILY_TESTS_TEST_JSON_HPP

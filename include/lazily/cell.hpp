@@ -55,7 +55,7 @@
 #define LAZILY_CELL_HPP
 
 #include <lazily/context.hpp>
-#include <lazily/merge.hpp>  // KeepLatest (default policy) + the merge policies
+#include <lazily/merge.hpp> // KeepLatest (default policy) + the merge policies
 
 #include <memory>
 #include <utility>
@@ -71,9 +71,8 @@ namespace lazily {
 // no-op that fires no cascade.
 // The default `M = KeepLatest` is declared on the forward declaration in
 // context.hpp (a default template argument may be given only once).
-template <typename T, typename M>
-class Source {
- public:
+template <typename T, typename M> class Source {
+public:
   using value_type = T;
   using policy = M;
 
@@ -86,17 +85,22 @@ class Source {
   // Read the current converged value, registering a dependency in a computation.
   // Genericized over the `ComputeOps` surface (`#lzcellkernel`): `cx` may be a
   // `Context` (untracked) or a `Compute` (tracks against the recomputing node).
-  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  T get(C& cx) const { return cx.get(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0> T get(C& cx) const {
+    return cx.get(*this);
+  }
 
   template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  std::shared_ptr<T> get_rc(C& cx) const { return cx.get_rc(*this); }
+  std::shared_ptr<T> get_rc(C& cx) const {
+    return cx.get_rc(*this);
+  }
 
   // Replace the value outright (the keep-latest write). Only a `Source` has
   // this — `computed.set(...)` does not compile. Routes through the unified
   // `set` on either compute-ops surface.
   template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  void set(C& cx, T value) const { cx.set(*this, std::move(value)); }
+  void set(C& cx, T value) const {
+    cx.set(*this, std::move(value));
+  }
 
   // Fold `op` into the current value under policy `M`. For `KeepLatest` this is
   // a replace (`Source ≡ Source<T, KeepLatest>`). Routes through the ==-guarded
@@ -109,23 +113,20 @@ class Source {
 
   // The policy-erased keep-latest view of this cell, for wiring derived readers
   // that want a plain handle. Same underlying node.
-  Source<T, KeepLatest> as_keep_latest() const {
-    return Source<T, KeepLatest>(id_);
-  }
+  Source<T, KeepLatest> as_keep_latest() const { return Source<T, KeepLatest>(id_); }
 
   // Clear all dependent computed cells without changing this cell's value.
-  void clear_dependents(Context& ctx) const {
-    ctx.clear_cell_dependents(id_);
-  }
+  void clear_dependents(Context& ctx) const { ctx.clear_cell_dependents(id_); }
 
   // Tear this source down (detaches dependents, recycles the id). Kind-checked.
-  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  void dispose(C& cx) const { cx.dispose_cell(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0> void dispose(C& cx) const {
+    cx.dispose_cell(*this);
+  }
 
   bool operator==(const Source& o) const { return id_ == o.id_; }
   bool operator!=(const Source& o) const { return !(*this == o); }
 
- private:
+private:
   SlotId id_{};
 };
 
@@ -134,9 +135,8 @@ class Source {
 // A cell **computed from upstream**. Lazy and guarded by default; reads with
 // `get`, and `.eager()` makes it eager (an eager computed cell). Has no
 // `set`/`merge` — writing a computed cell does not compile.
-template <typename T>
-class Computed {
- public:
+template <typename T> class Computed {
+public:
   using value_type = T;
 
   Computed() = default;
@@ -148,12 +148,15 @@ class Computed {
   // Read the current value, registering a dependency inside a computation.
   // Genericized over the `ComputeOps` surface (`#lzcellkernel`): tracked through
   // a `Compute`, untracked through a `Context`.
-  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  T get(C& cx) const { return cx.get(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0> T get(C& cx) const {
+    return cx.get(*this);
+  }
 
   // Read the current value as a shared_ptr, avoiding a deep clone.
   template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  std::shared_ptr<T> get_rc(C& cx) const { return cx.get_rc(*this); }
+  std::shared_ptr<T> get_rc(C& cx) const {
+    return cx.get_rc(*this);
+  }
 
   // Transition this computed cell to **eager**: attach a puller `Effect` that
   // re-materializes it after every invalidation. Idempotent (a second `eager`
@@ -180,16 +183,17 @@ class Computed {
 
   // Tear this computed cell down (detaches edges, tears down its puller if
   // eager, recycles the id). Kind-checked: a stale/recycled id is a no-op.
-  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0>
-  void dispose(C& cx) const { cx.dispose_slot(*this); }
+  template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0> void dispose(C& cx) const {
+    cx.dispose_slot(*this);
+  }
 
   bool operator==(const Computed& o) const { return id_ == o.id_; }
   bool operator!=(const Computed& o) const { return !(*this == o); }
 
- private:
+private:
   SlotId id_{};
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_CELL_HPP
+#endif // LAZILY_CELL_HPP

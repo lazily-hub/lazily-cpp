@@ -28,9 +28,7 @@ struct ArcBase {
   virtual ~ArcBase() = default;
 };
 
-inline void rc_add_ref(const RcBase* p) noexcept {
-  ++p->rc_strong;
-}
+inline void rc_add_ref(const RcBase* p) noexcept { ++p->rc_strong; }
 inline void rc_release(const RcBase* p) noexcept {
   if (--p->rc_strong == 0) delete p;
 }
@@ -46,8 +44,7 @@ inline void arc_release(const ArcBase* p) noexcept {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Non-atomic reference-counted pointer (≈ Rust `Rc<T>`).
-template <typename T>
-class RcPtr {
+template <typename T> class RcPtr {
   T* ptr_ = nullptr;
 
   void add_ref() const noexcept {
@@ -57,7 +54,7 @@ class RcPtr {
     if (ptr_) rc_release(ptr_);
   }
 
- public:
+public:
   RcPtr() noexcept = default;
   RcPtr(std::nullptr_t) noexcept {}
 
@@ -129,8 +126,7 @@ class RcPtr {
 
 /// Atomic reference-counted pointer (≈ Rust `Arc<T>`).
 /// Identical interface to RcPtr but with atomic ref counting.
-template <typename T>
-class ArcPtr {
+template <typename T> class ArcPtr {
   T* ptr_ = nullptr;
 
   void add_ref() const noexcept {
@@ -140,7 +136,7 @@ class ArcPtr {
     if (ptr_) arc_release(ptr_);
   }
 
- public:
+public:
   ArcPtr() noexcept = default;
   ArcPtr(std::nullptr_t) noexcept {}
 
@@ -214,16 +210,13 @@ struct ArcAny : ArcBase {
   virtual const void* raw() const noexcept = 0;
 };
 
-template <typename T>
-struct RcBox : RcAny {
+template <typename T> struct RcBox : RcAny {
   T value;
-  template <typename... Args>
-  explicit RcBox(Args&&... args) : value(std::forward<Args>(args)...) {}
+  template <typename... Args> explicit RcBox(Args&&... args) : value(std::forward<Args>(args)...) {}
   const void* raw() const noexcept override { return &value; }
 };
 
-template <typename T>
-struct ArcBox : ArcAny {
+template <typename T> struct ArcBox : ArcAny {
   T value;
   template <typename... Args>
   explicit ArcBox(Args&&... args) : value(std::forward<Args>(args)...) {}
@@ -232,47 +225,38 @@ struct ArcBox : ArcAny {
 
 // ── Factories ──
 
-template <typename T, typename... Args>
-RcPtr<RcAny> make_rc(Args&&... args) {
-  return RcPtr<RcAny>(new RcBox<T>(std::forward<Args>(args)...),
-                      typename RcPtr<RcAny>::adopt_t{});
+template <typename T, typename... Args> RcPtr<RcAny> make_rc(Args&&... args) {
+  return RcPtr<RcAny>(new RcBox<T>(std::forward<Args>(args)...), typename RcPtr<RcAny>::adopt_t{});
 }
 
-template <typename T, typename... Args>
-ArcPtr<ArcAny> make_arc(Args&&... args) {
+template <typename T, typename... Args> ArcPtr<ArcAny> make_arc(Args&&... args) {
   return ArcPtr<ArcAny>(new ArcBox<T>(std::forward<Args>(args)...),
                         typename ArcPtr<ArcAny>::adopt_t{});
 }
 
 // ── Type-safe access ──
 
-template <typename T>
-const T* rc_any_cast(const RcAny* p) noexcept {
+template <typename T> const T* rc_any_cast(const RcAny* p) noexcept {
   return &static_cast<const RcBox<T>*>(p)->value;
 }
 
-template <typename T>
-const T* arc_any_cast(const ArcAny* p) noexcept {
+template <typename T> const T* arc_any_cast(const ArcAny* p) noexcept {
   return &static_cast<const ArcBox<T>*>(p)->value;
 }
 
-template <typename T>
-T* rc_any_cast(RcAny* p) noexcept {
+template <typename T> T* rc_any_cast(RcAny* p) noexcept {
   return &static_cast<RcBox<T>*>(p)->value;
 }
 
-template <typename T>
-T* arc_any_cast(ArcAny* p) noexcept {
+template <typename T> T* arc_any_cast(ArcAny* p) noexcept {
   return &static_cast<ArcBox<T>*>(p)->value;
 }
 
-template <typename T>
-const T* rc_any_cast(const RcPtr<RcAny>& p) noexcept {
+template <typename T> const T* rc_any_cast(const RcPtr<RcAny>& p) noexcept {
   return p ? rc_any_cast<T>(p.get()) : nullptr;
 }
 
-template <typename T>
-const T* arc_any_cast(const ArcPtr<ArcAny>& p) noexcept {
+template <typename T> const T* arc_any_cast(const ArcPtr<ArcAny>& p) noexcept {
   return p ? arc_any_cast<T>(p.get()) : nullptr;
 }
 
@@ -292,41 +276,31 @@ const T* arc_any_cast(const ArcPtr<ArcAny>& p) noexcept {
 struct RcTraits {
   using AnyValue = SmallAny<>;
 
-  template <typename T, typename... Args>
-  static AnyValue make(Args&&... args) {
+  template <typename T, typename... Args> static AnyValue make(Args&&... args) {
     return SmallAny<>::make<T>(std::forward<Args>(args)...);
   }
 
-  template <typename T>
-  static const T* cast(const AnyValue& v) noexcept {
-    return v.as<T>();
-  }
+  template <typename T> static const T* cast(const AnyValue& v) noexcept { return v.as<T>(); }
 
-  template <typename T>
-  static T* cast_mut(AnyValue& v) noexcept {
-    return v.as_mut<T>();
-  }
+  template <typename T> static T* cast_mut(AnyValue& v) noexcept { return v.as_mut<T>(); }
 };
 
 struct ArcTraits {
   using AnyValue = ArcPtr<ArcAny>;
 
-  template <typename T, typename... Args>
-  static AnyValue make(Args&&... args) {
+  template <typename T, typename... Args> static AnyValue make(Args&&... args) {
     return make_arc<T>(std::forward<Args>(args)...);
   }
 
-  template <typename T>
-  static const T* cast(const AnyValue& v) noexcept {
+  template <typename T> static const T* cast(const AnyValue& v) noexcept {
     return arc_any_cast<T>(v);
   }
 
-  template <typename T>
-  static T* cast_mut(AnyValue& v) noexcept {
+  template <typename T> static T* cast_mut(AnyValue& v) noexcept {
     return arc_any_cast<T>(v.get());
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_RC_PTR_HPP
+#endif // LAZILY_RC_PTR_HPP

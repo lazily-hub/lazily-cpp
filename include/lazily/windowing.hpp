@@ -20,8 +20,8 @@
 // time and session variants). Emit-boundary semantics mirror the Rust source
 // exactly: a window emits its aggregate only when it closes.
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 #include <lazily/merge.hpp>
 
 #include <cstdint>
@@ -34,8 +34,7 @@ namespace lazily {
 // -- Merge helpers (mirrors the Rust free fns) ------------------------------
 
 /// Fold `v` into an optional accumulator under `M` (identity when empty).
-template <typename T, typename M>
-inline void window_merge_into(std::optional<T>& acc, T v) {
+template <typename T, typename M> inline void window_merge_into(std::optional<T>& acc, T v) {
   if (!acc.has_value()) {
     acc = std::move(v);
   } else {
@@ -44,16 +43,15 @@ inline void window_merge_into(std::optional<T>& acc, T v) {
 }
 
 /// Fold a window of elements under `M` (`std::nullopt` for an empty window).
-template <typename T, typename M>
-inline std::optional<T> window_fold(const std::deque<T>& items) {
+template <typename T, typename M> inline std::optional<T> window_fold(const std::deque<T>& items) {
   std::optional<T> acc;
-  for (const auto& v : items) window_merge_into<T, M>(acc, v);
+  for (const auto& v : items)
+    window_merge_into<T, M>(acc, v);
   return acc;
 }
 
 // Move the accumulator out, leaving it empty (mirrors Rust `Option::take`).
-template <typename T>
-inline std::optional<T> take_opt(std::optional<T>& acc) {
+template <typename T> inline std::optional<T> take_opt(std::optional<T>& acc) {
   std::optional<T> out = std::move(acc);
   acc.reset();
   return out;
@@ -64,9 +62,8 @@ inline std::optional<T> take_opt(std::optional<T>& acc) {
 // ===========================================================================
 
 /// Count-based tumbling window compute core.
-template <typename T, typename M>
-class TumblingCountCore {
- public:
+template <typename T, typename M> class TumblingCountCore {
+public:
   explicit TumblingCountCore(uint64_t n) : n_(n < 1 ? 1 : n) {}
 
   /// Push an element; emit the window aggregate on the `n`-th and reset.
@@ -80,7 +77,7 @@ class TumblingCountCore {
     return std::nullopt;
   }
 
- private:
+private:
   uint64_t n_;
   std::optional<T> acc_;
   uint64_t count_ = 0;
@@ -91,9 +88,8 @@ class TumblingCountCore {
 // ===========================================================================
 
 /// Time-based tumbling window compute core.
-template <typename T, typename M>
-class TumblingTimeCore {
- public:
+template <typename T, typename M> class TumblingTimeCore {
+public:
   explicit TumblingTimeCore(uint64_t period)
       : period_(period < 1 ? 1 : period), next_(period < 1 ? 1 : period) {}
 
@@ -103,11 +99,12 @@ class TumblingTimeCore {
   /// At a period boundary emit the window aggregate (empty window -> nullopt).
   std::optional<T> tick(uint64_t now) {
     if (now < next_) return std::nullopt;
-    while (next_ <= now) next_ += period_;
+    while (next_ <= now)
+      next_ += period_;
     return take_opt(acc_);
   }
 
- private:
+private:
   uint64_t period_;
   uint64_t next_;
   std::optional<T> acc_;
@@ -119,16 +116,16 @@ class TumblingTimeCore {
 
 /// Count-based sliding window compute core (fold-recompute, correct for any
 /// associative merge).
-template <typename T, typename M>
-class SlidingCore {
- public:
+template <typename T, typename M> class SlidingCore {
+public:
   SlidingCore(uint64_t size, uint64_t slide)
       : size_(size < 1 ? 1 : size), slide_(slide < 1 ? 1 : slide) {}
 
   /// Push an element; every `slide` pushes emit the fold over the last `size`.
   std::optional<T> push(T v) {
     buffer_.push_back(std::move(v));
-    while (buffer_.size() > size_) buffer_.pop_front();
+    while (buffer_.size() > size_)
+      buffer_.pop_front();
     ++since_;
     if (since_ >= slide_) {
       since_ = 0;
@@ -137,7 +134,7 @@ class SlidingCore {
     return std::nullopt;
   }
 
- private:
+private:
   uint64_t size_;
   uint64_t slide_;
   std::deque<T> buffer_;
@@ -149,9 +146,8 @@ class SlidingCore {
 // ===========================================================================
 
 /// Gap-based sessionization compute core.
-template <typename T, typename M>
-class SessionCore {
- public:
+template <typename T, typename M> class SessionCore {
+public:
   explicit SessionCore(uint64_t gap) : gap_(gap) {}
 
   /// Push an element; a gap larger than `gap` closes the session (emitting its
@@ -174,7 +170,7 @@ class SessionCore {
     return std::nullopt;
   }
 
- private:
+private:
   // Whether more than `gap` has elapsed since the last element (saturating).
   bool idle(uint64_t now) const {
     if (!last_.has_value()) return false;
@@ -193,16 +189,14 @@ class SessionCore {
 
 // Project the last emitted aggregate onto the output cell (only on a real emit).
 template <typename T>
-inline void window_set_output(Context& ctx,
-                              const Source<std::optional<T>>& cell,
+inline void window_set_output(Context& ctx, const Source<std::optional<T>>& cell,
                               const std::optional<T>& emitted) {
   if (emitted.has_value()) ctx.set(cell, std::optional<T>(*emitted));
 }
 
 /// Reactive count-tumbling window; projects the last emitted aggregate.
-template <typename T, typename M>
-class TumblingCountWindow {
- public:
+template <typename T, typename M> class TumblingCountWindow {
+public:
   TumblingCountWindow(Context& ctx, uint64_t n)
       : core_(n), output_(ctx.source(std::optional<T>())) {}
 
@@ -214,15 +208,14 @@ class TumblingCountWindow {
   std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   TumblingCountCore<T, M> core_;
   Source<std::optional<T>> output_;
 };
 
 /// Reactive time-tumbling window (`push(now, v)` + `tick(now)`).
-template <typename T, typename M>
-class TumblingTimeWindow {
- public:
+template <typename T, typename M> class TumblingTimeWindow {
+public:
   TumblingTimeWindow(Context& ctx, uint64_t period)
       : core_(period), output_(ctx.source(std::optional<T>())) {}
 
@@ -235,15 +228,14 @@ class TumblingTimeWindow {
   std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   TumblingTimeCore<T, M> core_;
   Source<std::optional<T>> output_;
 };
 
 /// Reactive count-sliding window; projects the last emitted aggregate.
-template <typename T, typename M>
-class SlidingWindow {
- public:
+template <typename T, typename M> class SlidingWindow {
+public:
   SlidingWindow(Context& ctx, uint64_t size, uint64_t slide)
       : core_(size, slide), output_(ctx.source(std::optional<T>())) {}
 
@@ -255,17 +247,15 @@ class SlidingWindow {
   std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   SlidingCore<T, M> core_;
   Source<std::optional<T>> output_;
 };
 
 /// Reactive session window (`push(now, v)` + `flush(now)`).
-template <typename T, typename M>
-class SessionWindow {
- public:
-  SessionWindow(Context& ctx, uint64_t gap)
-      : core_(gap), output_(ctx.source(std::optional<T>())) {}
+template <typename T, typename M> class SessionWindow {
+public:
+  SessionWindow(Context& ctx, uint64_t gap) : core_(gap), output_(ctx.source(std::optional<T>())) {}
 
   std::optional<T> push(Context& ctx, uint64_t now, T v) {
     std::optional<T> e = core_.push(now, std::move(v));
@@ -280,11 +270,11 @@ class SessionWindow {
   std::optional<T> output(Context& ctx) const { return ctx.get(output_); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   SessionCore<T, M> core_;
   Source<std::optional<T>> output_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_WINDOWING_HPP
+#endif // LAZILY_WINDOWING_HPP

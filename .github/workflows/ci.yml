@@ -33,6 +33,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build ${{ matrix.compiler == 'g++' && 'g++' || 'clang' }}
+
+      # uv is here only to pin clang-format (#lazilycppfmt). The runner's own
+      # clang-format tracks whatever the image ships, which is a style that moves
+      # under the gate; `make fmt` fetches the exact CLANG_FORMAT_VERSION instead,
+      # so this step and a developer's laptop give the same verdict.
+      - name: Install uv (pins clang-format for the format gate)
+        uses: astral-sh/setup-uv@v7
+
+      # `make fmt` is the GATE, not the fixer: it runs clang-format --dry-run
+      # -Werror. The target it replaced ran `clang-format -i ... || true`, which
+      # rewrote the tree and could not fail — putting THAT in CI would have been a
+      # step that proves nothing while reading green (#lazilycppfmt).
+      - name: Format gate (make fmt)
+        run: make fmt
       # lazily-spec is the canonical cross-language conformance source. Clone it
       # as a sibling BEFORE configuring, so every conformance target resolves
       # ../lazily-spec/conformance/<area> and CI validates lazily-cpp against

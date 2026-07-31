@@ -11,11 +11,15 @@ using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() { ++test_count; name(); ++test_passed; } \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 static bool reencode_equal(const IpcMessage& m) {
@@ -63,7 +67,7 @@ TEST(test_snapshot_roundtrip) {
   assert((std::get<NodeStatePayload>(d.nodes[0].state).bytes == std::vector<uint8_t>{1, 2, 3, 4}));
   assert(d.nodes[0].key.has_value() && d.nodes[0].key->path() == "doc/a");
   assert(std::holds_alternative<NodeStateSharedBlob>(d.nodes[1].state));
-  assert(!d.nodes[1].key.has_value());  // optional absent → nil → nullopt
+  assert(!d.nodes[1].key.has_value()); // optional absent → nil → nullopt
   const auto& blob = std::get<NodeStateSharedBlob>(d.nodes[1].state).blob;
   assert(blob.offset == 5 && blob.checksum == 9);
   assert(std::holds_alternative<NodeStateOpaque>(d.nodes[2].state));
@@ -91,8 +95,8 @@ TEST(test_delta_all_ops_roundtrip) {
   assert(d.base_epoch == 3 && d.epoch == 4);
   assert(d.ops.size() == 7);
   assert(std::holds_alternative<DeltaOpCellSet>(d.ops[0]));
-  assert((ipc_value_equal(std::get<DeltaOpCellSet>(d.ops[0]).payload,
-                          IpcValueInline{{0xAA, 0xBB}})));
+  assert(
+      (ipc_value_equal(std::get<DeltaOpCellSet>(d.ops[0]).payload, IpcValueInline{{0xAA, 0xBB}})));
   assert(std::holds_alternative<DeltaOpSlotValue>(d.ops[1]));
   assert(std::holds_alternative<DeltaOpInvalidate>(d.ops[2]));
   auto& na = std::get<DeltaOpNodeAdd>(d.ops[3]);
@@ -144,7 +148,7 @@ TEST(test_crdt_sync_canonical_wire_shape) {
   assert(wire.peek_kind() == MsgUnpacker::Kind::Array);
   assert(wire.read_array_header() == 2);
   assert(wire.read_i64() == 7);
-  wire.skip();  // WireStamp
+  wire.skip(); // WireStamp
   assert(wire.read_str() == "ops");
   assert(wire.read_array_header() == 1);
   assert(wire.read_map_header() == 4);
@@ -244,8 +248,8 @@ TEST(test_positional_delta_all_ops_roundtrip) {
   assert(d.base_epoch == 3 && d.epoch == 4);
   assert(d.ops.size() == 7);
   assert(std::holds_alternative<DeltaOpCellSet>(d.ops[0]));
-  assert((ipc_value_equal(std::get<DeltaOpCellSet>(d.ops[0]).payload,
-                          IpcValueInline{{0xAA, 0xBB}})));
+  assert(
+      (ipc_value_equal(std::get<DeltaOpCellSet>(d.ops[0]).payload, IpcValueInline{{0xAA, 0xBB}})));
   assert(std::holds_alternative<DeltaOpSlotValue>(d.ops[1]));
   assert(std::holds_alternative<DeltaOpInvalidate>(d.ops[2]));
   auto& na = std::get<DeltaOpNodeAdd>(d.ops[3]);
@@ -317,7 +321,7 @@ TEST(test_positional_and_legacy_interoperate) {
 }
 
 int main() {
-  std::cout << "lazily-cpp codec tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp codec tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

@@ -53,7 +53,7 @@ struct BlobView {
 // isolation, stale-generation ABA safety, corrupt-checksum rejection) hold for
 // every backend by construction.
 class BlobBackend {
- public:
+public:
   virtual ~BlobBackend() = default;
   virtual BlobBackendKind kind() const = 0;
   virtual ShmBlobRef write(const std::vector<uint8_t>& bytes) = 0;
@@ -64,7 +64,7 @@ class BlobBackend {
 // InProcessBackend: wraps the existing ShmBlobArena (single address space — the
 // FFI host / editor-plugin case). Descriptors carry backend=in_process.
 class InProcessBackend : public BlobBackend {
- public:
+public:
   explicit InProcessBackend(Epoch epoch = 0) : arena_(epoch) {}
   BlobBackendKind kind() const override { return BlobBackendKind::InProcess; }
   ShmBlobRef write(const std::vector<uint8_t>& bytes) override {
@@ -79,7 +79,7 @@ class InProcessBackend : public BlobBackend {
   }
   void advance_epoch() override { arena_.advance_epoch(); }
 
- private:
+private:
   ShmBlobArena arena_;
 };
 
@@ -96,11 +96,11 @@ class InProcessBackend : public BlobBackend {
 // ─────────────────────────────────────────────────────────────────────────────
 #ifdef __linux__
 class ShmBackend : public BlobBackend {
-  static constexpr uint64_t kMagic = 0x4c5a5348424c4f42ULL;  // "LZSHBLOB"
+  static constexpr uint64_t kMagic = 0x4c5a5348424c4f42ULL; // "LZSHBLOB"
   struct Header {
     uint64_t magic;
     uint64_t capacity;
-    std::atomic<uint64_t> bump;  // next write offset (bytes after the header)
+    std::atomic<uint64_t> bump; // next write offset (bytes after the header)
     std::atomic<uint64_t> generation;
     std::atomic<uint64_t> epoch;
   };
@@ -110,7 +110,7 @@ class ShmBackend : public BlobBackend {
     uint64_t checksum;
   };
 
- public:
+public:
   // Opens (or creates) a named POSIX shared-memory region. With create=true the
   // region is ftruncated to capacity and initialized. The caller owns unlink
   // timing (shm_unlink when no further readers/writers remain).
@@ -158,14 +158,14 @@ class ShmBackend : public BlobBackend {
     SlotHeader* sh = new (base_ + off) SlotHeader{gen, bytes.size(), csum};
     (void)sh;
     std::memcpy(base_ + off + sizeof(SlotHeader), bytes.data(), bytes.size());
-    return {static_cast<int64_t>(off), static_cast<int64_t>(bytes.size()),
-            static_cast<int64_t>(gen), static_cast<int64_t>(ep),
+    return {static_cast<int64_t>(off),  static_cast<int64_t>(bytes.size()),
+            static_cast<int64_t>(gen),  static_cast<int64_t>(ep),
             static_cast<int64_t>(csum), BlobBackendKind::Shm};
   }
 
   BlobView read_view(const ShmBlobRef& ref) const override {
-    if (ref.offset < 0 || static_cast<uint64_t>(ref.offset) + sizeof(SlotHeader) >
-                              header_->capacity)
+    if (ref.offset < 0 ||
+        static_cast<uint64_t>(ref.offset) + sizeof(SlotHeader) > header_->capacity)
       return {};
     uint64_t off = static_cast<uint64_t>(ref.offset);
     const SlotHeader* sh = reinterpret_cast<const SlotHeader*>(base_ + off);
@@ -180,9 +180,7 @@ class ShmBackend : public BlobBackend {
             static_cast<size_t>(sh->len)};
   }
 
-  void advance_epoch() override {
-    header_->epoch.fetch_add(1, std::memory_order_acq_rel);
-  }
+  void advance_epoch() override { header_->epoch.fetch_add(1, std::memory_order_acq_rel); }
 
   // Unlink the named region so it is reclaimed when all users unmap. Call once
   // the region is known to have no further users.
@@ -198,7 +196,7 @@ class ShmBackend : public BlobBackend {
     }
   }
 
- private:
+private:
   static uint64_t fnv1a(const uint8_t* data, size_t n) {
     uint64_t h = 0xcbf29ce484222325ULL;
     for (size_t i = 0; i < n; ++i) {
@@ -213,7 +211,7 @@ class ShmBackend : public BlobBackend {
   uint64_t capacity_ = 0;
   Header* header_ = nullptr;
 };
-#endif  // __linux__
+#endif // __linux__
 
 // ── Spill / resolve policy ───────────────────────────────────────────────────
 
@@ -247,7 +245,8 @@ inline size_t spill(IpcMessage& m, BlobBackend& backend, size_t threshold) {
     }
   };
   if (auto* snap = std::get_if<IpcMessageSnapshot>(&m)) {
-    for (auto& nd : snap->value.nodes) spill_state(nd.state);
+    for (auto& nd : snap->value.nodes)
+      spill_state(nd.state);
   } else if (auto* d = std::get_if<IpcMessageDelta>(&m)) {
     for (auto& op : d->value.ops) {
       if (auto* cs = std::get_if<DeltaOpCellSet>(&op))
@@ -258,7 +257,8 @@ inline size_t spill(IpcMessage& m, BlobBackend& backend, size_t threshold) {
         spill_state(na->state);
     }
   } else if (auto* c = std::get_if<IpcMessageCrdtSync>(&m)) {
-    for (auto& op : c->value.ops) total += spill(op.state, backend, threshold);
+    for (auto& op : c->value.ops)
+      total += spill(op.state, backend, threshold);
   }
   return total;
 }
@@ -266,8 +266,7 @@ inline size_t spill(IpcMessage& m, BlobBackend& backend, size_t threshold) {
 // Resolve an IpcValue against a single backend: inline bytes returned directly,
 // SharedBlob resolved zero-copy. Empty BlobView if a SharedBlob fails to resolve.
 inline BlobView resolve(const IpcValue& v, const BlobBackend& backend) {
-  if (auto* inl = std::get_if<IpcValueInline>(&v))
-    return {inl->bytes.data(), inl->bytes.size()};
+  if (auto* inl = std::get_if<IpcValueInline>(&v)) return {inl->bytes.data(), inl->bytes.size()};
   if (auto* sb = std::get_if<IpcValueSharedBlob>(&v)) return backend.read_view(sb->blob);
   return {};
 }
@@ -276,27 +275,26 @@ inline BlobView resolve(const IpcValue& v, const BlobBackend& backend) {
 // resolves any descriptor by its `backend` discriminator (a shm descriptor
 // routes to the shm backend, an arrow descriptor to the arrow backend, …).
 class BlobRouter {
- public:
+public:
   BlobRouter& register_backend(BlobBackend& backend) {
     backends_[backend.kind()] = &backend;
     return *this;
   }
   BlobView read_view(const ShmBlobRef& ref) const {
     auto it = backends_.find(ref.backend);
-    if (it == backends_.end()) return {};  // no backend registered for this kind
+    if (it == backends_.end()) return {}; // no backend registered for this kind
     return it->second->read_view(ref);
   }
   BlobView resolve(const IpcValue& v) const {
-    if (auto* inl = std::get_if<IpcValueInline>(&v))
-      return {inl->bytes.data(), inl->bytes.size()};
+    if (auto* inl = std::get_if<IpcValueInline>(&v)) return {inl->bytes.data(), inl->bytes.size()};
     if (auto* sb = std::get_if<IpcValueSharedBlob>(&v)) return read_view(sb->blob);
     return {};
   }
 
- private:
+private:
   std::unordered_map<BlobBackendKind, BlobBackend*> backends_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_TRANSPORT_HPP
+#endif // LAZILY_TRANSPORT_HPP

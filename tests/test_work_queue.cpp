@@ -10,26 +10,22 @@
 using namespace lazily;
 
 struct WorkQueueReaders {
-  Context &ctx;
+  Context& ctx;
   Computed<size_t> pending;
   Computed<bool> empty;
   Computed<size_t> in_flight;
   Computed<size_t> dead;
 
-  WorkQueueReaders(Context &context, WorkQueueCell<std::string> &queue)
-      : ctx(context), pending(ctx.computed<size_t>(
-                          [&](Compute &c) { return queue.pending_len(c); })),
-        empty(
-            ctx.computed<bool>([&](Compute &c) { return queue.is_empty(c); })),
-        in_flight(ctx.computed<size_t>(
-            [&](Compute &c) { return queue.in_flight_len(c); })),
-        dead(ctx.computed<size_t>(
-            [&](Compute &c) { return queue.dead_letter_len(c); })) {
+  WorkQueueReaders(Context& context, WorkQueueCell<std::string>& queue)
+      : ctx(context),
+        pending(ctx.computed<size_t>([&](Compute& c) { return queue.pending_len(c); })),
+        empty(ctx.computed<bool>([&](Compute& c) { return queue.is_empty(c); })),
+        in_flight(ctx.computed<size_t>([&](Compute& c) { return queue.in_flight_len(c); })),
+        dead(ctx.computed<size_t>([&](Compute& c) { return queue.dead_letter_len(c); })) {
     refresh();
   }
 
-  void check(bool pending_invalid, bool empty_invalid, bool in_flight_invalid,
-             bool dead_invalid) {
+  void check(bool pending_invalid, bool empty_invalid, bool in_flight_invalid, bool dead_invalid) {
     assert(ctx.is_set(pending) != pending_invalid);
     assert(ctx.is_set(empty) != empty_invalid);
     assert(ctx.is_set(in_flight) != in_flight_invalid);
@@ -54,8 +50,8 @@ static void competing_delivery() {
   assert(queue.push(ctx, "b") == 1);
   readers.check(true, false, false, false);
   auto first = queue.claim(ctx, "alpha", 100);
-  assert(first && first->delivery_id == 0 && first->item_id == 0 &&
-         first->attempt == 1 && first->deadline == 110);
+  assert(first && first->delivery_id == 0 && first->item_id == 0 && first->attempt == 1 &&
+         first->deadline == 110);
   readers.check(true, false, true, false);
   auto second = queue.claim(ctx, "beta", 100);
   assert(second && second->delivery_id == 1 && second->item_id == 1);
@@ -69,8 +65,8 @@ static void competing_delivery() {
   assert(queue.nack(ctx, "alpha", first->delivery_id));
   readers.check(true, true, true, false);
   auto retry = queue.claim(ctx, "gamma", 105);
-  assert(retry && retry->delivery_id == 2 && retry->item_id == 0 &&
-         retry->attempt == 2 && retry->deadline == 115);
+  assert(retry && retry->delivery_id == 2 && retry->item_id == 0 && retry->attempt == 2 &&
+         retry->deadline == 115);
   readers.check(true, true, true, false);
   assert(queue.ack(ctx, "gamma", retry->delivery_id));
   readers.check(false, false, true, false);
@@ -123,7 +119,7 @@ static void thread_safe_claims_are_exclusive() {
       }
     });
   }
-  for (auto &worker : workers)
+  for (auto& worker : workers)
     worker.join();
 
   assert(observed.size() == item_count);

@@ -3,8 +3,8 @@
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
-#include <string>
 #include <set>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -18,15 +18,15 @@ static int test_passed = 0;
 // REQUIRE now lives in test_require.hpp so every test file can use it; see the
 // header for why fixture-presence checks in particular must not be assert().
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 TEST(test_cell_basic) {
@@ -41,9 +41,7 @@ TEST(test_slot_lazy) {
   Context ctx;
   auto a = ctx.source(2);
   auto b = ctx.source(3);
-  auto sum = ctx.computed<int>([&](Compute& c) {
-    return c.get(a) + c.get(b);
-  });
+  auto sum = ctx.computed<int>([&](Compute& c) { return c.get(a) + c.get(b); });
   assert(ctx.get(sum) == 5);
   ctx.set(a, 10);
   assert(ctx.get(sum) == 13);
@@ -131,9 +129,7 @@ TEST(test_signal_eager) {
   Context ctx;
   auto a = ctx.source(1);
   auto b = ctx.source(2);
-  auto sig = ctx.signal<int>([&](Compute& c) {
-    return c.get(a) + c.get(b);
-  });
+  auto sig = ctx.signal<int>([&](Compute& c) { return c.get(a) + c.get(b); });
   assert(ctx.get(sig) == 3);
   ctx.set(a, 10);
   assert(ctx.get(sig) == 12);
@@ -143,9 +139,7 @@ TEST(test_effect_rerun) {
   Context ctx;
   std::vector<int> log;
   auto a = ctx.source(0);
-  ctx.effect_void([&](Compute& c) {
-    log.push_back(c.get(a));
-  });
+  ctx.effect_void([&](Compute& c) { log.push_back(c.get(a)); });
   assert(log.size() == 1 && log[0] == 0);
   ctx.set(a, 1);
   assert(log.size() == 2 && log[1] == 1);
@@ -216,9 +210,7 @@ TEST(test_dynamic_dependencies) {
 
 TEST(test_get_rc_avoids_clone) {
   Context ctx;
-  auto s = ctx.computed<std::string>([&](Compute& c) {
-    return std::string("hello world");
-  });
+  auto s = ctx.computed<std::string>([&](Compute& c) { return std::string("hello world"); });
   auto rc = ctx.get_rc<std::string>(s);
   assert(*rc == "hello world");
 }
@@ -226,9 +218,7 @@ TEST(test_get_rc_avoids_clone) {
 TEST(test_signal_dispose) {
   Context ctx;
   auto a = ctx.source(1);
-  auto sig = ctx.signal<int>([&](Compute& c) {
-    return c.get(a) * 10;
-  });
+  auto sig = ctx.signal<int>([&](Compute& c) { return c.get(a) * 10; });
   assert(sig.is_eager(ctx));
   assert(ctx.get(sig) == 10);
   sig.lazy(ctx);
@@ -266,9 +256,7 @@ TEST(test_nested_batch) {
   assert(compute_count == 1);
   ctx.batch([&](Context& c) {
     c.set(a, 10);
-    c.batch([&](Context& c2) {
-      c2.set(b, 20);
-    });
+    c.batch([&](Context& c2) { c2.set(b, 20); });
     assert(compute_count == 1);
   });
   assert(ctx.get(sum) == 30);
@@ -278,9 +266,8 @@ TEST(test_nested_batch) {
 TEST(test_string_values) {
   Context ctx;
   auto name = ctx.source<std::string>("alice");
-  auto greeting = ctx.computed<std::string>([&](Compute& c) {
-    return "Hello, " + c.get(name) + "!";
-  });
+  auto greeting =
+      ctx.computed<std::string>([&](Compute& c) { return "Hello, " + c.get(name) + "!"; });
   assert(ctx.get(greeting) == "Hello, alice!");
   ctx.set(name, std::string("bob"));
   assert(ctx.get(greeting) == "Hello, bob!");
@@ -289,19 +276,19 @@ TEST(test_string_values) {
 // SmallAny (optimization B): inline fast path for trivially-copyable values,
 // heap fallback for larger/non-trivial ones; move + reset semantics.
 TEST(test_small_any) {
-  SmallAny<> a = SmallAny<>::make<int>(7);          // inline (int <= 16B, trivial)
+  SmallAny<> a = SmallAny<>::make<int>(7); // inline (int <= 16B, trivial)
   assert(static_cast<bool>(a));
   assert(*a.as<int>() == 7);
   SmallAny<> b = SmallAny<>::make<int>(123);
-  a = std::move(b);                                  // move-assign (inline relocate)
+  a = std::move(b); // move-assign (inline relocate)
   assert(*a.as<int>() == 123);
-  assert(!static_cast<bool>(b));                     // moved-from is empty
-  SmallAny<> c(std::move(a));                        // move-ctor
+  assert(!static_cast<bool>(b)); // moved-from is empty
+  SmallAny<> c(std::move(a));    // move-ctor
   assert(*c.as<int>() == 123);
 
-  SmallAny<> s = SmallAny<>::make<std::string>("hello world");  // heap (>16B)
+  SmallAny<> s = SmallAny<>::make<std::string>("hello world"); // heap (>16B)
   assert(*s.as<std::string>() == "hello world");
-  SmallAny<> s2 = std::move(s);                      // move heap (pointer relocate)
+  SmallAny<> s2 = std::move(s); // move heap (pointer relocate)
   assert(*s2.as<std::string>() == "hello world");
   s2.reset();
   assert(!static_cast<bool>(s2));
@@ -324,11 +311,11 @@ TEST(test_small_any) {
 TEST(test_edge_set_dedup_and_order) {
   EdgeSet s;
   assert(s.insert(SlotId(7)));
-  assert(!s.insert(SlotId(7)));  // idempotent
+  assert(!s.insert(SlotId(7))); // idempotent
   assert(s.size() == 1);
   assert(s.insert(SlotId(9)));
   assert(s.size() == 2);
-  assert(!s.remove(SlotId(11)));  // absent
+  assert(!s.remove(SlotId(11))); // absent
   assert(s.remove(SlotId(7)));
   assert(s.size() == 1);
   assert(s[0] == SlotId(9));
@@ -337,12 +324,15 @@ TEST(test_edge_set_dedup_and_order) {
 TEST(test_edge_set_promotes_and_stays_correct) {
   EdgeSet s;
   const size_t n = EdgeSet::kPromote * 4;
-  for (size_t i = 0; i < n; ++i) assert(s.insert(SlotId(i * 3 + 1)));
+  for (size_t i = 0; i < n; ++i)
+    assert(s.insert(SlotId(i * 3 + 1)));
   assert(s.size() == n);
   // Every member is still found (dedup) once indexed.
-  for (size_t i = 0; i < n; ++i) assert(!s.insert(SlotId(i * 3 + 1)));
+  for (size_t i = 0; i < n; ++i)
+    assert(!s.insert(SlotId(i * 3 + 1)));
   // Non-members are still absent.
-  for (size_t i = 0; i < n; ++i) assert(!s.remove(SlotId(i * 3 + 2)));
+  for (size_t i = 0; i < n; ++i)
+    assert(!s.remove(SlotId(i * 3 + 2)));
   assert(s.size() == n);
 }
 
@@ -360,7 +350,7 @@ TEST(test_edge_set_matches_reference_under_churn) {
     return rng;
   };
   for (int step = 0; step < 200000; ++step) {
-    const uint64_t id = next() % 400;  // small space => many collisions
+    const uint64_t id = next() % 400; // small space => many collisions
     if (next() & 1) {
       assert(s.insert(SlotId(id)) == reference.insert(id).second);
     } else {
@@ -369,7 +359,8 @@ TEST(test_edge_set_matches_reference_under_churn) {
     assert(s.size() == reference.size());
   }
   std::set<uint64_t> got;
-  for (SlotId id : s) got.insert(id.value);
+  for (SlotId id : s)
+    got.insert(id.value);
   assert(got == reference);
 }
 
@@ -380,9 +371,11 @@ TEST(test_edge_set_crosses_thresholds_repeatedly) {
   // benches/pubsub_load.cpp).
   EdgeSet s;
   for (int cycle = 0; cycle < 20; ++cycle) {
-    for (size_t i = 0; i < EdgeSet::kPromote + 8; ++i) s.insert(SlotId(i));
+    for (size_t i = 0; i < EdgeSet::kPromote + 8; ++i)
+      s.insert(SlotId(i));
     assert(s.size() == EdgeSet::kPromote + 8);
-    for (size_t i = 0; i < EdgeSet::kPromote + 8; ++i) assert(s.remove(SlotId(i)));
+    for (size_t i = 0; i < EdgeSet::kPromote + 8; ++i)
+      assert(s.remove(SlotId(i)));
     assert(s.empty());
   }
 }
@@ -392,21 +385,23 @@ TEST(test_edge_set_clear_drops_the_index) {
   // rather than held in a side table keyed by owner, so clearing the set frees
   // it and no stale index can be aliased onto a later, unrelated node.
   EdgeSet s;
-  for (size_t i = 0; i < EdgeSet::kPromote * 2; ++i) s.insert(SlotId(i));
+  for (size_t i = 0; i < EdgeSet::kPromote * 2; ++i)
+    s.insert(SlotId(i));
   s.clear();
   assert(s.empty());
-  assert(s.insert(SlotId(0)));  // would report "already present" against a stale index
+  assert(s.insert(SlotId(0))); // would report "already present" against a stale index
   assert(s.size() == 1);
 }
 
 TEST(test_edge_set_copy_is_independent) {
   EdgeSet a;
-  for (size_t i = 0; i < EdgeSet::kPromote * 2; ++i) a.insert(SlotId(i));
-  EdgeSet b = a;  // copies past the promote point, so b rebuilds its own index
+  for (size_t i = 0; i < EdgeSet::kPromote * 2; ++i)
+    a.insert(SlotId(i));
+  EdgeSet b = a; // copies past the promote point, so b rebuilds its own index
   assert(b.size() == a.size());
   assert(b.remove(SlotId(0)));
   assert(b.size() == a.size() - 1);
-  assert(!a.insert(SlotId(0)));  // a is untouched
+  assert(!a.insert(SlotId(0))); // a is untouched
 }
 
 TEST(test_wide_fanout_dispose_and_recycle) {
@@ -419,18 +414,20 @@ TEST(test_wide_fanout_dispose_and_recycle) {
   std::vector<int> seen(width * 2, -1);
   std::vector<Effect> handles;
   for (size_t i = 0; i < width; ++i)
-    handles.push_back(ctx.effect_void(
-        [&, i](Compute& c) { seen[i] = c.get(topic); }));
+    handles.push_back(ctx.effect_void([&, i](Compute& c) { seen[i] = c.get(topic); }));
 
-  for (size_t i = 0; i < width; i += 2) ctx.dispose_effect(handles[i]);
+  for (size_t i = 0; i < width; i += 2)
+    ctx.dispose_effect(handles[i]);
   for (size_t i = width; i < width + width / 2; ++i)
-    handles.push_back(ctx.effect_void(
-        [&, i](Compute& c) { seen[i] = c.get(topic); }));
+    handles.push_back(ctx.effect_void([&, i](Compute& c) { seen[i] = c.get(topic); }));
 
   ctx.set(topic, 42);
-  for (size_t i = 1; i < width; i += 2) assert(seen[i] == 42);
-  for (size_t i = width; i < width + width / 2; ++i) assert(seen[i] == 42);
-  for (size_t i = 0; i < width; i += 2) assert(seen[i] == 0);  // disposed
+  for (size_t i = 1; i < width; i += 2)
+    assert(seen[i] == 42);
+  for (size_t i = width; i < width + width / 2; ++i)
+    assert(seen[i] == 42);
+  for (size_t i = 0; i < width; i += 2)
+    assert(seen[i] == 0); // disposed
 }
 
 TEST(test_wide_fanout_repeated_publish) {
@@ -447,10 +444,11 @@ TEST(test_wide_fanout_repeated_publish) {
       seen[i] = c.get(topic);
       runs[i]++;
     });
-  for (int v = 1; v <= 5; ++v) ctx.set(topic, v);
+  for (int v = 1; v <= 5; ++v)
+    ctx.set(topic, v);
   for (size_t i = 0; i < width; ++i) {
     assert(seen[i] == 5);
-    assert(runs[i] == 6);  // creation + 5 publishes, no duplicate edges
+    assert(runs[i] == 6); // creation + 5 publishes, no duplicate edges
   }
 }
 
@@ -461,7 +459,8 @@ TEST(test_wide_fanin_tracks_dynamic_dependencies) {
   Context ctx;
   const size_t n = EdgeSet::kPromote * 4;
   std::vector<Source<int>> cells;
-  for (size_t i = 0; i < n; ++i) cells.push_back(ctx.source(1));
+  for (size_t i = 0; i < n; ++i)
+    cells.push_back(ctx.source(1));
   auto use_all = ctx.source(true);
 
   int computes = 0;
@@ -469,7 +468,8 @@ TEST(test_wide_fanin_tracks_dynamic_dependencies) {
     computes++;
     if (!c.get(use_all)) return long(-1);
     long total = 0;
-    for (auto& h : cells) total += c.get(h);
+    for (auto& h : cells)
+      total += c.get(h);
     return total;
   });
 
@@ -497,23 +497,30 @@ TEST(test_pending_queue_matches_reference_model) {
   std::vector<SlotId> model;
   uint64_t rng = 0x9E3779B97F4A7C15ULL;
   auto next = [&rng]() {
-    rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng;
+    rng ^= rng << 13;
+    rng ^= rng >> 7;
+    rng ^= rng << 17;
+    return rng;
   };
   for (int step = 0; step < 200000; ++step) {
     const uint64_t r = next() % 100;
-    if (r < 55) {  // push a fresh id (the bitset upstream keeps ids unique)
+    if (r < 55) { // push a fresh id (the bitset upstream keeps ids unique)
       SlotId id(next() % 4096);
       bool dup = false;
-      for (auto& m : model) if (m == id) { dup = true; break; }
+      for (auto& m : model)
+        if (m == id) {
+          dup = true;
+          break;
+        }
       if (dup) continue;
       q.push_back(id);
       model.push_back(id);
-    } else if (r < 80) {  // pop head
+    } else if (r < 80) { // pop head
       if (model.empty()) continue;
       SlotId got = q.pop_front();
       REQUIRE(got == model.front(), "pop_front returned the wrong id");
       model.erase(model.begin());
-    } else {  // erase an arbitrary live id
+    } else { // erase an arbitrary live id
       if (model.empty()) continue;
       const size_t i = size_t(next() % model.size());
       const SlotId id = model[i];
@@ -543,23 +550,27 @@ TEST(test_pending_queue_matches_reference_model) {
 TEST(test_dispose_from_inside_flush_runs_survivors_only) {
   Context ctx;
   auto topic = ctx.source(0);
-  const size_t n = 200;  // > PendingQueue promote, so the indexed path runs
+  const size_t n = 200; // > PendingQueue promote, so the indexed path runs
   std::vector<int> ran(n, 0);
   std::vector<Effect> effects;
   for (size_t i = 0; i < n; ++i)
-    effects.push_back(
-        ctx.effect_void([topic, i, &ran](Compute& c) { c.get(topic); ++ran[i]; }));
+    effects.push_back(ctx.effect_void([topic, i, &ran](Compute& c) {
+      c.get(topic);
+      ++ran[i];
+    }));
 
   // Registered last => scheduled first (the invalidation walk uses a stack), so
   // this runs with all n still queued. Disposes every even-indexed sibling.
   int runs = 0;
   ctx.effect_void([topic, &effects, &runs, n](Compute& c) {
     c.get(topic);
-    if (++runs != 2) return;  // run 1 is the registration flush
-    for (size_t i = 0; i < n; i += 2) c.dispose_effect(effects[i]);
+    if (++runs != 2) return; // run 1 is the registration flush
+    for (size_t i = 0; i < n; i += 2)
+      c.dispose_effect(effects[i]);
   });
 
-  for (auto& r : ran) r = 0;
+  for (auto& r : ran)
+    r = 0;
   ctx.set(topic, 1);
 
   for (size_t i = 0; i < n; ++i) {
@@ -580,15 +591,18 @@ TEST(test_dispose_from_inside_flush_survives_id_recycling) {
   std::vector<Effect> effects;
   std::vector<int> ran(n, 0);
   for (size_t i = 0; i < n; ++i)
-    effects.push_back(
-        ctx.effect_void([topic, i, &ran](Compute& c) { c.get(topic); ++ran[i]; }));
+    effects.push_back(ctx.effect_void([topic, i, &ran](Compute& c) {
+      c.get(topic);
+      ++ran[i];
+    }));
 
   int fresh_runs = 0;
   int runs = 0;
   ctx.effect_void([topic, &effects, &runs, &fresh_runs, n](Compute& c) {
     c.get(topic);
     if (++runs != 2) return;
-    for (size_t i = 0; i < n; ++i) c.dispose_effect(effects[i]);
+    for (size_t i = 0; i < n; ++i)
+      c.dispose_effect(effects[i]);
     for (size_t i = 0; i < n; ++i)
       c.effect_void([topic, &fresh_runs](Compute& cc) {
         cc.get(topic);
@@ -596,10 +610,12 @@ TEST(test_dispose_from_inside_flush_survives_id_recycling) {
       });
   });
 
-  for (auto& r : ran) r = 0;
+  for (auto& r : ran)
+    r = 0;
   ctx.set(topic, 1);
 
-  for (size_t i = 0; i < n; ++i) REQUIRE(ran[i] == 0, "disposed must not run");
+  for (size_t i = 0; i < n; ++i)
+    REQUIRE(ran[i] == 0, "disposed must not run");
   // Each replacement runs once on creation; none may be run a second time by a
   // stale queue entry inherited from the id it recycled.
   REQUIRE(fresh_runs == int(n), "replacement effects must run exactly once");
@@ -623,10 +639,8 @@ TEST(test_disposal_dirties_the_surviving_dependent_cone) {
   // (4d20670).
   Context ctx;
   auto src = ctx.source<long long>(1);
-  auto mid = ctx.computed<long long>(
-      [src](Compute& c) { return c.get(src) + 1; });
-  auto reader = ctx.computed<long long>(
-      [mid](Compute& c) { return c.get(mid) + 10; });
+  auto mid = ctx.computed<long long>([src](Compute& c) { return c.get(src) + 1; });
+  auto reader = ctx.computed<long long>([mid](Compute& c) { return c.get(mid) + 10; });
 
   REQUIRE(ctx.get(reader) == 12, "baseline");
   ctx.dispose_slot(mid);
@@ -639,9 +653,8 @@ TEST(test_disposal_dirties_the_surviving_dependent_cone) {
   } catch (const DisposedError&) {
     threw = true;
   }
-  REQUIRE(threw,
-          "a surviving reader of a disposed node must be dirtied by the "
-          "disposal, not left frozen on its cache");
+  REQUIRE(threw, "a surviving reader of a disposed node must be dirtied by the "
+                 "disposal, not left frozen on its cache");
 }
 
 TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
@@ -656,8 +669,7 @@ TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
   // runs == 2, while all nine reactive-graph fixtures stay green.
   Context ctx;
   auto src = ctx.source<long long>(1);
-  auto mid = ctx.computed<long long>(
-      [src](Compute& c) { return c.get(src) + 1; });
+  auto mid = ctx.computed<long long>([src](Compute& c) { return c.get(src) + 1; });
 
   int runs = 0;
   // Reads through `mid`, so disposing `mid` puts this effect in the cone.
@@ -671,9 +683,8 @@ TEST(test_disposal_does_not_schedule_effects_in_the_cone) {
   REQUIRE(runs == 1, "the effect runs once on registration");
 
   ctx.dispose_slot(mid);
-  REQUIRE(runs == 1,
-          "disposal must not schedule an effect it reaches — teardown is not a "
-          "publish");
+  REQUIRE(runs == 1, "disposal must not schedule an effect it reaches — teardown is not a "
+                     "publish");
 
   // And the effect is not silently broken: it is dirty, so the next real
   // publish that reaches it still runs it.
@@ -726,14 +737,13 @@ TEST(test_scope_is_move_only_and_disposes_exactly_once) {
                 "a copyable teardown scope would double-dispose");
   static_assert(!std::is_copy_assignable<TeardownScope>::value,
                 "a copyable teardown scope would double-dispose");
-  static_assert(std::is_move_constructible<TeardownScope>::value,
-                "scope() returns by value");
+  static_assert(std::is_move_constructible<TeardownScope>::value, "scope() returns by value");
 
   Context ctx;
   auto topic = ctx.source<long long>(0);
   int cleanups = 0;
   {
-    TeardownScope outer = ctx.scope();  // moved from the prvalue scope()
+    TeardownScope outer = ctx.scope(); // moved from the prvalue scope()
     outer.effect([topic, &cleanups](Compute& c) {
       (void)c.get(topic);
       return CleanupFn([&cleanups]() { ++cleanups; });
@@ -752,13 +762,10 @@ TEST(test_disarm_disposes_nothing_and_leaves_nodes_disposable) {
   // revert to plain context ownership — still individually disposable.
   Context ctx;
   auto topic = ctx.source<long long>(1);
-  auto escaped = ctx.computed<long long>([topic](Compute& c) {
-    return c.get(topic);
-  });
+  auto escaped = ctx.computed<long long>([topic](Compute& c) { return c.get(topic); });
   {
     TeardownScope scope = ctx.scope();
-    auto owned = scope.computed<long long>(
-        [escaped](Compute& c) { return c.get(escaped) + 5; });
+    auto owned = scope.computed<long long>([escaped](Compute& c) { return c.get(escaped) + 5; });
     REQUIRE(ctx.get(owned) == 6, "baseline through the scoped node");
     REQUIRE(scope.size() == 1, "the scope owns it");
     scope.disarm();
@@ -768,8 +775,7 @@ TEST(test_disarm_disposes_nothing_and_leaves_nodes_disposable) {
     REQUIRE(ctx.get(owned) == 9, "a disarmed scope's node still propagates");
   }
   // The scope has ended and disposed nothing.
-  auto survivor = ctx.computed<long long>(
-      [escaped](Compute& c) { return c.get(escaped) + 5; });
+  auto survivor = ctx.computed<long long>([escaped](Compute& c) { return c.get(escaped) + 5; });
   REQUIRE(ctx.get(survivor) == 9, "nothing was torn down");
   REQUIRE(ctx.dependent_count(topic) >= 1, "the source keeps its dependents");
 }
@@ -781,10 +787,8 @@ TEST(test_degree_counts_track_live_edges) {
   auto topic = ctx.source<long long>(0);
   REQUIRE(ctx.dependent_count(topic) == 0, "a fresh cell has no dependents");
 
-  auto a = ctx.computed<long long>(
-      [topic](Compute& c) { return c.get(topic) + 1; });
-  REQUIRE(ctx.dependent_count(topic) == 0,
-          "a lazy slot registers nothing until it is pulled");
+  auto a = ctx.computed<long long>([topic](Compute& c) { return c.get(topic) + 1; });
+  REQUIRE(ctx.dependent_count(topic) == 0, "a lazy slot registers nothing until it is pulled");
   REQUIRE(ctx.get(a) == 1, "pull it");
   REQUIRE(ctx.dependent_count(topic) == 1, "now the edge exists");
   REQUIRE(ctx.dependency_count(a) == 1, "and its forward half too");
@@ -806,7 +810,7 @@ TEST(test_dispose_is_idempotent_and_kind_checked) {
   Context ctx;
   auto sentinel = ctx.source<long long>(99);
   ctx.dispose_cell(sentinel);
-  ctx.dispose_cell(sentinel);  // no-op, not an error
+  ctx.dispose_cell(sentinel); // no-op, not an error
 
   // The successor very likely lands on the recycled id.
   auto successor = ctx.computed<long long>([](Compute&) { return 1LL; });
@@ -828,10 +832,8 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
   // dependency against a dead node.
   Context ctx;
   auto src = ctx.source<long long>(4);
-  auto derived =
-      ctx.computed<long long>([src](Compute& c) { return c.get(src); });
-  auto reader = ctx.computed<long long>(
-      [derived](Compute& c) { return c.get(derived) + 1; });
+  auto derived = ctx.computed<long long>([src](Compute& c) { return c.get(src); });
+  auto reader = ctx.computed<long long>([derived](Compute& c) { return c.get(derived) + 1; });
   REQUIRE(ctx.get(reader) == 5, "baseline");
 
   ctx.dispose_slot(derived);
@@ -846,8 +848,7 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
   }
 
   // The context is still usable and its dependency tracking is not corrupted.
-  auto fresh = ctx.computed<long long>(
-      [src](Compute& c) { return c.get(src) * 2; });
+  auto fresh = ctx.computed<long long>([src](Compute& c) { return c.get(src) * 2; });
   REQUIRE(ctx.get(fresh) == 8, "a fresh slot computes correctly");
   REQUIRE(ctx.dependency_count(fresh) == 1,
           "and registered exactly its own dependency — a stranded tracking "
@@ -857,7 +858,7 @@ TEST(test_read_after_dispose_throws_and_leaves_the_context_usable) {
 }
 
 int main() {
-  std::cout << "lazily-cpp core tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp core tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

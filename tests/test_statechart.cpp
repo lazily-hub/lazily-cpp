@@ -9,15 +9,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // -- Flat state machine --
@@ -25,17 +25,20 @@ static int test_passed = 0;
 TEST(test_state_machine_basic) {
   Context ctx;
   enum class Light { Red, Green, Yellow };
-  auto m = StateMachine<Light, std::string>(ctx, Light::Red,
-    [](const Light& s, const std::string& e) -> std::optional<Light> {
-      if (e == "advance") {
-        switch (s) {
-          case Light::Red: return Light::Green;
-          case Light::Green: return Light::Yellow;
-          case Light::Yellow: return Light::Red;
+  auto m = StateMachine<Light, std::string>(
+      ctx, Light::Red, [](const Light& s, const std::string& e) -> std::optional<Light> {
+        if (e == "advance") {
+          switch (s) {
+          case Light::Red:
+            return Light::Green;
+          case Light::Green:
+            return Light::Yellow;
+          case Light::Yellow:
+            return Light::Red;
+          }
         }
-      }
-      return std::nullopt;
-    });
+        return std::nullopt;
+      });
   assert(m.state(ctx) == Light::Red);
   assert(m.send(ctx, "advance"));
   assert(m.state(ctx) == Light::Green);
@@ -47,11 +50,11 @@ TEST(test_state_machine_basic) {
 
 TEST(test_state_machine_guard_reject) {
   Context ctx;
-  auto m = StateMachine<int, std::string>(ctx, 0,
-    [](const int& s, const std::string& e) -> std::optional<int> {
-      if (e == "inc" && s < 3) return s + 1;
-      return std::nullopt;
-    });
+  auto m = StateMachine<int, std::string>(
+      ctx, 0, [](const int& s, const std::string& e) -> std::optional<int> {
+        if (e == "inc" && s < 3) return s + 1;
+        return std::nullopt;
+      });
   assert(m.send(ctx, "inc"));
   assert(m.state(ctx) == 1);
   assert(m.send(ctx, "inc"));
@@ -64,13 +67,9 @@ TEST(test_state_machine_guard_reject) {
 
 TEST(test_state_machine_reactive) {
   Context ctx;
-  auto m = StateMachine<int, std::string>(ctx, 0,
-    [](const int& s, const std::string&) -> std::optional<int> {
-      return s + 1;
-    });
-  auto doubled = ctx.computed<int>([&](Compute& c) {
-    return c.get(m.state_handle()) * 2;
-  });
+  auto m = StateMachine<int, std::string>(
+      ctx, 0, [](const int& s, const std::string&) -> std::optional<int> { return s + 1; });
+  auto doubled = ctx.computed<int>([&](Compute& c) { return c.get(m.state_handle()) * 2; });
   assert(ctx.get(doubled) == 0);
   m.send(ctx, "x");
   assert(ctx.get(doubled) == 2);
@@ -82,10 +81,10 @@ TEST(test_state_machine_state_is) {
   Context ctx;
   enum class S { A, B };
   auto m = StateMachine<S, std::string>(ctx, S::A,
-    [](const S&, const std::string& e) -> std::optional<S> {
-      if (e == "toggle") return S::B;
-      return std::nullopt;
-    });
+                                        [](const S&, const std::string& e) -> std::optional<S> {
+                                          if (e == "toggle") return S::B;
+                                          return std::nullopt;
+                                        });
   auto in_b = m.state_is(ctx, S::B);
   assert(!ctx.get(in_b));
   m.send(ctx, "toggle");
@@ -97,11 +96,12 @@ TEST(test_state_machine_state_is) {
 TEST(test_chart_flat_cycle) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "a"))
-    .state(StateBuilder::atomic("a").parent("root").on("next", "b"))
-    .state(StateBuilder::atomic("b").parent("root").on("next", "c"))
-    .state(StateBuilder::atomic("c").parent("root").on("next", "a"))
-    .build().value();
+                 .state(StateBuilder::compound("root", "a"))
+                 .state(StateBuilder::atomic("a").parent("root").on("next", "b"))
+                 .state(StateBuilder::atomic("b").parent("root").on("next", "c"))
+                 .state(StateBuilder::atomic("c").parent("root").on("next", "a"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   auto leaves = chart.active_leaves(ctx);
@@ -124,10 +124,11 @@ TEST(test_chart_flat_cycle) {
 TEST(test_chart_rejection) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "a"))
-    .state(StateBuilder::atomic("a").parent("root").on("go", "b"))
-    .state(StateBuilder::atomic("b").parent("root"))
-    .build().value();
+                 .state(StateBuilder::compound("root", "a"))
+                 .state(StateBuilder::atomic("a").parent("root").on("go", "b"))
+                 .state(StateBuilder::atomic("b").parent("root"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards;
@@ -139,14 +140,14 @@ TEST(test_chart_rejection) {
 
 TEST(test_chart_hierarchical) {
   Context ctx;
-  auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "playing"))
-    .state(StateBuilder::compound("playing", "song1").parent("root")
-      .on("pause", "paused"))
-    .state(StateBuilder::atomic("song1").parent("playing"))
-    .state(StateBuilder::atomic("paused").parent("root")
-      .on("resume", "playing"))
-    .build().value();
+  auto def =
+      ChartBuilder()
+          .state(StateBuilder::compound("root", "playing"))
+          .state(StateBuilder::compound("playing", "song1").parent("root").on("pause", "paused"))
+          .state(StateBuilder::atomic("song1").parent("playing"))
+          .state(StateBuilder::atomic("paused").parent("root").on("resume", "playing"))
+          .build()
+          .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards;
@@ -169,11 +170,12 @@ TEST(test_chart_hierarchical) {
 TEST(test_chart_guarded) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "closed"))
-    .state(StateBuilder::atomic("closed").parent("root")
-      .on_guarded("open", "open", "can_open"))
-    .state(StateBuilder::atomic("open").parent("root").on("close", "closed"))
-    .build().value();
+                 .state(StateBuilder::compound("root", "closed"))
+                 .state(StateBuilder::atomic("closed").parent("root").on_guarded("open", "open",
+                                                                                 "can_open"))
+                 .state(StateBuilder::atomic("open").parent("root").on("close", "closed"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards_false{{"can_open", false}};
@@ -191,14 +193,15 @@ TEST(test_chart_guarded) {
 TEST(test_chart_parallel) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::parallel("root"))
-    .state(StateBuilder::compound("flow", "idle").parent("root"))
-    .state(StateBuilder::atomic("idle").parent("flow").on("go", "done"))
-    .state(StateBuilder::final_state("done").parent("flow"))
-    .state(StateBuilder::compound("net", "up").parent("root"))
-    .state(StateBuilder::atomic("up").parent("net").on("drop", "down"))
-    .state(StateBuilder::atomic("down").parent("net").on("restore", "up"))
-    .build().value();
+                 .state(StateBuilder::parallel("root"))
+                 .state(StateBuilder::compound("flow", "idle").parent("root"))
+                 .state(StateBuilder::atomic("idle").parent("flow").on("go", "done"))
+                 .state(StateBuilder::final_state("done").parent("flow"))
+                 .state(StateBuilder::compound("net", "up").parent("root"))
+                 .state(StateBuilder::atomic("up").parent("net").on("drop", "down"))
+                 .state(StateBuilder::atomic("down").parent("net").on("restore", "up"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards;
@@ -222,16 +225,15 @@ TEST(test_chart_parallel) {
 TEST(test_chart_history_shallow) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "a"))
-    .state(StateBuilder::compound("a", "a1").parent("root")
-      .on("exit", "b"))
-    .state(StateBuilder::atomic("a1").parent("a"))
-    .state(StateBuilder::atomic("a2").parent("a").on("next", "a1"))
-    .state(StateBuilder::history_shallow("ah").parent("a").default_child("a1"))
-    .state(StateBuilder::compound("b", "b1").parent("root")
-      .on("back", "ah"))
-    .state(StateBuilder::atomic("b1").parent("b"))
-    .build().value();
+                 .state(StateBuilder::compound("root", "a"))
+                 .state(StateBuilder::compound("a", "a1").parent("root").on("exit", "b"))
+                 .state(StateBuilder::atomic("a1").parent("a"))
+                 .state(StateBuilder::atomic("a2").parent("a").on("next", "a1"))
+                 .state(StateBuilder::history_shallow("ah").parent("a").default_child("a1"))
+                 .state(StateBuilder::compound("b", "b1").parent("root").on("back", "ah"))
+                 .state(StateBuilder::atomic("b1").parent("b"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards;
@@ -250,12 +252,13 @@ TEST(test_chart_history_shallow) {
 TEST(test_chart_entry_exit_actions) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "a"))
-    .state(StateBuilder::atomic("a").parent("root")
-      .entry("enter_a").exit("exit_a").on("go", "b"))
-    .state(StateBuilder::atomic("b").parent("root")
-      .entry("enter_b").exit("exit_b").on("go", "a"))
-    .build().value();
+                 .state(StateBuilder::compound("root", "a"))
+                 .state(StateBuilder::atomic("a").parent("root").entry("enter_a").exit("exit_a").on(
+                     "go", "b"))
+                 .state(StateBuilder::atomic("b").parent("root").entry("enter_b").exit("exit_b").on(
+                     "go", "a"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards;
@@ -284,18 +287,17 @@ TEST(test_chart_entry_exit_actions) {
 TEST(test_chart_reactive) {
   Context ctx;
   auto def = ChartBuilder()
-    .state(StateBuilder::compound("root", "off"))
-    .state(StateBuilder::atomic("off").parent("root").on("toggle", "on"))
-    .state(StateBuilder::atomic("on").parent("root").on("toggle", "off"))
-    .build().value();
+                 .state(StateBuilder::compound("root", "off"))
+                 .state(StateBuilder::atomic("off").parent("root").on("toggle", "on"))
+                 .state(StateBuilder::atomic("on").parent("root").on("toggle", "off"))
+                 .build()
+                 .value();
 
   StateChart chart(ctx, std::move(def));
   std::unordered_map<std::string, bool> guards;
 
   bool is_on = false;
-  ctx.effect_void([&](Compute& c) {
-    is_on = chart.matches(c, "on");
-  });
+  ctx.effect_void([&](Compute& c) { is_on = chart.matches(c, "on"); });
   assert(!is_on);
 
   chart.send(ctx, "toggle", guards);
@@ -306,7 +308,7 @@ TEST(test_chart_reactive) {
 }
 
 int main() {
-  std::cout << "lazily-cpp statechart tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp statechart tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

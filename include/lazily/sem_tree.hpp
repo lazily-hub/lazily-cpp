@@ -1,9 +1,9 @@
 #ifndef LAZILY_SEM_TREE_HPP
 #define LAZILY_SEM_TREE_HPP
 
+#include <lazily/cell.hpp>
 #include <lazily/collections.hpp>
 #include <lazily/context.hpp>
-#include <lazily/cell.hpp>
 
 #include <algorithm>
 #include <functional>
@@ -15,8 +15,7 @@
 
 namespace lazily {
 
-template <typename V, typename D>
-struct SemNode {
+template <typename V, typename D> struct SemNode {
   std::string id;
   Source<V> value_cell;
   Source<int> child_keys_cell;
@@ -26,9 +25,8 @@ struct SemNode {
   int child_version;
 };
 
-template <typename V, typename D>
-class SemTree {
- public:
+template <typename V, typename D> class SemTree {
+public:
   using FoldFn = std::function<D(const V&, const std::vector<D>&)>;
 
   SemTree(Context& ctx, const std::string& root_id, V root_value, FoldFn fold)
@@ -95,7 +93,7 @@ class SemTree {
     return node->slot;
   }
 
- private:
+private:
   Context& ctx_;
   FoldFn fold_;
   std::shared_ptr<SemNode<V, D>> root_;
@@ -121,8 +119,8 @@ class SemTree {
     });
   }
 
-  std::shared_ptr<SemNode<V, D>> find_node(
-      std::shared_ptr<SemNode<V, D>> node, const std::string& id) {
+  std::shared_ptr<SemNode<V, D>> find_node(std::shared_ptr<SemNode<V, D>> node,
+                                           const std::string& id) {
     if (node->id == id) return node;
     for (auto& [_, child] : node->children) {
       auto found = find_node(child, id);
@@ -132,6 +130,6 @@ class SemTree {
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_SEM_TREE_HPP
+#endif // LAZILY_SEM_TREE_HPP

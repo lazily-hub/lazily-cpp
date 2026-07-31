@@ -12,8 +12,7 @@ using namespace lazily;
 
 int main() {
   Context ctx;
-  Computed<long long> f =
-      ctx.computed<long long>([](Context&) { return 1LL; });
-  f.set(ctx, 2);  // ERROR: no member named 'set' on Computed<T>
+  Computed<long long> f = ctx.computed<long long>([](Context&) { return 1LL; });
+  f.set(ctx, 2); // ERROR: no member named 'set' on Computed<T>
   return 0;
 }

@@ -12,8 +12,7 @@
 using namespace lazily;
 
 // Each policy must keep a read-modify-write counter consistent under N threads.
-template <typename Ctx>
-static void run_rmw(const char* /*name*/) {
+template <typename Ctx> static void run_rmw(const char* /*name*/) {
   Ctx ctx;
   auto counter = ctx.source(0);
   std::vector<std::thread> ts;
@@ -27,13 +26,13 @@ static void run_rmw(const char* /*name*/) {
       }
     });
   }
-  for (auto& th : ts) th.join();
+  for (auto& th : ts)
+    th.join();
   assert(ctx.get(counter) == 4000);
 }
 
 // Concurrent readers must observe a consistent (stable) cached value.
-template <typename Ctx>
-static void run_reads(const char* /*name*/) {
+template <typename Ctx> static void run_reads(const char* /*name*/) {
   Ctx ctx;
   auto cell = ctx.source(42);
   auto slot = ctx.template slot<int>([&](Compute& c) { return c.get(cell) * 2; });
@@ -49,7 +48,8 @@ static void run_reads(const char* /*name*/) {
       }
     });
   }
-  for (auto& th : ts) th.join();
+  for (auto& th : ts)
+    th.join();
   assert(bad.load() == 0);
 }
 

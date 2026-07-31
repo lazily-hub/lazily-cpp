@@ -14,8 +14,8 @@
 #include <cstdint>
 #include <deque>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -38,14 +38,11 @@ enum class BreakerState {
 // `Closed -> Open` at `failure_threshold`; `Open -> HalfOpen` at the deadline; a
 // HalfOpen success closes, a failure re-opens.
 class CircuitBreakerCore {
- public:
-  CircuitBreakerCore(std::size_t window, std::size_t failure_threshold,
-                     uint64_t reset_timeout)
+public:
+  CircuitBreakerCore(std::size_t window, std::size_t failure_threshold, uint64_t reset_timeout)
       : window_(window < 1 ? 1 : window),
         failure_threshold_(failure_threshold < 1 ? 1 : failure_threshold),
-        reset_timeout_(reset_timeout),
-        state_(BreakerState::Closed),
-        open_until_(0) {}
+        reset_timeout_(reset_timeout), state_(BreakerState::Closed), open_until_(0) {}
 
   BreakerState state() const { return state_; }
 
@@ -53,16 +50,16 @@ class CircuitBreakerCore {
   // the deadline.
   bool allow(uint64_t now) {
     switch (state_) {
-      case BreakerState::Closed:
+    case BreakerState::Closed:
+      return true;
+    case BreakerState::Open:
+      if (now >= open_until_) {
+        state_ = BreakerState::HalfOpen;
         return true;
-      case BreakerState::Open:
-        if (now >= open_until_) {
-          state_ = BreakerState::HalfOpen;
-          return true;
-        }
-        return false;
-      case BreakerState::HalfOpen:
-        return true;
+      }
+      return false;
+    case BreakerState::HalfOpen:
+      return true;
     }
     return true;
   }
@@ -70,29 +67,30 @@ class CircuitBreakerCore {
   // Feed a call outcome and drive the state machine.
   void record(bool success, uint64_t now) {
     switch (state_) {
-      case BreakerState::HalfOpen:
-        if (success) {
-          state_ = BreakerState::Closed;
-          outcomes_.clear();
-        } else {
-          state_ = BreakerState::Open;
-          open_until_ = now + reset_timeout_;
-        }
-        break;
-      case BreakerState::Closed:
-        outcomes_.push_back(success);
-        while (outcomes_.size() > window_) outcomes_.pop_front();
-        if (failures() >= failure_threshold_) {
-          state_ = BreakerState::Open;
-          open_until_ = now + reset_timeout_;
-        }
-        break;
-      case BreakerState::Open:
-        break;
+    case BreakerState::HalfOpen:
+      if (success) {
+        state_ = BreakerState::Closed;
+        outcomes_.clear();
+      } else {
+        state_ = BreakerState::Open;
+        open_until_ = now + reset_timeout_;
+      }
+      break;
+    case BreakerState::Closed:
+      outcomes_.push_back(success);
+      while (outcomes_.size() > window_)
+        outcomes_.pop_front();
+      if (failures() >= failure_threshold_) {
+        state_ = BreakerState::Open;
+        open_until_ = now + reset_timeout_;
+      }
+      break;
+    case BreakerState::Open:
+      break;
     }
   }
 
- private:
+private:
   std::size_t failures() const {
     std::size_t n = 0;
     for (bool s : outcomes_)
@@ -104,17 +102,16 @@ class CircuitBreakerCore {
   std::size_t failure_threshold_;
   uint64_t reset_timeout_;
   BreakerState state_;
-  std::deque<bool> outcomes_;  // true = success
+  std::deque<bool> outcomes_; // true = success
   uint64_t open_until_;
 };
 
 // Reactive circuit breaker: projects the `state` onto a `Cell`.
 class CircuitBreakerCell {
- public:
-  CircuitBreakerCell(Context& ctx, std::size_t window,
-                     std::size_t failure_threshold, uint64_t reset_timeout)
-      : core_(window, failure_threshold, reset_timeout),
-        state_(ctx.source(BreakerState::Closed)) {}
+public:
+  CircuitBreakerCell(Context& ctx, std::size_t window, std::size_t failure_threshold,
+                     uint64_t reset_timeout)
+      : core_(window, failure_threshold, reset_timeout), state_(ctx.source(BreakerState::Closed)) {}
 
   bool allow(Context& ctx, uint64_t now) {
     bool r = core_.allow(now);
@@ -130,7 +127,7 @@ class CircuitBreakerCell {
   BreakerState state() const { return core_.state(); }
   Source<BreakerState> state_cell() const { return state_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(state_, core_.state()); }
 
   CircuitBreakerCore core_;
@@ -144,9 +141,8 @@ class CircuitBreakerCell {
 // Exponential-backoff compute core: `delay(attempt) = min(cap, base * 2^attempt)`,
 // saturating to `cap` on shift overflow.
 class RetryPolicyCore {
- public:
-  RetryPolicyCore(uint64_t base, uint64_t cap)
-      : base_(base), cap_(cap), attempt_(0) {}
+public:
+  RetryPolicyCore(uint64_t base, uint64_t cap) : base_(base), cap_(cap), attempt_(0) {}
 
   // The delay for `attempt` (saturating at `cap`).
   uint64_t delay(uint32_t attempt) const {
@@ -167,7 +163,7 @@ class RetryPolicyCore {
 
   void reset() { attempt_ = 0; }
 
- private:
+private:
   uint64_t base_;
   uint64_t cap_;
   uint32_t attempt_;
@@ -175,7 +171,7 @@ class RetryPolicyCore {
 
 // Reactive retry policy: projects the current delay onto a `Cell`.
 class RetryPolicyCell {
- public:
+public:
   RetryPolicyCell(Context& ctx, uint64_t base, uint64_t cap)
       : core_(base, cap), delay_(ctx.source(uint64_t(0))) {}
 
@@ -193,7 +189,7 @@ class RetryPolicyCell {
   uint64_t delay(Context& ctx) { return ctx.get(delay_); }
   Source<uint64_t> delay_cell() const { return delay_; }
 
- private:
+private:
   RetryPolicyCore core_;
   Source<uint64_t> delay_;
 };
@@ -204,7 +200,7 @@ class RetryPolicyCell {
 
 // Bounded isolation-pool compute core.
 class BulkheadCore {
- public:
+public:
   explicit BulkheadCore(uint64_t capacity) : capacity_(capacity), in_use_(0) {}
 
   uint64_t in_use() const { return in_use_; }
@@ -221,14 +217,14 @@ class BulkheadCore {
     if (in_use_ > 0) --in_use_;
   }
 
- private:
+private:
   uint64_t capacity_;
   uint64_t in_use_;
 };
 
 // Reactive bulkhead: projects `permits_in_use` onto a `Cell`.
 class BulkheadCell {
- public:
+public:
   BulkheadCell(Context& ctx, uint64_t capacity)
       : core_(capacity), in_use_(ctx.source(uint64_t(0))) {}
 
@@ -246,7 +242,7 @@ class BulkheadCell {
   uint64_t permits_in_use(Context& ctx) { return ctx.get(in_use_); }
   Source<uint64_t> permits_in_use_cell() const { return in_use_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(in_use_, core_.in_use()); }
 
   BulkheadCore core_;
@@ -259,7 +255,7 @@ class BulkheadCell {
 
 // Deadline-bounded call compute core.
 class TimeoutCore {
- public:
+public:
   TimeoutCore() : deadline_(0), armed_(false), timed_out_(false) {}
 
   // Arm the timeout with `deadline = now + timeout`.
@@ -280,7 +276,7 @@ class TimeoutCore {
 
   bool is_timed_out() const { return timed_out_; }
 
- private:
+private:
   uint64_t deadline_;
   bool armed_;
   bool timed_out_;
@@ -288,7 +284,7 @@ class TimeoutCore {
 
 // Reactive timeout: projects `is_timed_out` onto a `Cell`.
 class TimeoutCell {
- public:
+public:
   explicit TimeoutCell(Context& ctx) : timed_out_(ctx.source(false)) {}
 
   void arm(Context& ctx, uint64_t now, uint64_t timeout) {
@@ -305,13 +301,13 @@ class TimeoutCell {
   bool is_timed_out(Context& ctx) { return ctx.get(timed_out_); }
   Source<bool> is_timed_out_cell() const { return timed_out_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(timed_out_, core_.is_timed_out()); }
 
   TimeoutCore core_;
   Source<bool> timed_out_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_RESILIENCE_HPP
+#endif // LAZILY_RESILIENCE_HPP

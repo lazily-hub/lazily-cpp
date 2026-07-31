@@ -10,15 +10,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // -- Thread-safe context --
@@ -34,9 +34,7 @@ TEST(test_thread_safe_basic) {
 TEST(test_thread_safe_concurrent) {
   ThreadSafeContext ctx;
   auto a = ctx.source(0);
-  ctx.batch([&](Context& c) {
-    c.set(a, 1);
-  });
+  ctx.batch([&](Context& c) { c.set(a, 1); });
   assert(ctx.get(a) == 1);
 }
 
@@ -55,7 +53,8 @@ TEST(test_thread_safe_multi_thread) {
       }
     });
   }
-  for (auto& t : threads) t.join();
+  for (auto& t : threads)
+    t.join();
   assert(ctx.get(counter) == 400);
 }
 
@@ -65,7 +64,7 @@ TEST(test_thread_safe_concurrent_reads) {
   ThreadSafeContext ctx;
   auto cell = ctx.source(12345);
   auto slot = ctx.slot<int>([&](Compute& c) { return c.get(cell) * 2; });
-  (void)ctx.get(slot);  // prime cache
+  (void)ctx.get(slot); // prime cache
 
   std::atomic<int> bad{0};
   std::vector<std::thread> threads;
@@ -77,7 +76,8 @@ TEST(test_thread_safe_concurrent_reads) {
       }
     });
   }
-  for (auto& t : threads) t.join();
+  for (auto& t : threads)
+    t.join();
   assert(bad.load() == 0);
 }
 
@@ -88,8 +88,8 @@ TEST(test_thread_safe_reentrant_callback) {
   ThreadSafeContext ctx;
   auto base = ctx.source(7);
   auto derived = ctx.slot<int>([&](Compute& c) {
-    (void)ctx.get(base);      // re-entrant wrapper call must not deadlock
-    return c.get(base) + 1;   // value-threaded tracking read (#lzcellkernel)
+    (void)ctx.get(base);    // re-entrant wrapper call must not deadlock
+    return c.get(base) + 1; // value-threaded tracking read (#lzcellkernel)
   });
   assert(ctx.get(derived) == 8);
   ctx.set(base, 40);
@@ -296,16 +296,10 @@ TEST(test_stable_id_similarity) {
 }
 
 TEST(test_stable_id_align) {
-  std::vector<Block> old_blocks = {
-    new_anchored_block("a", "alpha"),
-    new_block("bravo text"),
-    new_anchored_block("c", "charlie")
-  };
-  std::vector<Block> new_blocks = {
-    new_anchored_block("a", "alpha"),
-    new_block("bravo edited text"),
-    new_anchored_block("c", "charlie")
-  };
+  std::vector<Block> old_blocks = {new_anchored_block("a", "alpha"), new_block("bravo text"),
+                                   new_anchored_block("c", "charlie")};
+  std::vector<Block> new_blocks = {new_anchored_block("a", "alpha"), new_block("bravo edited text"),
+                                   new_anchored_block("c", "charlie")};
   auto alignment = align(old_blocks, new_blocks);
   assert(alignment.new_matches[0].kind == Match::Kind::Same);
   assert(alignment.new_matches[1].kind == Match::Kind::Edited);
@@ -314,7 +308,7 @@ TEST(test_stable_id_align) {
 }
 
 int main() {
-  std::cout << "lazily-cpp CRDT+TS tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp CRDT+TS tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

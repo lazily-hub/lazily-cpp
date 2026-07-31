@@ -1,0 +1,15 @@
+# The house style, written down (#lazilycppfmt).
+#
+# There was no .clang-format here before, which meant the "style" was whatever
+# clang-format binary happened to be on the machine — and LLVM's defaults drift
+# between major versions. `make fmt` ran `clang-format -i` against that moving
+# target and swallowed every failure with `|| true`, so it could neither hold a
+# style nor report that it had not.
+#
+# Pair this file with the pinned CLANG_FORMAT_VERSION in the Makefile. The
+# config pins the style; the version pins the implementation. Either one alone
+# still drifts.
+BasedOnStyle: LLVM
+ColumnLimit: 100
+PointerAlignment: Left
+AllowShortIfStatementsOnASingleLine: WithoutElse

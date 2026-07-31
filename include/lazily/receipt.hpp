@@ -33,43 +33,66 @@ struct CausalReceipt {
 };
 
 inline CausalReceipt observed_receipt(std::string receipt_id, std::string causation_id,
-                                       std::string observer, int64_t generation) {
-  return {std::move(receipt_id), std::move(causation_id), std::move(observer),
-          generation, ReceiptOutcome::Observed, std::nullopt, std::nullopt};
+                                      std::string observer, int64_t generation) {
+  return {std::move(receipt_id),
+          std::move(causation_id),
+          std::move(observer),
+          generation,
+          ReceiptOutcome::Observed,
+          std::nullopt,
+          std::nullopt};
 }
 
 inline CausalReceipt accepted_receipt(std::string receipt_id, std::string causation_id,
-                                       std::string observer, int64_t generation) {
-  return {std::move(receipt_id), std::move(causation_id), std::move(observer),
-          generation, ReceiptOutcome::Accepted, std::nullopt, std::nullopt};
+                                      std::string observer, int64_t generation) {
+  return {std::move(receipt_id),
+          std::move(causation_id),
+          std::move(observer),
+          generation,
+          ReceiptOutcome::Accepted,
+          std::nullopt,
+          std::nullopt};
 }
 
 inline CausalReceipt applied_receipt(std::string receipt_id, std::string causation_id,
-                                      std::string observer, int64_t generation) {
-  return {std::move(receipt_id), std::move(causation_id), std::move(observer),
-          generation, ReceiptOutcome::Applied, std::nullopt, std::nullopt};
+                                     std::string observer, int64_t generation) {
+  return {std::move(receipt_id),
+          std::move(causation_id),
+          std::move(observer),
+          generation,
+          ReceiptOutcome::Applied,
+          std::nullopt,
+          std::nullopt};
 }
 
 inline CausalReceipt rejected_receipt(std::string receipt_id, std::string causation_id,
-                                       std::string observer, int64_t generation) {
-  return {std::move(receipt_id), std::move(causation_id), std::move(observer),
-          generation, ReceiptOutcome::Rejected, std::nullopt, std::nullopt};
+                                      std::string observer, int64_t generation) {
+  return {std::move(receipt_id),
+          std::move(causation_id),
+          std::move(observer),
+          generation,
+          ReceiptOutcome::Rejected,
+          std::nullopt,
+          std::nullopt};
 }
 
 struct ReceiptRecorded {};
 struct ReceiptDuplicate {};
-struct ReceiptStaleGeneration { int64_t expected; int64_t actual; };
+struct ReceiptStaleGeneration {
+  int64_t expected;
+  int64_t actual;
+};
 struct ReceiptTerminalConflict {
   std::string causation_id;
   ReceiptOutcome existing;
   ReceiptOutcome incoming;
 };
 
-using ReceiptApplyStatus = std::variant<ReceiptRecorded, ReceiptDuplicate,
-                                          ReceiptStaleGeneration, ReceiptTerminalConflict>;
+using ReceiptApplyStatus = std::variant<ReceiptRecorded, ReceiptDuplicate, ReceiptStaleGeneration,
+                                        ReceiptTerminalConflict>;
 
 class ReceiptProjection {
- public:
+public:
   int64_t current_generation() const { return current_generation_; }
   int receipt_count() const { return static_cast<int>(receipts_by_id_.size()); }
 
@@ -86,7 +109,8 @@ class ReceiptProjection {
     auto existing_term = terminal_by_causation_.find(receipt.causation_id);
     if (existing_term != terminal_by_causation_.end() && is_terminal(receipt.outcome)) {
       if (existing_term->second != receipt.outcome) {
-        return ReceiptTerminalConflict{receipt.causation_id, existing_term->second, receipt.outcome};
+        return ReceiptTerminalConflict{receipt.causation_id, existing_term->second,
+                                       receipt.outcome};
       }
     }
 
@@ -99,8 +123,7 @@ class ReceiptProjection {
       }
     }
 
-    if (current_gen)
-      current_generation_ = std::max(current_generation_, receipt.generation);
+    if (current_gen) current_generation_ = std::max(current_generation_, receipt.generation);
 
     return ReceiptRecorded{};
   }
@@ -127,7 +150,7 @@ class ReceiptProjection {
     return {stale_receipt_ids_.begin(), stale_receipt_ids_.end()};
   }
 
- private:
+private:
   std::unordered_map<std::string, CausalReceipt> receipts_by_id_;
   std::unordered_map<std::string, CausalReceipt> latest_by_causation_;
   std::unordered_map<std::string, ReceiptOutcome> terminal_by_causation_;
@@ -138,7 +161,7 @@ class ReceiptProjection {
 // -- State projection mirror --
 
 class StateProjectionMirror {
- public:
+public:
   void mark_dirty(NodeId node) { dirty_.insert(node); }
 
   void resolve(NodeId node, IpcValue value) {
@@ -186,12 +209,12 @@ class StateProjectionMirror {
     return hash;
   }
 
- private:
+private:
   std::unordered_set<NodeId> dirty_;
   std::unordered_map<NodeId, IpcValue> values_;
   Epoch base_epoch_ = 0;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_RECEIPT_HPP
+#endif // LAZILY_RECEIPT_HPP

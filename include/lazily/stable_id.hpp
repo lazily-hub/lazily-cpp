@@ -29,10 +29,12 @@ inline std::string normalize(const std::string& text) {
   std::vector<std::string> words;
   size_t start = 0;
   while (start < text.size()) {
-    while (start < text.size() && isspace((unsigned char)text[start])) start++;
+    while (start < text.size() && isspace((unsigned char)text[start]))
+      start++;
     if (start >= text.size()) break;
     size_t end = start;
-    while (end < text.size() && !isspace((unsigned char)text[end])) end++;
+    while (end < text.size() && !isspace((unsigned char)text[end]))
+      end++;
     words.push_back(text.substr(start, end - start));
     start = end;
   }
@@ -44,9 +46,7 @@ inline std::string normalize(const std::string& text) {
   return result;
 }
 
-inline uint64_t content_hash(const std::string& text) {
-  return fnv1a_64(normalize(text));
-}
+inline uint64_t content_hash(const std::string& text) { return fnv1a_64(normalize(text)); }
 
 struct Block {
   std::string text;
@@ -85,9 +85,7 @@ struct BlockKey {
 inline BlockKey anchored_block_key(std::string value) {
   return {BlockKey::Kind::Anchored, std::move(value), 0};
 }
-inline BlockKey content_block_key(uint64_t value) {
-  return {BlockKey::Kind::Content, "", value};
-}
+inline BlockKey content_block_key(uint64_t value) { return {BlockKey::Kind::Content, "", value}; }
 inline BlockKey block_key_of(const Block& block) {
   if (block.anchor) return anchored_block_key(*block.anchor);
   return content_block_key(content_hash(block.text));
@@ -113,10 +111,12 @@ inline std::vector<std::string> split_words(const std::string& text) {
   std::vector<std::string> words;
   size_t start = 0;
   while (start < text.size()) {
-    while (start < text.size() && isspace((unsigned char)text[start])) start++;
+    while (start < text.size() && isspace((unsigned char)text[start]))
+      start++;
     if (start >= text.size()) break;
     size_t end = start;
-    while (end < text.size() && !isspace((unsigned char)text[end])) end++;
+    while (end < text.size() && !isspace((unsigned char)text[end]))
+      end++;
     words.push_back(text.substr(start, end - start));
     start = end;
   }
@@ -144,13 +144,13 @@ struct Alignment {
   std::vector<int> removed;
 };
 
-inline Alignment align(const std::vector<Block>& old_blocks,
-                        const std::vector<Block>& new_blocks) {
+inline Alignment align(const std::vector<Block>& old_blocks, const std::vector<Block>& new_blocks) {
   Alignment result;
 
   // Build keys for old blocks
   std::vector<BlockKey> old_keys;
-  for (auto& b : old_blocks) old_keys.push_back(block_key_of(b));
+  for (auto& b : old_blocks)
+    old_keys.push_back(block_key_of(b));
 
   // Track which old indices are used
   std::vector<bool> used(old_blocks.size(), false);
@@ -200,12 +200,12 @@ inline Alignment align(const std::vector<Block>& old_blocks,
   return result;
 }
 
-inline std::vector<std::string> assign_stable_keys(
-    const std::vector<Block>& old_blocks,
-    const std::vector<Block>& new_blocks) {
+inline std::vector<std::string> assign_stable_keys(const std::vector<Block>& old_blocks,
+                                                   const std::vector<Block>& new_blocks) {
   auto alignment = align(old_blocks, new_blocks);
   std::vector<std::string> old_keys;
-  for (auto& b : old_blocks) old_keys.push_back(block_key_of(b).as_string());
+  for (auto& b : old_blocks)
+    old_keys.push_back(block_key_of(b).as_string());
 
   std::vector<std::string> result;
   for (size_t ni = 0; ni < new_blocks.size(); ++ni) {
@@ -219,6 +219,6 @@ inline std::vector<std::string> assign_stable_keys(
   return result;
 }
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_STABLE_ID_HPP
+#endif // LAZILY_STABLE_ID_HPP

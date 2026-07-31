@@ -23,9 +23,7 @@ struct OpId {
   int64_t counter = 0;
   PeerId peer = 0;
 
-  bool operator==(const OpId& o) const {
-    return counter == o.counter && peer == o.peer;
-  }
+  bool operator==(const OpId& o) const { return counter == o.counter && peer == o.peer; }
   int compare(const OpId& o) const {
     if (counter != o.counter) return counter < o.counter ? -1 : 1;
     if (peer != o.peer) return peer < o.peer ? -1 : 1;
@@ -35,16 +33,15 @@ struct OpId {
   bool operator>(const OpId& o) const { return compare(o) > 0; }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
 namespace std {
-template <>
-struct hash<lazily::OpId> {
+template <> struct hash<lazily::OpId> {
   size_t operator()(const lazily::OpId& id) const noexcept {
     return hash<int64_t>{}(id.counter) ^ (hash<int64_t>{}(id.peer) << 1);
   }
 };
-}  // namespace std
+} // namespace std
 
 namespace lazily {
 
@@ -160,7 +157,7 @@ public:
   TextCrdt clone() const { return fork(peer_); }
 
   bool merge(const TextCrdt& other) {
-    visible_valid_ = false;  // remote ops restructure the visible order
+    visible_valid_ = false; // remote ops restructure the visible order
     bool changed = false;
     for (auto& [id, elem] : other.elems_) {
       auto it = elems_.find(id);
@@ -225,7 +222,7 @@ public:
   }
 
   bool apply_delta(const std::vector<TextOp>& ops) {
-    visible_valid_ = false;  // remote ops restructure the visible order
+    visible_valid_ = false; // remote ops restructure the visible order
     bool changed = false;
     for (auto& op : ops) {
       auto it = elems_.find(op.id);
@@ -250,7 +247,7 @@ public:
   }
 
   size_t gc_with(std::function<bool(OpId)> is_stable) {
-    visible_valid_ = false;  // removing tombstones changes the element set
+    visible_valid_ = false; // removing tombstones changes the element set
     size_t collected = 0;
     // Collect tombstones that are stable AND not referenced as an origin
     std::unordered_set<OpId> referenced;
@@ -273,7 +270,7 @@ public:
     return collected;
   }
 
- private:
+private:
   PeerId peer_;
   int64_t counter_;
   // Hash-indexed (OpId has std::hash). Order is not relied upon: visible order
@@ -325,9 +322,7 @@ public:
     if (it == by_origin_.end()) return;
     // Sort children descending by OpId (most recent first)
     auto children = it->second;
-    std::sort(children.begin(), children.end(), [](const OpId& a, const OpId& b) {
-      return b < a;
-    });
+    std::sort(children.begin(), children.end(), [](const OpId& a, const OpId& b) { return b < a; });
     for (auto& child : children) {
       auto eit = elems_.find(child);
       if (eit == elems_.end()) continue;
@@ -339,9 +334,8 @@ public:
 
 // -- LWW Register --
 
-template <typename V>
-class LwwRegister {
- public:
+template <typename V> class LwwRegister {
+public:
   LwwRegister(V value, HlcStamp stamp) : value_(std::move(value)), stamp_(stamp) {}
 
   bool set(V new_value, HlcStamp new_stamp) {
@@ -353,28 +347,28 @@ class LwwRegister {
     return false;
   }
 
-  bool merge_from(const LwwRegister<V>& other) {
-    return set(other.value_, other.stamp_);
-  }
+  bool merge_from(const LwwRegister<V>& other) { return set(other.value_, other.stamp_); }
 
   const V& value() const { return value_; }
   const HlcStamp& stamp() const { return stamp_; }
   LwwRegister<V> copy() const { return *this; }
 
- private:
+private:
   V value_;
   HlcStamp stamp_;
 };
 
 // -- MV Register (multi-value) --
 
-template <typename V>
-class MvRegister {
- public:
+template <typename V> class MvRegister {
+public:
   void write(V value, HlcStamp stamp, const std::unordered_set<HlcStamp>& observed) {
     bool collapses = true;
     for (auto& s : stamps_) {
-      if (!observed.count(s)) { collapses = false; break; }
+      if (!observed.count(s)) {
+        collapses = false;
+        break;
+      }
     }
     if (collapses) {
       values_.clear();
@@ -388,7 +382,10 @@ class MvRegister {
     for (size_t i = 0; i < other.values_.size(); ++i) {
       bool found = false;
       for (auto& s : stamps_) {
-        if (s == other.stamps_[i]) { found = true; break; }
+        if (s == other.stamps_[i]) {
+          found = true;
+          break;
+        }
       }
       if (!found) {
         values_.push_back(other.values_[i]);
@@ -399,7 +396,7 @@ class MvRegister {
 
   std::vector<V> values() const { return values_; }
 
- private:
+private:
   std::vector<V> values_;
   std::vector<HlcStamp> stamps_;
 };
@@ -407,7 +404,7 @@ class MvRegister {
 // -- PN Counter --
 
 class PnCounter {
- public:
+public:
   explicit PnCounter(PeerId peer) : peer_(peer) {}
 
   void increment() { positive_[peer_]++; }
@@ -417,20 +414,24 @@ class PnCounter {
 
   int64_t value() const {
     int64_t sum = 0;
-    for (auto& [_, v] : positive_) sum += v;
-    for (auto& [_, v] : negative_) sum -= v;
+    for (auto& [_, v] : positive_)
+      sum += v;
+    for (auto& [_, v] : negative_)
+      sum -= v;
     return sum;
   }
 
   void merge(const PnCounter& other) {
-    for (auto& [k, v] : other.positive_) positive_[k] = std::max(positive_[k], v);
-    for (auto& [k, v] : other.negative_) negative_[k] = std::max(negative_[k], v);
+    for (auto& [k, v] : other.positive_)
+      positive_[k] = std::max(positive_[k], v);
+    for (auto& [k, v] : other.negative_)
+      negative_[k] = std::max(negative_[k], v);
   }
 
   PnCounter copy() const { return *this; }
   PeerId peer() const { return peer_; }
 
- private:
+private:
   PeerId peer_;
   std::unordered_map<PeerId, int64_t> positive_;
   std::unordered_map<PeerId, int64_t> negative_;
@@ -456,7 +457,7 @@ struct Position {
 };
 
 inline std::vector<uint8_t> key_between(const std::vector<uint8_t>* lo,
-                                          const std::vector<uint8_t>* hi) {
+                                        const std::vector<uint8_t>* hi) {
   // Simple midpoint fractional index
   if (!lo && !hi) return {128};
   if (!lo) {
@@ -489,16 +490,13 @@ inline std::vector<uint8_t> key_between(const std::vector<uint8_t>* lo,
   return result;
 }
 
-template <typename Id, typename V>
-struct SeqEntry {
+template <typename Id, typename V> struct SeqEntry {
   LwwRegister<V> value;
   LwwRegister<Position> position;
   LwwRegister<bool> deleted;
 
   SeqEntry(V v, Position pos, HlcStamp stamp)
-      : value(std::move(v), stamp),
-        position(std::move(pos), stamp),
-        deleted(false, stamp) {}
+      : value(std::move(v), stamp), position(std::move(pos), stamp), deleted(false, stamp) {}
 
   HlcStamp max_stamp() const {
     HlcStamp m = value.stamp();
@@ -508,21 +506,19 @@ struct SeqEntry {
   }
 };
 
-template <typename Id, typename V>
-class SeqCrdt {
- public:
+template <typename Id, typename V> class SeqCrdt {
+public:
   explicit SeqCrdt(PeerId peer) : peer_(peer), hlc_(peer) {}
 
   PeerId peer() const { return peer_; }
 
-  void insert_between(const Id& id, V value,
-                       const Id* left, const Id* right, int64_t now_micros) {
+  void insert_between(const Id& id, V value, const Id* left, const Id* right, int64_t now_micros) {
     auto stamp = hlc_.tick(now_micros);
     auto left_pos = left ? &entries_.at(*left).position.value() : nullptr;
     auto right_pos = right ? &entries_.at(*right).position.value() : nullptr;
-    auto pos = Position{key_between(
-        left_pos ? &left_pos->frac : nullptr,
-        right_pos ? &right_pos->frac : nullptr), peer_};
+    auto pos = Position{
+        key_between(left_pos ? &left_pos->frac : nullptr, right_pos ? &right_pos->frac : nullptr),
+        peer_};
     entries_.emplace(id, SeqEntry<Id, V>(std::move(value), pos, stamp));
   }
 
@@ -551,9 +547,9 @@ class SeqCrdt {
     auto stamp = hlc_.tick(now_micros);
     auto left_pos = left ? &entries_.at(*left).position.value() : nullptr;
     auto right_pos = right ? &entries_.at(*right).position.value() : nullptr;
-    auto pos = Position{key_between(
-        left_pos ? &left_pos->frac : nullptr,
-        right_pos ? &right_pos->frac : nullptr), peer_};
+    auto pos = Position{
+        key_between(left_pos ? &left_pos->frac : nullptr, right_pos ? &right_pos->frac : nullptr),
+        peer_};
     return it->second.position.set(std::move(pos), stamp);
   }
 
@@ -581,25 +577,27 @@ class SeqCrdt {
   std::vector<Id> order() const {
     std::vector<std::pair<Position, Id>> live;
     for (auto& [id, entry] : entries_) {
-      if (!entry.deleted.value())
-        live.push_back({entry.position.value(), id});
+      if (!entry.deleted.value()) live.push_back({entry.position.value(), id});
     }
     std::sort(live.begin(), live.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<Id> result;
-    for (auto& [_, id] : live) result.push_back(id);
+    for (auto& [_, id] : live)
+      result.push_back(id);
     return result;
   }
 
   size_t len() const {
     size_t count = 0;
-    for (auto& [_, e] : entries_) if (!e.deleted.value()) ++count;
+    for (auto& [_, e] : entries_)
+      if (!e.deleted.value()) ++count;
     return count;
   }
 
   size_t tombstone_count() const {
     size_t count = 0;
-    for (auto& [_, e] : entries_) if (e.deleted.value()) ++count;
+    for (auto& [_, e] : entries_)
+      if (e.deleted.value()) ++count;
     return count;
   }
 
@@ -629,12 +627,12 @@ class SeqCrdt {
     return clone;
   }
 
- private:
+private:
   PeerId peer_;
   Hlc hlc_;
   std::unordered_map<Id, SeqEntry<Id, V>> entries_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_CRDT_HPP
+#endif // LAZILY_CRDT_HPP

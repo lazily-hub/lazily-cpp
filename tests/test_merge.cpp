@@ -15,15 +15,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                     \
-  static void name();                  \
-  struct name##_runner {               \
-    name##_runner() {                  \
-      ++test_count;                    \
-      name();                          \
-      ++test_passed;                   \
-    }                                  \
-  } name##_instance;                   \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 TEST(test_merge_associativity) {
@@ -80,9 +80,11 @@ TEST(test_cell_is_merge_cell_keep_latest) {
 TEST(test_sum_converges_regardless_of_order) {
   Context ctx;
   MergeCell<long, Sum> a(ctx, 0);
-  for (long d : {5L, -3L, 8L, 2L, -1L}) a.merge(d);
+  for (long d : {5L, -3L, 8L, 2L, -1L})
+    a.merge(d);
   MergeCell<long, Sum> b(ctx, 0);
-  for (long d : {-1L, 2L, 8L, -3L, 5L}) b.merge(d);
+  for (long d : {-1L, 2L, 8L, -3L, 5L})
+    b.merge(d);
   assert(a.get() == b.get());
   assert(a.get() == 11);
 }
@@ -100,7 +102,7 @@ TEST(test_idempotent_merge_no_ops_via_guard) {
   mc.merge(5);
   mc.merge(10);
   mc.merge(0);
-  assert(runs == 1);  // merges at/below max fire no cascade
+  assert(runs == 1); // merges at/below max fire no cascade
   mc.merge(42);
   assert(mc.get() == 42);
   assert(runs == 2);
@@ -111,10 +113,12 @@ TEST(test_converged_determinism_mirrors_fixture) {
   // Max initial 10: 5,10,42,0,42 → 42).
   Context ctx;
   MergeCell<long, Sum> s(ctx, 0);
-  for (long op : {5L, -3L, 8L, 2L, 0L}) s.merge(op);
+  for (long op : {5L, -3L, 8L, 2L, 0L})
+    s.merge(op);
   assert(s.get() == 12);
   MergeCell<long, Max> m(ctx, 10);
-  for (long op : {5L, 10L, 42L, 0L, 42L}) m.merge(op);
+  for (long op : {5L, 10L, 42L, 0L, 42L})
+    m.merge(op);
   assert(m.get() == 42);
 }
 

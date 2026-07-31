@@ -62,17 +62,17 @@ constexpr const char* kFixture = "entry_kind_orthogonal_to_mode.json";
 EntryKind entry_kind_of(const std::string& kind) {
   if (kind == "cell" || kind == "source") return EntryKind::Source;
   if (kind == "slot" || kind == "computed") return EntryKind::Computed;
-  REQUIRE(false,
-          "fixture entry kind '" + kind +
-              "' is neither an input (cell/source) nor a derived "
-              "(slot/computed) spelling");
-  return EntryKind::Source;  // unreachable: REQUIRE aborts
+  REQUIRE(false, "fixture entry kind '" + kind +
+                     "' is neither an input (cell/source) nor a derived "
+                     "(slot/computed) spelling");
+  return EntryKind::Source; // unreachable: REQUIRE aborts
 }
 
 std::vector<std::string> strings_of(const Json* array, const char* what) {
   REQUIRE(array != nullptr && array->is_array(), what);
   std::vector<std::string> out;
-  for (const auto& element : array->array) out.push_back(element->str);
+  for (const auto& element : array->array)
+    out.push_back(element->str);
   return out;
 }
 
@@ -81,7 +81,7 @@ std::vector<std::string> sorted(std::vector<std::string> keys) {
   return keys;
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   // Both spellings of each kind resolve to the same `EntryKind`, so a corpus
@@ -104,8 +104,7 @@ int main() {
   const Json* spec = fixture->find("spec");
   REQUIRE(spec != nullptr, "fixture has no spec block");
   const Json* entries = spec->find("entries");
-  REQUIRE(entries != nullptr && entries->is_object(),
-          "fixture spec has no entries object");
+  REQUIRE(entries != nullptr && entries->is_object(), "fixture spec has no entries object");
 
   // Partition the fixture's entries by kind. Input entries are modelled by a
   // `SourceMap`, derived entries by a `ComputedMap` -- the two handle kinds the
@@ -115,27 +114,24 @@ int main() {
   for (const auto& kv : entries->object) {
     const Json* kind = kv.second->find("kind");
     const Json* val = kv.second->find("val");
-    REQUIRE(kind != nullptr && val != nullptr,
-            "fixture entry needs both a kind and a val");
+    REQUIRE(kind != nullptr && val != nullptr, "fixture entry needs both a kind and a val");
     const auto value = static_cast<uint32_t>(val->as_int());
     switch (entry_kind_of(kind->str)) {
-      case EntryKind::Source:
-        cell_entries.emplace_back(kv.first, value);
-        break;
-      case EntryKind::Computed:
-        slot_entries.emplace_back(kv.first, value);
-        break;
+    case EntryKind::Source:
+      cell_entries.emplace_back(kv.first, value);
+      break;
+    case EntryKind::Computed:
+      slot_entries.emplace_back(kv.first, value);
+      break;
     }
   }
   REQUIRE(!cell_entries.empty() && !slot_entries.empty(),
           "the entry-kind fixture must exercise both entry kinds");
 
-  const std::map<std::string, uint32_t> slot_val(slot_entries.begin(),
-                                                 slot_entries.end());
+  const std::map<std::string, uint32_t> slot_val(slot_entries.begin(), slot_entries.end());
   auto factory = [&slot_val](const std::string& key) -> uint32_t {
     auto it = slot_val.find(key);
-    REQUIRE(it != slot_val.end(),
-            "fixture reads a key that is not a derived entry");
+    REQUIRE(it != slot_val.end(), "fixture reads a key that is not a derived entry");
     return it->second;
   };
 
@@ -146,26 +142,22 @@ int main() {
   // The strategy a caller gets without asking for one. The fixture carried it
   // and nothing read it, so this runner exercised both strategies while never
   // stating which the corpus calls the default (#lzassertunknownkeys).
-  const std::string default_mode =
-      lazily_test::json_string(expected.required("default_mode"));
+  const std::string default_mode = lazily_test::json_string(expected.required("default_mode"));
   REQUIRE(default_mode == "eager" || default_mode == "lazy",
           "default_mode must name a strategy this runner exercises");
-  const auto eager_present =
-      strings_of(expected.find("eager_present"), "expected.eager_present");
+  const auto eager_present = strings_of(expected.find("eager_present"), "expected.eager_present");
   const auto lazy_after_reads =
-      strings_of(expected.find("lazy_present_after_reads"),
-                 "expected.lazy_present_after_reads");
+      strings_of(expected.find("lazy_present_after_reads"), "expected.lazy_present_after_reads");
   const Json* observe = expected.find("observe");
-  REQUIRE(observe != nullptr && observe->is_object(),
-          "expected.observe must be an object");
+  REQUIRE(observe != nullptr && observe->is_object(), "expected.observe must be an object");
 
   // -- Lazy strategy --
 
   Context ctx;
   SourceMap<std::string, uint32_t> cells(ctx);
-  for (const auto& kv : cell_entries) cells.set(ctx, kv.first, kv.second);
-  REQUIRE(cells.entry_kind() == EntryKind::Source,
-          "a SourceMap must report the input entry kind");
+  for (const auto& kv : cell_entries)
+    cells.set(ctx, kv.first, kv.second);
+  REQUIRE(cells.entry_kind() == EntryKind::Source, "a SourceMap must report the input entry kind");
 
   ComputedMap<std::string, uint32_t> slots(ctx);
   REQUIRE(slots.entry_kind() == EntryKind::Computed,
@@ -173,27 +165,24 @@ int main() {
 
   auto present_keys = [&cells, &slots]() {
     std::vector<std::string> keys = cells.present_keys();
-    for (const auto& key : slots.present_keys()) keys.push_back(key);
+    for (const auto& key : slots.present_keys())
+      keys.push_back(key);
     return sorted(std::move(keys));
   };
 
   // Input entries are materialized at build in every strategy; derived entries
   // are deferred until read.
-  expected.assert_key_with(
-      "lazy_present_at_build", [&](const Json& want) {
-        return present_keys() ==
-               sorted(strings_of(&want, "expected.lazy_present_at_build"));
-      });
+  expected.assert_key_with("lazy_present_at_build", [&](const Json& want) {
+    return present_keys() == sorted(strings_of(&want, "expected.lazy_present_at_build"));
+  });
 
   for (const auto& key : reads) {
     REQUIRE(slots.get_or_insert_with(ctx, key, factory) == factory(key),
             "a lazily-minted derived entry read back its canonical value");
   }
-  expected.assert_key_with(
-      "lazy_present_after_reads", [&](const Json& want) {
-        return present_keys() ==
-               sorted(strings_of(&want, "expected.lazy_present_after_reads"));
-      });
+  expected.assert_key_with("lazy_present_after_reads", [&](const Json& want) {
+    return present_keys() == sorted(strings_of(&want, "expected.lazy_present_after_reads"));
+  });
 
   // Reads are strategy-independent: every key observes its canonical value,
   // whether it was present at build or minted on access.
@@ -219,7 +208,8 @@ int main() {
     eager_cells.set(eager_ctx, kv.first, kv.second);
 
   std::vector<std::string> slot_keys;
-  for (const auto& kv : slot_entries) slot_keys.push_back(kv.first);
+  for (const auto& kv : slot_entries)
+    slot_keys.push_back(kv.first);
   ComputedMap<std::string, uint32_t> eager_slots(eager_ctx);
   eager_slots.materialize_all(eager_ctx, slot_keys, factory);
 
@@ -227,16 +217,14 @@ int main() {
     std::vector<std::string> eager_keys = eager_cells.present_keys();
     for (const auto& key : eager_slots.present_keys())
       eager_keys.push_back(key);
-    return sorted(std::move(eager_keys)) ==
-           sorted(strings_of(&want, "expected.eager_present"));
+    return sorted(std::move(eager_keys)) == sorted(strings_of(&want, "expected.eager_present"));
   });
 
   for (const auto& kv : observe->object) {
     const auto want = static_cast<uint32_t>(kv.second->as_int());
     const bool is_input = eager_cells.is_present(kv.first);
     const std::optional<uint32_t> got =
-        is_input ? eager_cells.get(eager_ctx, kv.first)
-                 : eager_slots.get(eager_ctx, kv.first);
+        is_input ? eager_cells.get(eager_ctx, kv.first) : eager_slots.get(eager_ctx, kv.first);
     REQUIRE(got == std::optional<uint32_t>(want),
             "an eagerly-materialized entry did not observe its canonical value");
   }
@@ -248,16 +236,14 @@ int main() {
     REQUIRE(mode == "eager" || mode == "lazy",
             "default_mode must name a strategy this runner exercises");
     std::vector<std::string> default_keys = eager_cells.present_keys();
-    const auto& want_default =
-        mode == "eager" ? eager_present : lazy_after_reads;
+    const auto& want_default = mode == "eager" ? eager_present : lazy_after_reads;
     for (const auto& key : eager_slots.present_keys())
       default_keys.push_back(key);
     return sorted(std::move(default_keys)) == sorted(want_default);
   });
 
   REQUIRE_FIXTURES_LOADED(1);
-  std::cout << "materialization conformance: " << kFixture << " replayed ("
-            << cell_entries.size() << " input + " << slot_entries.size()
-            << " derived entries)" << std::endl;
+  std::cout << "materialization conformance: " << kFixture << " replayed (" << cell_entries.size()
+            << " input + " << slot_entries.size() << " derived entries)" << std::endl;
   return 0;
 }

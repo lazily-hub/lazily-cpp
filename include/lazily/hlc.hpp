@@ -27,30 +27,24 @@ struct HlcStamp {
   bool operator==(const HlcStamp& o) const { return compare(o) == 0; }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
 namespace std {
-template <>
-struct hash<lazily::HlcStamp> {
+template <> struct hash<lazily::HlcStamp> {
   size_t operator()(const lazily::HlcStamp& s) const noexcept {
-    return hash<int64_t>{}(s.wall_time) ^
-           (hash<int64_t>{}(s.logical) << 1) ^
+    return hash<int64_t>{}(s.wall_time) ^ (hash<int64_t>{}(s.logical) << 1) ^
            (hash<int64_t>{}(s.peer) << 2);
   }
 };
-}  // namespace std
+} // namespace std
 
 namespace lazily {
 
-inline HlcStamp min_stamp(const HlcStamp& a, const HlcStamp& b) {
-  return a < b ? a : b;
-}
-inline HlcStamp max_stamp(const HlcStamp& a, const HlcStamp& b) {
-  return a > b ? a : b;
-}
+inline HlcStamp min_stamp(const HlcStamp& a, const HlcStamp& b) { return a < b ? a : b; }
+inline HlcStamp max_stamp(const HlcStamp& a, const HlcStamp& b) { return a > b ? a : b; }
 
 class Hlc {
- public:
+public:
   explicit Hlc(PeerId peer) : peer_(peer) {}
   PeerId peer() const { return peer_; }
 
@@ -79,7 +73,7 @@ class Hlc {
     return {last_wall_, last_logical_, peer_};
   }
 
- private:
+private:
   PeerId peer_;
   int64_t last_wall_ = 0;
   int64_t last_logical_ = 0;
@@ -92,16 +86,12 @@ struct WireStamp {
   PeerId peer;
 };
 
-inline WireStamp to_wire(const HlcStamp& s) {
-  return {s.wall_time, s.logical, s.peer};
-}
-inline HlcStamp from_wire(const WireStamp& s) {
-  return {s.wall_time, s.logical, s.peer};
-}
+inline WireStamp to_wire(const HlcStamp& s) { return {s.wall_time, s.logical, s.peer}; }
+inline HlcStamp from_wire(const WireStamp& s) { return {s.wall_time, s.logical, s.peer}; }
 
 // Stamp frontier (per-peer max)
 class StampFrontier {
- public:
+public:
   void observe(PeerId peer, const HlcStamp& stamp) {
     auto it = stamps_.find(peer);
     if (it == stamps_.end() || stamp > it->second) {
@@ -119,7 +109,8 @@ class StampFrontier {
 
   std::vector<PeerId> peers() const {
     std::vector<PeerId> result;
-    for (auto& [p, _] : stamps_) result.push_back(p);
+    for (auto& [p, _] : stamps_)
+      result.push_back(p);
     std::sort(result.begin(), result.end());
     return result;
   }
@@ -130,15 +121,18 @@ class StampFrontier {
     for (auto p : membership) {
       auto it = stamps_.find(p);
       if (it == stamps_.end()) return std::nullopt;
-      if (first || it->second < min) { min = it->second; first = false; }
+      if (first || it->second < min) {
+        min = it->second;
+        first = false;
+      }
     }
     return first ? std::nullopt : std::optional<HlcStamp>(min);
   }
 
- private:
+private:
   std::unordered_map<PeerId, HlcStamp> stamps_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_HLC_HPP
+#endif // LAZILY_HLC_HPP

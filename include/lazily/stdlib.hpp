@@ -20,8 +20,7 @@ struct CheckedDeadline {
   TimerError error = TimerError::deadline_overflow;
 };
 
-inline CheckedDeadline checked_deadline(std::uint64_t now,
-                                        std::uint64_t duration) {
+inline CheckedDeadline checked_deadline(std::uint64_t now, std::uint64_t duration) {
   if (duration > std::numeric_limits<std::uint64_t>::max() - now)
     return {false, 0, TimerError::deadline_overflow};
   return {true, now + duration, TimerError::deadline_overflow};
@@ -39,19 +38,15 @@ public:
   static std::pair<std::unique_ptr<Timer>, std::optional<TimerError>>
   start(std::uint64_t now, std::uint64_t duration) {
     const auto deadline = checked_deadline(now, duration);
-    if (!deadline.ok)
-      return {nullptr, deadline.error};
-    return {std::unique_ptr<Timer>(new Timer(now, deadline.value)),
-            std::nullopt};
+    if (!deadline.ok) return {nullptr, deadline.error};
+    return {std::unique_ptr<Timer>(new Timer(now, deadline.value)), std::nullopt};
   }
 
   TimerObservation observe(std::uint64_t now) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (fired_)
-      return {TimerObservation::Outcome::fired, 0, fired_at_, std::nullopt};
+    if (fired_) return {TimerObservation::Outcome::fired, 0, fired_at_, std::nullopt};
     if (now < last_now_)
-      return {TimerObservation::Outcome::unavailable, deadline_, 0,
-              TimerError::clock_regression};
+      return {TimerObservation::Outcome::unavailable, deadline_, 0, TimerError::clock_regression};
     last_now_ = now;
     if (now >= deadline_) {
       fired_ = true;
@@ -62,8 +57,7 @@ public:
   }
 
 private:
-  Timer(std::uint64_t now, std::uint64_t deadline)
-      : deadline_(deadline), last_now_(now) {}
+  Timer(std::uint64_t now, std::uint64_t deadline) : deadline_(deadline), last_now_(now) {}
 
   std::mutex mu_;
   std::uint64_t deadline_;
@@ -83,9 +77,7 @@ template <typename T> struct TimeoutOperation {
   static TimeoutOperation completed(T value) {
     return {TimeoutOperationState::completed, std::move(value)};
   }
-  static TimeoutOperation unavailable() {
-    return {TimeoutOperationState::unavailable, {}};
-  }
+  static TimeoutOperation unavailable() { return {TimeoutOperationState::unavailable, {}}; }
 };
 
 template <typename T> struct TimeoutObservation {
@@ -103,46 +95,34 @@ public:
   static std::pair<std::unique_ptr<Timeout>, std::optional<TimerError>>
   start(std::uint64_t now, std::uint64_t duration) {
     const auto deadline = checked_deadline(now, duration);
-    if (!deadline.ok)
-      return {nullptr, deadline.error};
-    return {std::unique_ptr<Timeout>(new Timeout(now, deadline.value)),
-            std::nullopt};
+    if (!deadline.ok) return {nullptr, deadline.error};
+    return {std::unique_ptr<Timeout>(new Timeout(now, deadline.value)), std::nullopt};
   }
 
   template <typename Operation, typename Cancellation>
-  Observation poll(std::uint64_t now, Operation operation,
-                   Cancellation cancellation) {
+  Observation poll(std::uint64_t now, Operation operation, Cancellation cancellation) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (terminal_)
-      return *terminal_;
+    if (terminal_) return *terminal_;
     if (now < last_now_)
-      return latch(
-          {Observation::Outcome::unavailable, 0, {}, "clock_regression"});
+      return latch({Observation::Outcome::unavailable, 0, {}, "clock_regression"});
     last_now_ = now;
-    if (now >= deadline_)
-      return latch({Observation::Outcome::timed_out, 0, {}, {}});
+    if (now >= deadline_) return latch({Observation::Outcome::timed_out, 0, {}, {}});
 
     auto op = operation();
     const auto cancel = cancellation();
     if (op.state == TimeoutOperationState::completed)
-      return latch(
-          {Observation::Outcome::completed, 0, std::move(op.value), {}});
+      return latch({Observation::Outcome::completed, 0, std::move(op.value), {}});
     if (op.state == TimeoutOperationState::unavailable)
-      return latch(
-          {Observation::Outcome::unavailable, 0, {}, "operation_unavailable"});
+      return latch({Observation::Outcome::unavailable, 0, {}, "operation_unavailable"});
     if (cancel == TimeoutCancellation::cancelled)
       return latch({Observation::Outcome::cancelled, 0, {}, {}});
     if (cancel == TimeoutCancellation::unavailable)
-      return latch({Observation::Outcome::unavailable,
-                    0,
-                    {},
-                    "cancellation_unavailable"});
+      return latch({Observation::Outcome::unavailable, 0, {}, "cancellation_unavailable"});
     return {Observation::Outcome::pending, deadline_, {}, {}};
   }
 
 private:
-  Timeout(std::uint64_t now, std::uint64_t deadline)
-      : deadline_(deadline), last_now_(now) {}
+  Timeout(std::uint64_t now, std::uint64_t deadline) : deadline_(deadline), last_now_(now) {}
 
   Observation latch(Observation observation) {
     terminal_ = observation;
@@ -173,18 +153,14 @@ class RevisionBarrier {
 public:
   RevisionBarrier(std::uint64_t revision, std::uint64_t required_revision,
                   std::optional<std::uint64_t> deadline)
-      : revision_(revision), required_revision_(required_revision),
-        deadline_(deadline) {}
+      : revision_(revision), required_revision_(required_revision), deadline_(deadline) {}
 
   template <typename Cancellation>
-  RevisionBarrierObservation observe(std::uint64_t now, bool predicate,
-                                     Cancellation cancellation) {
+  RevisionBarrierObservation observe(std::uint64_t now, bool predicate, Cancellation cancellation) {
     std::unique_lock<std::mutex> lock(mu_);
-    if (terminal_)
-      return snapshot();
+    if (terminal_) return snapshot();
     if (!accept_now(now))
-      return latch(RevisionBarrierObservation::Outcome::unavailable,
-                   "clock_regression");
+      return latch(RevisionBarrierObservation::Outcome::unavailable, "clock_regression");
     if (deadline_ && now >= *deadline_)
       return latch(RevisionBarrierObservation::Outcome::timed_out);
     if (predicate && revision_ >= required_revision_)
@@ -192,29 +168,24 @@ public:
     lock.unlock();
     const auto cancellation_state = cancellation();
     lock.lock();
-    if (terminal_)
-      return snapshot();
+    if (terminal_) return snapshot();
     switch (cancellation_state) {
     case TimeoutCancellation::cancelled:
       return latch(RevisionBarrierObservation::Outcome::cancelled);
     case TimeoutCancellation::unavailable:
-      return latch(RevisionBarrierObservation::Outcome::unavailable,
-                   "cancellation_unavailable");
+      return latch(RevisionBarrierObservation::Outcome::unavailable, "cancellation_unavailable");
     case TimeoutCancellation::pending:
       return snapshot();
     }
     return snapshot();
   }
 
-  RevisionBarrierObservation register_recheck(std::uint64_t now,
-                                              std::uint64_t observed_revision,
+  RevisionBarrierObservation register_recheck(std::uint64_t now, std::uint64_t observed_revision,
                                               bool predicate) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (terminal_)
-      return snapshot();
+    if (terminal_) return snapshot();
     if (!accept_now(now))
-      return latch(RevisionBarrierObservation::Outcome::unavailable,
-                   "clock_regression");
+      return latch(RevisionBarrierObservation::Outcome::unavailable, "clock_regression");
     if (deadline_ && now >= *deadline_)
       return latch(RevisionBarrierObservation::Outcome::timed_out);
     accept_revision(observed_revision);
@@ -225,8 +196,7 @@ public:
 
   RevisionBarrierObservation advance(std::uint64_t revision, bool predicate) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (terminal_)
-      return snapshot();
+    if (terminal_) return snapshot();
     accept_revision(revision);
     if (predicate && revision_ >= required_revision_)
       return latch(RevisionBarrierObservation::Outcome::satisfied);
@@ -235,20 +205,18 @@ public:
 
   RevisionBarrierObservation dispose() {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!terminal_)
-      return latch(RevisionBarrierObservation::Outcome::disposed);
+    if (!terminal_) return latch(RevisionBarrierObservation::Outcome::disposed);
     return snapshot();
   }
 
-  RevisionBarrierObservation receipt(const std::string &) {
+  RevisionBarrierObservation receipt(const std::string&) {
     std::lock_guard<std::mutex> lock(mu_);
     return snapshot();
   }
 
 private:
   bool accept_now(std::uint64_t now) {
-    if (last_now_ && now < *last_now_)
-      return false;
+    if (last_now_ && now < *last_now_) return false;
     last_now_ = now;
     return true;
   }
@@ -268,8 +236,8 @@ private:
   }
 
   RevisionBarrierObservation snapshot() const {
-    return {terminal_.value_or(RevisionBarrierObservation::Outcome::pending),
-            terminal_reason_, revision_, generation_};
+    return {terminal_.value_or(RevisionBarrierObservation::Outcome::pending), terminal_reason_,
+            revision_, generation_};
   }
 
   std::mutex mu_;

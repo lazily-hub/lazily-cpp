@@ -18,8 +18,8 @@
 #include <utility>
 #include <vector>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -38,7 +38,7 @@ enum class Health {
 // Composed liveness-probe core. Each probe reports `up` and whether it is
 // `critical`. Uses `std::map` so iteration order matches Rust's `BTreeMap`.
 class HealthCore {
- public:
+public:
   HealthCore() = default;
 
   // Set/refresh a probe.
@@ -58,13 +58,13 @@ class HealthCore {
     return Health::Healthy;
   }
 
- private:
-  std::map<std::string, std::pair<bool, bool>> probes_;  // name -> (up, critical)
+private:
+  std::map<std::string, std::pair<bool, bool>> probes_; // name -> (up, critical)
 };
 
 // Reactive health: projects the aggregate onto a `Cell` for `/health`.
 class HealthCell {
- public:
+public:
   explicit HealthCell(Context& ctx) : health_(ctx.source(Health::Healthy)) {}
 
   void set(Context& ctx, std::string name, bool up, bool critical) {
@@ -75,7 +75,7 @@ class HealthCell {
   Health health() const { return core_.health(); }
   Source<Health> health_cell() const { return health_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(health_, core_.health()); }
 
   HealthCore core_;
@@ -88,12 +88,10 @@ class HealthCell {
 
 // Composed readiness-probe core: ready iff every condition holds.
 class ReadinessCore {
- public:
+public:
   ReadinessCore() = default;
 
-  void set(std::string name, bool ready) {
-    conditions_[std::move(name)] = ready;
-  }
+  void set(std::string name, bool ready) { conditions_[std::move(name)] = ready; }
 
   bool ready() const {
     for (const auto& kv : conditions_) {
@@ -102,13 +100,13 @@ class ReadinessCore {
     return true;
   }
 
- private:
+private:
   std::map<std::string, bool> conditions_;
 };
 
 // Reactive readiness: projects `ready` onto a `Cell` for `/ready`.
 class ReadinessCell {
- public:
+public:
   explicit ReadinessCell(Context& ctx) : ready_(ctx.source(true)) {}
 
   void set(Context& ctx, std::string name, bool ready) {
@@ -119,7 +117,7 @@ class ReadinessCell {
   bool ready() const { return core_.ready(); }
   Source<bool> ready_cell() const { return ready_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(ready_, core_.ready()); }
 
   ReadinessCore core_;
@@ -132,15 +130,13 @@ class ReadinessCell {
 
 // Service-discovery core: `service -> (endpoint, owner)`. A peer's departure
 // (`evict`) removes its endpoints. Generic over the peer id type `P`.
-template <typename P>
-class DiscoveryCore {
- public:
+template <typename P> class DiscoveryCore {
+public:
   DiscoveryCore() = default;
 
   // `register` is a reserved word in C++; the op is spelled `register_`.
   void register_(std::string service, std::string endpoint, P peer) {
-    entries_[std::move(service)] =
-        std::make_pair(std::move(endpoint), std::move(peer));
+    entries_[std::move(service)] = std::make_pair(std::move(endpoint), std::move(peer));
   }
 
   void deregister(const std::string& service) { entries_.erase(service); }
@@ -165,23 +161,22 @@ class DiscoveryCore {
   // The live `service -> endpoint` map.
   std::map<std::string, std::string> discovery() const {
     std::map<std::string, std::string> out;
-    for (const auto& kv : entries_) out[kv.first] = kv.second.first;
+    for (const auto& kv : entries_)
+      out[kv.first] = kv.second.first;
     return out;
   }
 
- private:
+private:
   std::map<std::string, std::pair<std::string, P>> entries_;
 };
 
 // Reactive service discovery.
-template <typename P>
-class DiscoveryCell {
- public:
+template <typename P> class DiscoveryCell {
+public:
   explicit DiscoveryCell(Context& ctx)
       : discovery_(ctx.source(std::map<std::string, std::string>{})) {}
 
-  void register_(Context& ctx, std::string service, std::string endpoint,
-                 P peer) {
+  void register_(Context& ctx, std::string service, std::string endpoint, P peer) {
     core_.register_(std::move(service), std::move(endpoint), std::move(peer));
     refresh(ctx);
   }
@@ -200,15 +195,11 @@ class DiscoveryCell {
     return core_.resolve(service);
   }
 
-  std::map<std::string, std::string> discovery(Context& ctx) const {
-    return ctx.get(discovery_);
-  }
+  std::map<std::string, std::string> discovery(Context& ctx) const { return ctx.get(discovery_); }
 
-  Source<std::map<std::string, std::string>> discovery_cell() const {
-    return discovery_;
-  }
+  Source<std::map<std::string, std::string>> discovery_cell() const { return discovery_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(discovery_, core_.discovery()); }
 
   DiscoveryCore<P> core_;
@@ -228,7 +219,7 @@ struct RegistryOp {
 
   Kind kind;
   std::string service;
-  std::string endpoint;  // empty for Deregister
+  std::string endpoint; // empty for Deregister
 
   bool operator==(const RegistryOp& o) const {
     return kind == o.kind && service == o.service && endpoint == o.endpoint;
@@ -239,19 +230,17 @@ struct RegistryOp {
 // Durable service-registry core: an ordered log (the `DurableOutbox` pattern)
 // whose left-fold is the projection, so replay reconstructs it.
 class ServiceRegistryCore {
- public:
+public:
   ServiceRegistryCore() = default;
 
   void register_(std::string service, std::string endpoint) {
-    RegistryOp op{RegistryOp::Kind::Register, std::move(service),
-                  std::move(endpoint)};
+    RegistryOp op{RegistryOp::Kind::Register, std::move(service), std::move(endpoint)};
     apply(projection_, op);
     log_.push_back(std::move(op));
   }
 
   void deregister(std::string service) {
-    RegistryOp op{RegistryOp::Kind::Deregister, std::move(service),
-                  std::string{}};
+    RegistryOp op{RegistryOp::Kind::Deregister, std::move(service), std::string{}};
     apply(projection_, op);
     log_.push_back(std::move(op));
   }
@@ -259,16 +248,16 @@ class ServiceRegistryCore {
   // Rebuild the projection from the durable log (restart / crash-replay).
   void replay() {
     std::map<std::string, std::string> projection;
-    for (const auto& op : log_) apply(projection, op);
+    for (const auto& op : log_)
+      apply(projection, op);
     projection_ = std::move(projection);
   }
 
   std::map<std::string, std::string> projection() const { return projection_; }
   const std::vector<RegistryOp>& log() const { return log_; }
 
- private:
-  static void apply(std::map<std::string, std::string>& projection,
-                    const RegistryOp& op) {
+private:
+  static void apply(std::map<std::string, std::string>& projection, const RegistryOp& op) {
     if (op.kind == RegistryOp::Kind::Register) {
       projection[op.service] = op.endpoint;
     } else {
@@ -282,7 +271,7 @@ class ServiceRegistryCore {
 
 // Reactive durable service registry.
 class ServiceRegistry {
- public:
+public:
   explicit ServiceRegistry(Context& ctx)
       : projection_(ctx.source(std::map<std::string, std::string>{})) {}
 
@@ -301,21 +290,17 @@ class ServiceRegistry {
     refresh(ctx);
   }
 
-  std::map<std::string, std::string> projection(Context& ctx) const {
-    return ctx.get(projection_);
-  }
+  std::map<std::string, std::string> projection(Context& ctx) const { return ctx.get(projection_); }
 
-  Source<std::map<std::string, std::string>> projection_cell() const {
-    return projection_;
-  }
+  Source<std::map<std::string, std::string>> projection_cell() const { return projection_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(projection_, core_.projection()); }
 
   ServiceRegistryCore core_;
   Source<std::map<std::string, std::string>> projection_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_SERVICE_HPP
+#endif // LAZILY_SERVICE_HPP

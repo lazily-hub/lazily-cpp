@@ -143,13 +143,10 @@ const std::vector<std::string> FIXTURES = {
 // fixture currently emits `eager`/`lazy` — accepting them here means a renamed
 // upstream fixture arrives replayable rather than as an "unsupported op" skip.
 const std::set<std::string> SUPPORTED_OPS = {
-    "batch",       "begin_scope",    "cell",
-    "churn",       "computed",       "disarm",
-    "dispose",     "dispose_fanout", "dispose_signal",
-    "dispose_stale_handle", "eager",  "effect",
-    "end_scope",   "fanout",         "lazy",
-    "fail_next",   "read",           "set_cell",
-    "signal"};
+    "batch",     "begin_scope", "cell",           "churn",          "computed",
+    "disarm",    "dispose",     "dispose_fanout", "dispose_signal", "dispose_stale_handle",
+    "eager",     "effect",      "end_scope",      "fanout",         "lazy",
+    "fail_next", "read",        "set_cell",       "signal"};
 
 // Fixture shapes this runner can replay.
 const std::set<std::string> SUPPORTED_SHAPES = {"steps", "scenarios"};
@@ -224,8 +221,7 @@ struct JsonParser {
 
   void skip_ws() {
     while (pos < src.size() &&
-           (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' ||
-            src[pos] == '\r')) {
+           (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r')) {
       ++pos;
     }
   }
@@ -245,7 +241,7 @@ struct JsonParser {
   JsonPtr parse_object() {
     auto node = std::make_shared<Json>();
     node->type = Json::Type::Object;
-    ++pos;  // '{'
+    ++pos; // '{'
     skip_ws();
     if (pos < src.size() && src[pos] == '}') {
       ++pos;
@@ -273,7 +269,7 @@ struct JsonParser {
   JsonPtr parse_array() {
     auto node = std::make_shared<Json>();
     node->type = Json::Type::Array;
-    ++pos;  // '['
+    ++pos; // '['
     skip_ws();
     if (pos < src.size() && src[pos] == ']') {
       ++pos;
@@ -303,20 +299,32 @@ struct JsonParser {
         ++pos;
         REQUIRE(pos < src.size(), "unterminated JSON escape");
         switch (src[pos]) {
-          case 'n': node->str += '\n'; break;
-          case 't': node->str += '\t'; break;
-          case 'r': node->str += '\r'; break;
-          case 'b': node->str += '\b'; break;
-          case 'f': node->str += '\f'; break;
-          case 'u': {
-            // Fixture text is ASCII-plus-punctuation; keep the escape verbatim
-            // rather than half-decoding UTF-16 surrogate pairs.
-            REQUIRE(pos + 4 < src.size(), "truncated \\u escape");
-            node->str += src.substr(pos - 1, 6);
-            pos += 4;
-            break;
-          }
-          default: node->str += src[pos]; break;
+        case 'n':
+          node->str += '\n';
+          break;
+        case 't':
+          node->str += '\t';
+          break;
+        case 'r':
+          node->str += '\r';
+          break;
+        case 'b':
+          node->str += '\b';
+          break;
+        case 'f':
+          node->str += '\f';
+          break;
+        case 'u': {
+          // Fixture text is ASCII-plus-punctuation; keep the escape verbatim
+          // rather than half-decoding UTF-16 surrogate pairs.
+          REQUIRE(pos + 4 < src.size(), "truncated \\u escape");
+          node->str += src.substr(pos - 1, 6);
+          pos += 4;
+          break;
+        }
+        default:
+          node->str += src[pos];
+          break;
         }
         ++pos;
         continue;
@@ -324,7 +332,7 @@ struct JsonParser {
       node->str += src[pos++];
     }
     REQUIRE(pos < src.size(), "unterminated JSON string");
-    ++pos;  // closing quote
+    ++pos; // closing quote
     return node;
   }
 
@@ -356,9 +364,8 @@ struct JsonParser {
     const std::size_t start = pos;
     if (pos < src.size() && (src[pos] == '-' || src[pos] == '+')) ++pos;
     while (pos < src.size() &&
-           (std::isdigit(static_cast<unsigned char>(src[pos])) ||
-            src[pos] == '.' || src[pos] == 'e' || src[pos] == 'E' ||
-            src[pos] == '-' || src[pos] == '+')) {
+           (std::isdigit(static_cast<unsigned char>(src[pos])) || src[pos] == '.' ||
+            src[pos] == 'e' || src[pos] == 'E' || src[pos] == '-' || src[pos] == '+')) {
       ++pos;
     }
     REQUIRE(pos > start, "malformed JSON number");
@@ -407,7 +414,7 @@ inline Kind handle_kind_of(const std::string& spelling) {
   if (spelling == "effect") return Kind::Effect;
   if (spelling == "signal") return Kind::Signal;
   REQUIRE(false, "unknown handle_kind spelling in fixture");
-  return Kind::Cell;  // unreachable
+  return Kind::Cell; // unreachable
 }
 
 // Everything a scenario leaves behind that `observationally_equal` compares.
@@ -420,8 +427,7 @@ struct Observation {
   std::map<std::string, std::size_t> degrees;
 
   bool operator==(const Observation& o) const {
-    return cleanup_order == o.cleanup_order && readable == o.readable &&
-           reads == o.reads &&
+    return cleanup_order == o.cleanup_order && readable == o.readable && reads == o.reads &&
            after_publish_observed == o.after_publish_observed &&
            after_publish_reads == o.after_publish_reads && degrees == o.degrees;
   }
@@ -448,9 +454,7 @@ struct World {
   // How many upcoming compute bodies must fail, per node id (`fail_next`).
   std::map<std::string, int> armed;
 
-  void fail_next(const std::string& id, int count) {
-    armed[id] += count > 0 ? count : 1;
-  }
+  void fail_next(const std::string& id, int count) { armed[id] += count > 0 ? count : 1; }
 
   // Consume one arming. Called from inside the compute body, AFTER the count.
   bool take_armed(const std::string& id) {
@@ -487,21 +491,20 @@ struct World {
   // the dependency edge. That edge registration is the whole point of the
   // transitive fixture: a chain that does not register at depth stops
   // refreshing there.
-  template <typename Cx>
-  long long read_ref(Cx& c, const Ref& ref) {
+  template <typename Cx> long long read_ref(Cx& c, const Ref& ref) {
     switch (ref.kind) {
-      case Kind::Cell:
-        return c.get(Source<long long>(ref.id));
-      case Kind::Slot:
-      // A signal reads through its backing slot — `get_signal` is defined as
-      // exactly that. Reading the slot directly is not a shortcut around the
-      // signal API; it is the same call with one fewer indirection, and it is
-      // what makes a de-eagered signal indistinguishable from a memo at the
-      // read site, which is clause 4's whole claim.
-      case Kind::Signal:
-        return c.get(Computed<long long>(ref.id));
-      case Kind::Effect:
-        REQUIRE(false, "fixture read of an effect — effects are pure sinks");
+    case Kind::Cell:
+      return c.get(Source<long long>(ref.id));
+    case Kind::Slot:
+    // A signal reads through its backing slot — `get_signal` is defined as
+    // exactly that. Reading the slot directly is not a shortcut around the
+    // signal API; it is the same call with one fewer indirection, and it is
+    // what makes a de-eagered signal indistinguishable from a memo at the
+    // read site, which is clause 4's whole claim.
+    case Kind::Signal:
+      return c.get(Computed<long long>(ref.id));
+    case Kind::Effect:
+      REQUIRE(false, "fixture read of an effect — effects are pure sinks");
     }
     return 0;
   }
@@ -539,8 +542,7 @@ ReadOut try_read(World& w, const std::string& id) {
 bool readable(World& w, const std::string& id) {
   auto it = w.nodes.find(id);
   if (it == w.nodes.end()) return false;
-  if (it->second.kind == Kind::Effect)
-    return w.ctx.is_effect_active(Effect(it->second.id));
+  if (it->second.kind == Kind::Effect) return w.ctx.is_effect_active(Effect(it->second.id));
   return try_read(w, id).ok;
 }
 
@@ -549,13 +551,13 @@ bool readable(World& w, const std::string& id) {
 std::size_t dependents_of(World& w, const std::string& id) {
   const Ref ref = w.lookup(id);
   switch (ref.kind) {
-    case Kind::Cell:
-      return w.ctx.dependent_count(Source<long long>(ref.id));
-    case Kind::Slot:
-    case Kind::Signal:
-      return w.ctx.dependent_count(Computed<long long>(ref.id));
-    case Kind::Effect:
-      return w.ctx.dependent_count(Effect(ref.id));
+  case Kind::Cell:
+    return w.ctx.dependent_count(Source<long long>(ref.id));
+  case Kind::Slot:
+  case Kind::Signal:
+    return w.ctx.dependent_count(Computed<long long>(ref.id));
+  case Kind::Effect:
+    return w.ctx.dependent_count(Effect(ref.id));
   }
   return 0;
 }
@@ -563,36 +565,36 @@ std::size_t dependents_of(World& w, const std::string& id) {
 std::size_t dependencies_of(World& w, const std::string& id) {
   const Ref ref = w.lookup(id);
   switch (ref.kind) {
-    case Kind::Cell:
-      return w.ctx.dependency_count(Source<long long>(ref.id));
-    case Kind::Slot:
-    case Kind::Signal:
-      return w.ctx.dependency_count(Computed<long long>(ref.id));
-    case Kind::Effect:
-      return w.ctx.dependency_count(Effect(ref.id));
+  case Kind::Cell:
+    return w.ctx.dependency_count(Source<long long>(ref.id));
+  case Kind::Slot:
+  case Kind::Signal:
+    return w.ctx.dependency_count(Computed<long long>(ref.id));
+  case Kind::Effect:
+    return w.ctx.dependency_count(Effect(ref.id));
   }
   return 0;
 }
 
 void dispose_ref(World& w, const Ref& ref) {
   switch (ref.kind) {
-    case Kind::Cell:
-      w.ctx.dispose_cell(Source<long long>(ref.id));
-      return;
-    case Kind::Slot:
-      w.ctx.dispose_slot(Computed<long long>(ref.id));
-      return;
-    case Kind::Effect:
-      w.ctx.dispose_effect(Effect(ref.id));
-      return;
-    case Kind::Signal:
-      // The generic `dispose` op means node teardown, so a signal loses BOTH
-      // halves here. This is deliberately not what `dispose_signal` does — see
-      // the op below, which drops only the puller. Conflating the two is
-      // failure (a) in dispose_signal_reverts_to_lazy.json.
-      w.ctx.dispose_effect(Effect(ref.effect_id));
-      w.ctx.dispose_slot(Computed<long long>(ref.id));
-      return;
+  case Kind::Cell:
+    w.ctx.dispose_cell(Source<long long>(ref.id));
+    return;
+  case Kind::Slot:
+    w.ctx.dispose_slot(Computed<long long>(ref.id));
+    return;
+  case Kind::Effect:
+    w.ctx.dispose_effect(Effect(ref.id));
+    return;
+  case Kind::Signal:
+    // The generic `dispose` op means node teardown, so a signal loses BOTH
+    // halves here. This is deliberately not what `dispose_signal` does — see
+    // the op below, which drops only the puller. Conflating the two is
+    // failure (a) in dispose_signal_reverts_to_lazy.json.
+    w.ctx.dispose_effect(Effect(ref.effect_id));
+    w.ctx.dispose_slot(Computed<long long>(ref.id));
+    return;
   }
 }
 
@@ -608,8 +610,7 @@ void dispose_ref(World& w, const Ref& ref) {
 // the runtime actually invokes the compute — including the invocation at
 // creation — and cannot be faked by the runner inferring "a write happened, so
 // presumably it recomputed."
-auto counting_body(World& w, const std::string& id, std::vector<Ref> sources,
-                   long long offset) {
+auto counting_body(World& w, const std::string& id, std::vector<Ref> sources, long long offset) {
   World* wp = &w;
   return [wp, id, sources, offset](Compute& c) -> long long {
     ++wp->computes[id];
@@ -618,18 +619,17 @@ auto counting_body(World& w, const std::string& id, std::vector<Ref> sources,
     // `computes_of` rather than on the error a caching binding also throws.
     if (wp->take_armed(id)) throw ComputeFailed(id);
     long long sum = offset;
-    for (const auto& source : sources) sum += wp->read_ref(c, source);
+    for (const auto& source : sources)
+      sum += wp->read_ref(c, source);
     return sum;
   };
 }
 
 // A guarded `Computed<long long>` (`#lzcellkernel`) — the kernel derived cell.
-Computed<long long> make_computed(World& w, const std::string& id,
-                                  std::vector<Ref> sources, long long offset,
-                                  TeardownScope* scope) {
+Computed<long long> make_computed(World& w, const std::string& id, std::vector<Ref> sources,
+                                  long long offset, TeardownScope* scope) {
   auto body = counting_body(w, id, std::move(sources), offset);
-  return scope ? scope->computed<long long>(body)
-               : w.ctx.computed<long long>(body);
+  return scope ? scope->computed<long long>(body) : w.ctx.computed<long long>(body);
 }
 
 // The eager construction (`#lzcellkernel`): a guarded `Computed` made eager by
@@ -637,16 +637,16 @@ Computed<long long> make_computed(World& w, const std::string& id,
 // retired `Signal` (`signal(f)` was `memo` + `effect_void` puller). Clause 3
 // falls out for free — the puller is an ordinary scheduled effect, so N
 // invalidations inside a batch coalesce into one run at the flush.
-Computed<long long> make_eager(World& w, const std::string& id,
-                               std::vector<Ref> sources, long long offset) {
+Computed<long long> make_eager(World& w, const std::string& id, std::vector<Ref> sources,
+                               long long offset) {
   Computed<long long> f =
       w.ctx.computed<long long>(counting_body(w, id, std::move(sources), offset));
   f.eager(w.ctx);
   return f;
 }
 
-Effect make_effect(World& w, const std::string& name,
-                         std::vector<Ref> sources, TeardownScope* scope) {
+Effect make_effect(World& w, const std::string& name, std::vector<Ref> sources,
+                   TeardownScope* scope) {
   World* wp = &w;
   w.names.push_back(name);
   const std::string* np = &w.names.back();
@@ -665,8 +665,7 @@ Effect make_effect(World& w, const std::string& name,
   return scope ? scope->effect(body) : w.ctx.effect(body);
 }
 
-Source<long long> make_cell(World& w, long long value,
-                                TeardownScope* scope) {
+Source<long long> make_cell(World& w, long long value, TeardownScope* scope) {
   return scope ? scope->source<long long>(value) : w.ctx.source<long long>(value);
 }
 
@@ -707,21 +706,21 @@ std::string join(const std::set<std::string>& items) {
 // Any expectation mismatch is a FINDING and aborts — the fixture is canonical,
 // so it is never edited and no assertion is ever loosened.
 template <typename T>
-void check(const std::string& fixture, std::size_t step, const std::string& key,
-           const T& got, const T& want, Report& report) {
+void check(const std::string& fixture, std::size_t step, const std::string& key, const T& got,
+           const T& want, Report& report) {
   ++report.checks;
   if (got == want) return;
-  std::cout << "FAIL: " << fixture << " step " << step << " " << key
-            << ": observed " << got << ", expected " << want
+  std::cout << "FAIL: " << fixture << " step " << step << " " << key << ": observed " << got
+            << ", expected " << want
             << " — reactive-graph conformance FINDING (fixture is canonical "
                "and is not edited)"
             << std::endl;
   std::abort();
 }
 
-void check_strs(const std::string& fixture, std::size_t step,
-                const std::string& key, const std::vector<std::string>& got,
-                const std::vector<std::string>& want, Report& report) {
+void check_strs(const std::string& fixture, std::size_t step, const std::string& key,
+                const std::vector<std::string>& got, const std::vector<std::string>& want,
+                Report& report) {
   ++report.checks;
   if (got == want) return;
   auto join_vec = [](const std::vector<std::string>& v) {
@@ -732,9 +731,8 @@ void check_strs(const std::string& fixture, std::size_t step,
     }
     return out + "]";
   };
-  std::cout << "FAIL: " << fixture << " step " << step << " " << key
-            << ": observed " << join_vec(got) << ", expected "
-            << join_vec(want)
+  std::cout << "FAIL: " << fixture << " step " << step << " " << key << ": observed "
+            << join_vec(got) << ", expected " << join_vec(want)
             << " — reactive-graph conformance FINDING (fixture is canonical "
                "and is not edited)"
             << std::endl;
@@ -744,7 +742,8 @@ void check_strs(const std::string& fixture, std::size_t step,
 std::vector<std::string> strs(const Json* node) {
   std::vector<std::string> out;
   if (node)
-    for (const auto& item : node->array) out.push_back(item->str);
+    for (const auto& item : node->array)
+      out.push_back(item->str);
   return out;
 }
 
@@ -752,7 +751,8 @@ std::vector<std::string> strs(const Json* node) {
 std::vector<Ref> reads_of(World& w, const Json* op) {
   std::vector<Ref> refs;
   if (const Json* reads = op->find("reads"))
-    for (const auto& r : reads->array) refs.push_back(w.lookup(r->str));
+    for (const auto& r : reads->array)
+      refs.push_back(w.lookup(r->str));
   return refs;
 }
 
@@ -772,9 +772,8 @@ void bind_node(World& w, const std::string& id, Ref ref) {
 
 // Replay one op stream into `w`. `tail` is the `scenarios` shape's `expected`
 // block, evaluated against the final world state when present.
-void replay(const std::string& fixture, World& w,
-            const std::vector<JsonPtr>& steps, const Json* tail,
-            Report& report) {
+void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& steps,
+            const Json* tail, Report& report) {
   for (std::size_t i = 0; i < steps.size(); ++i) {
     const Json& step = *steps[i];
     const Json* op = step.find("op");
@@ -802,8 +801,8 @@ void replay(const std::string& fixture, World& w,
     } else if (kind == "computed") {
       const Json* offset = op->find("offset");
       const std::string id = op_id();
-      auto h = make_computed(w, id, reads_of(w, op),
-                             offset ? offset->as_int() : 0, scope_of(w, op));
+      auto h =
+          make_computed(w, id, reads_of(w, op), offset ? offset->as_int() : 0, scope_of(w, op));
       bind_node(w, id, Ref(Kind::Slot, h.id()));
     } else if (kind == "signal" || kind == "eager") {
       // The eager construction (`#lzcellkernel` §9.3.1): a guarded `computed`
@@ -853,8 +852,7 @@ void replay(const std::string& fixture, World& w,
       // Arms the next N computes of an existing node to throw. It creates
       // nothing and touches no dependency set.
       const Json* count = op->find("count");
-      w.fail_next(op->find("id")->str,
-                  count ? static_cast<int>(count->as_int()) : 1);
+      w.fail_next(op->find("id")->str, count ? static_cast<int>(count->as_int()) : 1);
     } else if (kind == "set_cell") {
       const Json* value = op->find("value");
       REQUIRE(value != nullptr, "set_cell op has no value");
@@ -891,19 +889,16 @@ void replay(const std::string& fixture, World& w,
       const Json* width = op->find("live_width");
       const Json* cycles = op->find("cycles");
       const Json* mode = op->find("mode");
-      REQUIRE(source && prefix && width && cycles && mode,
-              "churn op is missing a field");
+      REQUIRE(source && prefix && width && cycles && mode, "churn op is missing a field");
       const Ref src = w.lookup(source->str);
       if (mode->str == "dispose_then_create") {
         // Hold `live_width` subscribers; each cycle disposes one and creates
         // its replacement, so the live count is invariant.
         for (long long c = 0; c < cycles->as_int(); ++c) {
-          const std::string id =
-              prefix->str + "_" + std::to_string(c % width->as_int());
+          const std::string id = prefix->str + "_" + std::to_string(c % width->as_int());
           auto it = w.nodes.find(id);
           if (it != w.nodes.end()) dispose_ref(w, it->second);
-          bind_node(w, id,
-               Ref(Kind::Effect, make_effect(w, id, {src}, nullptr).id));
+          bind_node(w, id, Ref(Kind::Effect, make_effect(w, id, {src}, nullptr).id));
         }
       } else if (mode->str == "scope_per_cycle") {
         // One teardown scope per cycle; its subscriber is gone by the end of
@@ -943,8 +938,7 @@ void replay(const std::string& fixture, World& w,
     } else if (kind == "dispose_stale_handle") {
       const Json* of = op->find("handle_of");
       const Json* want_kind = op->find("handle_kind");
-      REQUIRE(of && want_kind,
-              "dispose_stale_handle op needs handle_of and handle_kind");
+      REQUIRE(of && want_kind, "dispose_stale_handle op needs handle_of and handle_kind");
       auto it = w.stale.find(of->str);
       REQUIRE(it != w.stale.end(), "no recorded handle for handle_of");
       REQUIRE(it->second.kind == handle_kind_of(want_kind->str),
@@ -956,8 +950,7 @@ void replay(const std::string& fixture, World& w,
 
     // The synchronous Context is quiescent when an op returns — no settle step
     // is needed, unlike the async models the corpus also targets.
-    const std::vector<std::string> observed(w.run_log.begin() + runs_before,
-                                            w.run_log.end());
+    const std::vector<std::string> observed(w.run_log.begin() + runs_before, w.run_log.end());
 
     const Json* expect = step.find("expect");
     if (!expect) continue;
@@ -978,8 +971,8 @@ void replay(const std::string& fixture, World& w,
     for (const auto& kv : expect->object) {
       if (kv.first != "computes_of") continue;
       for (const auto& e : kv.second->object) {
-        check(fixture, i, "computes_of." + e.first, w.computes[e.first],
-              e.second->as_int(), report);
+        check(fixture, i, "computes_of." + e.first, w.computes[e.first], e.second->as_int(),
+              report);
       }
     }
 
@@ -991,13 +984,11 @@ void replay(const std::string& fixture, World& w,
         continue;
       } else if (key == "dependents_of") {
         for (const auto& e : want.object)
-          check(fixture, i, "dependents_of." + e.first,
-                dependents_of(w, e.first),
+          check(fixture, i, "dependents_of." + e.first, dependents_of(w, e.first),
                 static_cast<std::size_t>(e.second->as_int()), report);
       } else if (key == "dependencies_of") {
         for (const auto& e : want.object)
-          check(fixture, i, "dependencies_of." + e.first,
-                dependencies_of(w, e.first),
+          check(fixture, i, "dependencies_of." + e.first, dependencies_of(w, e.first),
                 static_cast<std::size_t>(e.second->as_int()), report);
       } else if (key == "error") {
         // A string error code means "this op must fail"; null means "must not".
@@ -1026,9 +1017,8 @@ void replay(const std::string& fixture, World& w,
           // if this binding had been lazy, the count assertion has failed
           // before this read could paper over it.
           const Json* id = op->find("id");
-          REQUIRE(id != nullptr,
-                  "fixture expects a value from an op that read none and has "
-                  "no id to read back");
+          REQUIRE(id != nullptr, "fixture expects a value from an op that read none and has "
+                                 "no id to read back");
           const ReadOut out = try_read(w, id->str);
           REQUIRE(out.ok, "fixture expects a value from an unreadable node");
           check(fixture, i, "value", out.value, want.as_int(), report);
@@ -1038,15 +1028,12 @@ void replay(const std::string& fixture, World& w,
       } else if (key == "read") {
         for (const auto& e : want.object) {
           const ReadOut out = try_read(w, e.first);
-          check(fixture, i, "read." + e.first + ".readable", out.ok, true,
-                report);
-          check(fixture, i, "read." + e.first, out.value, e.second->as_int(),
-                report);
+          check(fixture, i, "read." + e.first + ".readable", out.ok, true, report);
+          check(fixture, i, "read." + e.first, out.value, e.second->as_int(), report);
         }
       } else if (key == "readable") {
         for (const auto& e : want.object)
-          check(fixture, i, "readable." + e.first, readable(w, e.first),
-                e.second->boolean, report);
+          check(fixture, i, "readable." + e.first, readable(w, e.first), e.second->boolean, report);
       } else if (key == "observed_by") {
         check_strs(fixture, i, "observed_by", observed, strs(&want), report);
       } else if (key == "observed_count") {
@@ -1061,23 +1048,19 @@ void replay(const std::string& fixture, World& w,
         std::vector<std::string> want_effects;
         for (const auto& id : strs(&want)) {
           auto it = w.stale.find(id);
-          if (it != w.stale.end() && it->second.kind == Kind::Effect)
-            want_effects.push_back(id);
+          if (it != w.stale.end() && it->second.kind == Kind::Effect) want_effects.push_back(id);
         }
-        check_strs(fixture, i, "cleanup_order", w.cleanup_log, want_effects,
-                   report);
+        check_strs(fixture, i, "cleanup_order", w.cleanup_log, want_effects, report);
       } else if (key == "scope_owned_count") {
         for (const auto& e : want.object) {
           auto it = w.scopes.find(e.first);
-          REQUIRE(it != w.scopes.end(),
-                  "scope_owned_count names a scope that is not open");
+          REQUIRE(it != w.scopes.end(), "scope_owned_count names a scope that is not open");
           check(fixture, i, "scope_owned_count." + e.first, it->second.size(),
                 static_cast<std::size_t>(e.second->as_int()), report);
         }
       } else {
-        REQUIRE(false,
-                "unrecognised expectation key in fixture — it would be "
-                "silently ignored");
+        REQUIRE(false, "unrecognised expectation key in fixture — it would be "
+                       "silently ignored");
       }
     }
   }
@@ -1100,8 +1083,7 @@ void replay(const std::string& fixture, World& w,
             "ignored");
   if (const Json* fin = tail->find("final_state")) {
     for (const auto& kv : fin->object)
-      REQUIRE(kv.first == "dependents_of" || kv.first == "readable" ||
-                  kv.first == "read",
+      REQUIRE(kv.first == "dependents_of" || kv.first == "readable" || kv.first == "read",
               "unrecognised final_state key in fixture — it would be silently "
               "ignored");
     if (const Json* deps = fin->find("dependents_of")) {
@@ -1115,18 +1097,15 @@ void replay(const std::string& fixture, World& w,
     if (const Json* rd = fin->find("readable")) {
       for (const auto& e : rd->object) {
         const bool alive = readable(w, e.first);
-        check(fixture, tail_step, "final.readable." + e.first, alive,
-              e.second->boolean, report);
+        check(fixture, tail_step, "final.readable." + e.first, alive, e.second->boolean, report);
         report.observation.readable[e.first] = alive;
       }
     }
     if (const Json* rd = fin->find("read")) {
       for (const auto& e : rd->object) {
         const ReadOut out = try_read(w, e.first);
-        check(fixture, tail_step, "final.read." + e.first + ".readable", out.ok,
-              true, report);
-        check(fixture, tail_step, "final.read." + e.first, out.value,
-              e.second->as_int(), report);
+        check(fixture, tail_step, "final.read." + e.first + ".readable", out.ok, true, report);
+        check(fixture, tail_step, "final.read." + e.first, out.value, e.second->as_int(), report);
         report.observation.reads[e.first] = out.value;
       }
     }
@@ -1151,25 +1130,22 @@ void replay(const std::string& fixture, World& w,
   REQUIRE(ref.kind == Kind::Cell, "after_publish set_cell on a non-cell");
   const std::size_t before = w.run_log.size();
   w.ctx.set(Source<long long>(ref.id), pvalue->as_int());
-  report.observation.after_publish_observed.assign(w.run_log.begin() + before,
-                                                   w.run_log.end());
+  report.observation.after_publish_observed.assign(w.run_log.begin() + before, w.run_log.end());
   check_strs(fixture, tail_step, "after_publish.observed_by",
-             report.observation.after_publish_observed,
-             strs(publish->find("observed_by")), report);
+             report.observation.after_publish_observed, strs(publish->find("observed_by")), report);
   if (const Json* rd = publish->find("read")) {
     for (const auto& e : rd->object) {
       const ReadOut out = try_read(w, e.first);
-      check(fixture, tail_step, "after_publish.read." + e.first + ".readable",
-            out.ok, true, report);
-      check(fixture, tail_step, "after_publish.read." + e.first, out.value,
-            e.second->as_int(), report);
+      check(fixture, tail_step, "after_publish.read." + e.first + ".readable", out.ok, true,
+            report);
+      check(fixture, tail_step, "after_publish.read." + e.first, out.value, e.second->as_int(),
+            report);
       report.observation.after_publish_reads[e.first] = out.value;
     }
   }
   if (const Json* deps = publish->find("dependents_of")) {
     for (const auto& e : deps->object)
-      check(fixture, tail_step, "after_publish.dependents_of." + e.first,
-            dependents_of(w, e.first),
+      check(fixture, tail_step, "after_publish.dependents_of." + e.first, dependents_of(w, e.first),
             static_cast<std::size_t>(e.second->as_int()), report);
   }
   // Recorded after the publish so the cleanup log the comparison sees is the
@@ -1193,8 +1169,7 @@ Report replay_steps(const std::string& name, const Json& fixture) {
 // agree. Replaying them into one world would make the relation vacuous.
 Report replay_scenarios(const std::string& name, const Json& fixture) {
   const Json* scenarios = fixture.find("scenarios");
-  REQUIRE(scenarios != nullptr,
-          "fixture declares shape 'scenarios' but has none");
+  REQUIRE(scenarios != nullptr, "fixture declares shape 'scenarios' but has none");
   const Json* expected = fixture.find("expected");
 
   Report total;
@@ -1211,9 +1186,8 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
     // silent: the ledger DECLARES the id through `lazily_test::` and would
     // report the one recorded below as an unreplayed scenario.
     const Json* sid = scenario->find("id");
-    lazily_test::record_scenario(
-        std::string(kArea) + "/" + name,
-        sid != nullptr && !sid->str.empty() ? sid->str : sname->str);
+    lazily_test::record_scenario(std::string(kArea) + "/" + name,
+                                 sid != nullptr && !sid->str.empty() ? sid->str : sname->str);
     World w;
     Report report;
     replay(name + "/" + sname->str, w, ssteps->array, expected, report);
@@ -1228,8 +1202,7 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
   // relation between two op streams, so no per-step assertion can express it.
   if (expected) {
     if (const Json* pair = expected->find("observationally_equal")) {
-      REQUIRE(pair->array.size() >= 2,
-              "observationally_equal needs at least two scenario names");
+      REQUIRE(pair->array.size() >= 2, "observationally_equal needs at least two scenario names");
       const std::string& first = pair->array[0]->str;
       for (std::size_t i = 1; i < pair->array.size(); ++i) {
         const std::string& other = pair->array[i]->str;
@@ -1239,8 +1212,7 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
                 "observationally_equal names a scenario that was not replayed");
         ++total.checks;
         if (a->second != b->second) {
-          std::cout << "FAIL: " << name << " scenarios '" << first << "' and '"
-                    << other
+          std::cout << "FAIL: " << name << " scenarios '" << first << "' and '" << other
                     << "' are not observationally equal — reactive-graph "
                        "conformance FINDING (fixture is canonical and is not "
                        "edited)"
@@ -1302,9 +1274,8 @@ void probe_async_stub() {
   REQUIRE(derived.get().has_value() && *derived.get() == 11,
           "AsyncContext unexpectedly invalidated a cached slot — the stub "
           "characterisation in this file and in lazily-spec needs revising");
-  REQUIRE(computes == 1,
-          "AsyncContext unexpectedly recomputed on a source write — the stub "
-          "characterisation needs revising");
+  REQUIRE(computes == 1, "AsyncContext unexpectedly recomputed on a source write — the stub "
+                         "characterisation needs revising");
 
   // (2) `get_async()` recomputes unconditionally — twice in a row with no
   //     intervening write still bumps the compute count. This is what would
@@ -1312,12 +1283,11 @@ void probe_async_stub() {
   derived.get_async().get();
   REQUIRE(computes == 2, "async get_async did not recompute after a write");
   derived.get_async().get();
-  REQUIRE(computes == 3,
-          "AsyncContext consulted a cache on an unchanged read — it is no "
-          "longer unconditional, so the vacuity analysis needs revising");
+  REQUIRE(computes == 3, "AsyncContext consulted a cache on an unchanged read — it is no "
+                         "longer unconditional, so the vacuity analysis needs revising");
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   // Absence is an explicit CTest SKIP (exit 77), never a silent pass. CI also
@@ -1328,8 +1298,8 @@ int main() {
   // The fixture set on disk must be exactly the one this runner knows about,
   // so an upstream addition cannot arrive unexecuted.
   std::set<std::string> on_disk;
-  for (const auto& entry : std::filesystem::directory_iterator(
-           lazily_test::spec_conformance_dir() / kArea)) {
+  for (const auto& entry :
+       std::filesystem::directory_iterator(lazily_test::spec_conformance_dir() / kArea)) {
     const auto file = entry.path().filename().string();
     if (file.size() > 5 && file.compare(file.size() - 5, 5, ".json") == 0) {
       on_disk.insert(file);
@@ -1379,31 +1349,26 @@ int main() {
 
     if (!reason.empty()) {
       observed_unsupported.emplace(name, reason);
-      std::cout << "SKIP " << name << ": unsupported by lazily::Context — "
-                << reason << std::endl;
+      std::cout << "SKIP " << name << ": unsupported by lazily::Context — " << reason << std::endl;
       continue;
     }
 
-    const Report report = shape->str == "scenarios"
-                              ? replay_scenarios(name, *fixture)
-                              : replay_steps(name, *fixture);
+    const Report report =
+        shape->str == "scenarios" ? replay_scenarios(name, *fixture) : replay_steps(name, *fixture);
     ++replayed;
     total_ops += report.ops;
     total_checks += report.checks;
-    std::cout << "PASS " << name << " [Context]: " << report.ops << " ops, "
-              << report.checks << " expectations (" << shape->str << ")"
-              << std::endl;
+    std::cout << "PASS " << name << " [Context]: " << report.ops << " ops, " << report.checks
+              << " expectations (" << shape->str << ")" << std::endl;
   }
 
   // The skip ledger must match EXACTLY. A fixture that becomes replayable
   // fails here until its entry is removed; a newly-unsupported op fails here
   // immediately. Neither direction is allowed to be silent.
   if (observed_unsupported != EXPECTED_UNSUPPORTED) {
-    std::cout << "FAIL: the unsupported-fixture ledger drifted. Observed:"
-              << std::endl;
+    std::cout << "FAIL: the unsupported-fixture ledger drifted. Observed:" << std::endl;
     for (const auto& kv : observed_unsupported) {
-      std::cout << "  {\"" << kv.first << "\", \"" << kv.second << "\"},"
-                << std::endl;
+      std::cout << "  {\"" << kv.first << "\", \"" << kv.second << "\"}," << std::endl;
     }
     return 1;
   }
@@ -1411,8 +1376,8 @@ int main() {
   // Positive assertions: an absence guard cannot catch a runner that replays
   // nothing.
   if (replayed == 0 || total_ops == 0 || total_checks == 0) {
-    std::cout << "FAIL: reactive-graph conformance replayed nothing (" << replayed
-              << " fixtures, " << total_ops << " ops, " << total_checks
+    std::cout << "FAIL: reactive-graph conformance replayed nothing (" << replayed << " fixtures, "
+              << total_ops << " ops, " << total_checks
               << " expectations) — the suite is not exercising the corpus it "
                  "claims to"
               << std::endl;
@@ -1423,36 +1388,33 @@ int main() {
   // dependency graph — and therefore that replaying the fixture against it
   // would either fail as a category error or pass vacuously.
   probe_async_stub();
-  std::cout
-      << "SKIP transitive_invalidation_reaches_depth.json [AsyncContext]: "
-         "AsyncSlotNode has no dependents/dependencies; slot() registers the "
-         "node nowhere; get_async() recomputes unconditionally and get() "
-         "serves a cache nothing invalidates. Replay through get_async() "
-         "would pass VACUOUSLY (no cache to serve stale) and through get() "
-         "would fail as a category error (no graph to be wrong about). "
-         "Neither is conformance — AsyncContext needs a dependency graph, or "
-         "should declare async: none."
-      << std::endl;
-  std::cout
-      << "SKIP signal_materializes_without_a_read.json, "
-         "signal_materializes_once_per_batch.json, "
-         "dispose_signal_reverts_to_lazy.json [AsyncContext]: AsyncContext "
-         "exposes no signal API at all — no signal(), get_signal(), or "
-         "dispose_signal() (async_context.hpp; it forwards only batch()). "
-         "These fixtures are therefore not merely unreplayable for want of a "
-         "dependency graph, they are INEXPRESSIBLE against this context: "
-         "there is no eager puller to materialize, coalesce, or dispose. "
-         "Reported rather than emulated — synthesizing a signal out of "
-         "get_async() in the runner would measure the runner, not the binding."
-      << std::endl;
+  std::cout << "SKIP transitive_invalidation_reaches_depth.json [AsyncContext]: "
+               "AsyncSlotNode has no dependents/dependencies; slot() registers the "
+               "node nowhere; get_async() recomputes unconditionally and get() "
+               "serves a cache nothing invalidates. Replay through get_async() "
+               "would pass VACUOUSLY (no cache to serve stale) and through get() "
+               "would fail as a category error (no graph to be wrong about). "
+               "Neither is conformance — AsyncContext needs a dependency graph, or "
+               "should declare async: none."
+            << std::endl;
+  std::cout << "SKIP signal_materializes_without_a_read.json, "
+               "signal_materializes_once_per_batch.json, "
+               "dispose_signal_reverts_to_lazy.json [AsyncContext]: AsyncContext "
+               "exposes no signal API at all — no signal(), get_signal(), or "
+               "dispose_signal() (async_context.hpp; it forwards only batch()). "
+               "These fixtures are therefore not merely unreplayable for want of a "
+               "dependency graph, they are INEXPRESSIBLE against this context: "
+               "there is no eager puller to materialize, coalesce, or dispose. "
+               "Reported rather than emulated — synthesizing a signal out of "
+               "get_async() in the runner would measure the runner, not the binding."
+            << std::endl;
 
   // All canonical fixtures were actually opened and parsed.
   REQUIRE_FIXTURES_LOADED(21);
 
-  std::cout << "reactive-graph conformance: " << replayed << "/"
-            << FIXTURES.size() << " fixtures replayed against Context ("
-            << total_ops << " ops, " << total_checks << " expectations), "
-            << observed_unsupported.size()
+  std::cout << "reactive-graph conformance: " << replayed << "/" << FIXTURES.size()
+            << " fixtures replayed against Context (" << total_ops << " ops, " << total_checks
+            << " expectations), " << observed_unsupported.size()
             << " skipped, AsyncContext skipped as a stub" << std::endl;
   return 0;
 }

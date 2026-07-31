@@ -59,7 +59,7 @@
 #include <lazily/cell.hpp>
 #include <lazily/context.hpp>
 #include <lazily/merge.hpp>
-#include <lazily/relay.hpp>  // Overflow -- the backpressure algebra is shared
+#include <lazily/relay.hpp> // Overflow -- the backpressure algebra is shared
 #include <lazily/thread_safe.hpp>
 
 #include <algorithm>
@@ -103,8 +103,7 @@ struct IngressSchedule {
 
   /// Derive the schedule for `kind`. A poll interval is offered only where event
   /// delivery is unavailable, and never zero.
-  static IngressSchedule for_kind(IngressTransportKind kind,
-                                  std::uint64_t poll_interval) {
+  static IngressSchedule for_kind(IngressTransportKind kind, std::uint64_t poll_interval) {
     IngressSchedule out;
     out.kind = kind;
     if (kind == IngressTransportKind::BoundedPolling)
@@ -112,10 +111,10 @@ struct IngressSchedule {
     return out;
   }
 
-  bool operator==(const IngressSchedule &o) const {
+  bool operator==(const IngressSchedule& o) const {
     return kind == o.kind && poll_interval == o.poll_interval;
   }
-  bool operator!=(const IngressSchedule &o) const { return !(*this == o); }
+  bool operator!=(const IngressSchedule& o) const { return !(*this == o); }
 };
 
 /// One decoded inbound message, with the provenance admission needs.
@@ -131,17 +130,16 @@ template <typename K, typename T> struct IngressEnvelope {
   T payload{};
 
   IngressEnvelope() = default;
-  IngressEnvelope(K k, std::uint64_t generation, std::uint64_t sequence,
-                  std::uint64_t stamped_at, T payload)
-      : key(std::move(k)), generation(generation), sequence(sequence),
-        stamped_at(stamped_at), payload(std::move(payload)) {}
+  IngressEnvelope(K k, std::uint64_t generation, std::uint64_t sequence, std::uint64_t stamped_at,
+                  T payload)
+      : key(std::move(k)), generation(generation), sequence(sequence), stamped_at(stamped_at),
+        payload(std::move(payload)) {}
 
-  bool operator==(const IngressEnvelope &o) const {
-    return key == o.key && generation == o.generation &&
-           sequence == o.sequence && stamped_at == o.stamped_at &&
-           payload == o.payload;
+  bool operator==(const IngressEnvelope& o) const {
+    return key == o.key && generation == o.generation && sequence == o.sequence &&
+           stamped_at == o.stamped_at && payload == o.payload;
   }
-  bool operator!=(const IngressEnvelope &o) const { return !(*this == o); }
+  bool operator!=(const IngressEnvelope& o) const { return !(*this == o); }
 };
 
 // -- Decisions --------------------------------------------------------------
@@ -218,8 +216,7 @@ struct IngressAdmission {
     a.gap_from = gap_from;
     return a;
   }
-  static IngressAdmission generation_handoff(std::uint64_t from,
-                                             std::uint64_t to) {
+  static IngressAdmission generation_handoff(std::uint64_t from, std::uint64_t to) {
     IngressAdmission a;
     a.kind = IngressAdmissionKind::GenerationHandoff;
     a.from = from;
@@ -240,17 +237,15 @@ struct IngressAdmission {
 
   /// Whether the envelope became visible to readers.
   bool is_delivered() const {
-    return kind == IngressAdmissionKind::Accepted ||
-           kind == IngressAdmissionKind::Conflated ||
+    return kind == IngressAdmissionKind::Accepted || kind == IngressAdmissionKind::Conflated ||
            kind == IngressAdmissionKind::GenerationHandoff;
   }
 
-  bool operator==(const IngressAdmission &o) const {
-    return kind == o.kind && delivered_through == o.delivered_through &&
-           gap_from == o.gap_from && from == o.from && to == o.to &&
-           reason == o.reason;
+  bool operator==(const IngressAdmission& o) const {
+    return kind == o.kind && delivered_through == o.delivered_through && gap_from == o.gap_from &&
+           from == o.from && to == o.to && reason == o.reason;
   }
-  bool operator!=(const IngressAdmission &o) const { return !(*this == o); }
+  bool operator!=(const IngressAdmission& o) const { return !(*this == o); }
 };
 
 // -- Lifecycle and derives --------------------------------------------------
@@ -285,12 +280,11 @@ struct IngressAuthority {
   std::optional<std::uint64_t> delivered_through;
   std::uint64_t stamped_at = 0;
 
-  bool operator==(const IngressAuthority &o) const {
-    return generation == o.generation &&
-           delivered_through == o.delivered_through &&
+  bool operator==(const IngressAuthority& o) const {
+    return generation == o.generation && delivered_through == o.delivered_through &&
            stamped_at == o.stamped_at;
   }
-  bool operator!=(const IngressAuthority &o) const { return !(*this == o); }
+  bool operator!=(const IngressAuthority& o) const { return !(*this == o); }
 };
 
 /// The derived retry decision for a scope that has errored.
@@ -299,11 +293,10 @@ struct IngressRetry {
   std::uint64_t backoff = 0;
   std::uint64_t resume_from = 0;
 
-  bool operator==(const IngressRetry &o) const {
-    return attempt == o.attempt && backoff == o.backoff &&
-           resume_from == o.resume_from;
+  bool operator==(const IngressRetry& o) const {
+    return attempt == o.attempt && backoff == o.backoff && resume_from == o.resume_from;
   }
-  bool operator!=(const IngressRetry &o) const { return !(*this == o); }
+  bool operator!=(const IngressRetry& o) const { return !(*this == o); }
 };
 
 /// What a reconnect needs from the transport to close its gap.
@@ -311,10 +304,10 @@ struct ReplayRequest {
   std::uint64_t generation = 0;
   std::uint64_t from_sequence = 0;
 
-  bool operator==(const ReplayRequest &o) const {
+  bool operator==(const ReplayRequest& o) const {
     return generation == o.generation && from_sequence == o.from_sequence;
   }
-  bool operator!=(const ReplayRequest &o) const { return !(*this == o); }
+  bool operator!=(const ReplayRequest& o) const { return !(*this == o); }
 };
 
 // -- Policy -----------------------------------------------------------------
@@ -338,14 +331,13 @@ struct IngressPolicy {
   /// Backoff clamp.
   std::uint64_t retry_ceiling = 10000;
 
-  bool operator==(const IngressPolicy &o) const {
-    return reorder_window == o.reorder_window &&
-           freshness_horizon == o.freshness_horizon &&
+  bool operator==(const IngressPolicy& o) const {
+    return reorder_window == o.reorder_window && freshness_horizon == o.freshness_horizon &&
            high_water == o.high_water && overflow == o.overflow &&
-           receipt_capacity == o.receipt_capacity &&
-           retry_base == o.retry_base && retry_ceiling == o.retry_ceiling;
+           receipt_capacity == o.receipt_capacity && retry_base == o.retry_base &&
+           retry_ceiling == o.retry_ceiling;
   }
-  bool operator!=(const IngressPolicy &o) const { return !(*this == o); }
+  bool operator!=(const IngressPolicy& o) const { return !(*this == o); }
 };
 
 /// Why a policy was refused at construction time.
@@ -362,9 +354,8 @@ enum class IngressConfigError {
 struct IngressConfigException : std::invalid_argument {
   IngressConfigError error;
   explicit IngressConfigException(IngressConfigError e)
-      : std::invalid_argument(e == IngressConfigError::ConflateNotBounding
-                                  ? "ConflateNotBounding"
-                                  : "ZeroReceiptCapacity"),
+      : std::invalid_argument(e == IngressConfigError::ConflateNotBounding ? "ConflateNotBounding"
+                                                                           : "ZeroReceiptCapacity"),
         error(e) {}
 };
 
@@ -386,8 +377,7 @@ struct IngressReceiptOutcome {
   IngressDropReason reason = IngressDropReason::StaleGeneration;
   IngressError error = IngressError::TransportClosed;
 
-  static IngressReceiptOutcome accepted(std::uint64_t delivered_through,
-                                        bool conflated) {
+  static IngressReceiptOutcome accepted(std::uint64_t delivered_through, bool conflated) {
     IngressReceiptOutcome o;
     o.kind = IngressReceiptOutcomeKind::Accepted;
     o.delivered_through = delivered_through;
@@ -407,13 +397,11 @@ struct IngressReceiptOutcome {
     return o;
   }
 
-  bool operator==(const IngressReceiptOutcome &o) const {
-    return kind == o.kind && delivered_through == o.delivered_through &&
-           conflated == o.conflated && reason == o.reason && error == o.error;
+  bool operator==(const IngressReceiptOutcome& o) const {
+    return kind == o.kind && delivered_through == o.delivered_through && conflated == o.conflated &&
+           reason == o.reason && error == o.error;
   }
-  bool operator!=(const IngressReceiptOutcome &o) const {
-    return !(*this == o);
-  }
+  bool operator!=(const IngressReceiptOutcome& o) const { return !(*this == o); }
 };
 
 /// One durable record of an admission decision. `offset` is monotone and stable
@@ -438,11 +426,11 @@ template <typename K> struct IngressReceipt {
     return IngressReceiptChannel::Error;
   }
 
-  bool operator==(const IngressReceipt &o) const {
+  bool operator==(const IngressReceipt& o) const {
     return offset == o.offset && key == o.key && generation == o.generation &&
            sequence == o.sequence && outcome == o.outcome;
   }
-  bool operator!=(const IngressReceipt &o) const { return !(*this == o); }
+  bool operator!=(const IngressReceipt& o) const { return !(*this == o); }
 };
 
 // -- The invalidation set: the core/shell contract ---------------------------
@@ -462,9 +450,7 @@ struct IngressScopeChange {
   bool empty() const { return !(value || readiness || authority || retry); }
 
   static IngressScopeChange all() { return {true, true, true, true}; }
-  static IngressScopeChange readiness_only() {
-    return {false, true, false, false};
-  }
+  static IngressScopeChange readiness_only() { return {false, true, false, false}; }
   static IngressScopeChange value_only() { return {true, false, false, false}; }
   static IngressScopeChange retry_only() { return {false, false, false, true}; }
   /// What materializing a previously-unknown scope changes: an unknown scope
@@ -473,16 +459,15 @@ struct IngressScopeChange {
   /// learn that it did.
   static IngressScopeChange creation() { return {false, true, true, false}; }
 
-  IngressScopeChange unite(const IngressScopeChange &o) const {
-    return {value || o.value, readiness || o.readiness,
-            authority || o.authority, retry || o.retry};
+  IngressScopeChange unite(const IngressScopeChange& o) const {
+    return {value || o.value, readiness || o.readiness, authority || o.authority, retry || o.retry};
   }
 
-  bool operator==(const IngressScopeChange &o) const {
-    return value == o.value && readiness == o.readiness &&
-           authority == o.authority && retry == o.retry;
+  bool operator==(const IngressScopeChange& o) const {
+    return value == o.value && readiness == o.readiness && authority == o.authority &&
+           retry == o.retry;
   }
-  bool operator!=(const IngressScopeChange &o) const { return !(*this == o); }
+  bool operator!=(const IngressScopeChange& o) const { return !(*this == o); }
 };
 
 /// The pure invalidation set of one transition: the whole contract between the
@@ -495,13 +480,11 @@ template <typename K> struct IngressChange {
   bool error_receipts = false;
 
   bool empty() const {
-    return scopes.empty() && !accepted_receipts && !dropped_receipts &&
-           !error_receipts;
+    return scopes.empty() && !accepted_receipts && !dropped_receipts && !error_receipts;
   }
 
-  void mark(K key, const IngressScopeChange &change) {
-    if (!change.empty())
-      scopes.emplace_back(std::move(key), change);
+  void mark(K key, const IngressScopeChange& change) {
+    if (!change.empty()) scopes.emplace_back(std::move(key), change);
   }
 
   void mark_channel(IngressReceiptChannel channel) {
@@ -537,8 +520,7 @@ struct IngressScopeView {
 
   /// Whether the newest delivered stamp is inside the freshness horizon.
   bool is_fresh() const {
-    const std::uint64_t age =
-        observed_now > stamped_at ? observed_now - stamped_at : 0;
+    const std::uint64_t age = observed_now > stamped_at ? observed_now - stamped_at : 0;
     return age <= policy.freshness_horizon;
   }
 
@@ -555,15 +537,13 @@ struct IngressScopeView {
     case IngressLifecycle::Live:
       break;
     }
-    if (!delivered_through.has_value())
-      return IngressReadiness::Warming;
+    if (!delivered_through.has_value()) return IngressReadiness::Warming;
     return is_fresh() ? IngressReadiness::Ready : IngressReadiness::Stale;
   }
 
   /// Derived authority. A closed scope claims none.
   std::optional<IngressAuthority> authority() const {
-    if (lifecycle == IngressLifecycle::Closed)
-      return std::nullopt;
+    if (lifecycle == IngressLifecycle::Closed) return std::nullopt;
     IngressAuthority a;
     a.generation = generation;
     a.delivered_through = delivered_through;
@@ -583,10 +563,8 @@ struct IngressScopeView {
   /// Derived retry. Absent while no error is outstanding -- a healthy scope has
   /// no backoff, rather than a zero one.
   std::optional<IngressRetry> retry() const {
-    if (consecutive_errors == 0)
-      return std::nullopt;
-    const std::uint32_t shift =
-        std::min<std::uint32_t>(consecutive_errors - 1, 31);
+    if (consecutive_errors == 0) return std::nullopt;
+    const std::uint32_t shift = std::min<std::uint32_t>(consecutive_errors - 1, 31);
     const std::uint64_t factor = std::uint64_t{1} << shift;
     std::uint64_t backoff;
     if (policy.retry_base != 0 &&
@@ -594,8 +572,7 @@ struct IngressScopeView {
       backoff = std::numeric_limits<std::uint64_t>::max();
     else
       backoff = policy.retry_base * factor;
-    if (backoff > policy.retry_ceiling)
-      backoff = policy.retry_ceiling;
+    if (backoff > policy.retry_ceiling) backoff = policy.retry_ceiling;
     IngressRetry r;
     r.attempt = consecutive_errors;
     r.backoff = backoff;
@@ -603,15 +580,14 @@ struct IngressScopeView {
     return r;
   }
 
-  bool operator==(const IngressScopeView &o) const {
+  bool operator==(const IngressScopeView& o) const {
     return lifecycle == o.lifecycle && generation == o.generation &&
-           delivered_through == o.delivered_through &&
-           stamped_at == o.stamped_at && buffered == o.buffered &&
-           window_depth == o.window_depth &&
-           consecutive_errors == o.consecutive_errors &&
-           observed_now == o.observed_now && policy == o.policy;
+           delivered_through == o.delivered_through && stamped_at == o.stamped_at &&
+           buffered == o.buffered && window_depth == o.window_depth &&
+           consecutive_errors == o.consecutive_errors && observed_now == o.observed_now &&
+           policy == o.policy;
   }
-  bool operator!=(const IngressScopeView &o) const { return !(*this == o); }
+  bool operator!=(const IngressScopeView& o) const { return !(*this == o); }
 };
 
 // -- The transport seam -----------------------------------------------------
@@ -635,23 +611,20 @@ public:
   /// the transport could carry the request -- a polling transport that cannot
   /// address history answers `false`, which is what makes "this gap will never
   /// close" observable rather than silent.
-  virtual bool request_replay(const K &key, ReplayRequest request) = 0;
+  virtual bool request_replay(const K& key, ReplayRequest request) = 0;
 };
 
 /// An in-process event channel: the reference transport. `kind` is configurable
 /// so one implementation exercises all three delivery modes -- including the
 /// `BoundedPolling` case that cannot serve a replay.
-template <typename K, typename T>
-class InProcIngress : public IngressTransportSeam<K, T> {
+template <typename K, typename T> class InProcIngress : public IngressTransportSeam<K, T> {
 public:
   explicit InProcIngress(IngressTransportKind kind) : kind_(kind) {}
 
   IngressTransportKind kind() const override { return kind_; }
 
   /// Queue one envelope for the next drain.
-  void push(IngressEnvelope<K, T> envelope) {
-    inbound_.push_back(std::move(envelope));
-  }
+  void push(IngressEnvelope<K, T> envelope) { inbound_.push_back(std::move(envelope)); }
 
   std::vector<IngressEnvelope<K, T>> drain_inbound() override {
     std::vector<IngressEnvelope<K, T>> out;
@@ -663,19 +636,16 @@ public:
     return out;
   }
 
-  bool request_replay(const K &key, ReplayRequest request) override {
+  bool request_replay(const K& key, ReplayRequest request) override {
     // A bounded poll has no addressable history: it can only wait for the next
     // page, so it cannot honour a replay.
-    if (kind_ == IngressTransportKind::BoundedPolling)
-      return false;
+    if (kind_ == IngressTransportKind::BoundedPolling) return false;
     replays_.emplace_back(key, request);
     return true;
   }
 
   /// Replay requests observed so far, oldest first.
-  const std::vector<std::pair<K, ReplayRequest>> &replays() const {
-    return replays_;
-  }
+  const std::vector<std::pair<K, ReplayRequest>>& replays() const { return replays_; }
 
 private:
   IngressTransportKind kind_;
@@ -703,8 +673,7 @@ template <typename T> struct Scope {
   Scope() = default;
   explicit Scope(std::uint64_t generation) : generation(generation) {}
 
-  IngressScopeView view(std::uint64_t observed_now,
-                        const IngressPolicy &policy) const {
+  IngressScopeView view(std::uint64_t observed_now, const IngressPolicy& policy) const {
     IngressScopeView v;
     v.lifecycle = lifecycle;
     v.generation = generation;
@@ -738,8 +707,7 @@ template <typename T> struct Scope {
   }
 
   IngressLifecycle live_or_opening() const {
-    return delivered_through.has_value() ? IngressLifecycle::Live
-                                         : IngressLifecycle::Opening;
+    return delivered_through.has_value() ? IngressLifecycle::Live : IngressLifecycle::Opening;
   }
 };
 
@@ -776,56 +744,53 @@ public:
       throw IngressConfigException(IngressConfigError::ZeroReceiptCapacity);
   }
 
-  const IngressPolicy &policy() const { return policy_; }
+  const IngressPolicy& policy() const { return policy_; }
 
   /// Every known scope key, for a shell rebuilding its reader table.
   std::vector<K> scope_keys() const {
     std::vector<K> keys;
     keys.reserve(scopes_.size());
-    for (const auto &entry : scopes_)
+    for (const auto& entry : scopes_)
       keys.push_back(entry.first);
     return keys;
   }
 
   /// Read-only projection of one scope, or none when unknown.
-  std::optional<IngressScopeView> view(const K &key) const {
+  std::optional<IngressScopeView> view(const K& key) const {
     auto it = scopes_.find(key);
-    if (it == scopes_.end())
-      return std::nullopt;
+    if (it == scopes_.end()) return std::nullopt;
     return it->second.view(observed_now_, policy_);
   }
 
   /// Readiness of a scope. An unknown scope is `Unknown` rather than an error: a
   /// reader may legitimately observe a key before it opens.
-  IngressReadiness readiness(const K &key) const {
+  IngressReadiness readiness(const K& key) const {
     auto v = view(key);
     return v ? v->readiness() : IngressReadiness::Unknown;
   }
 
-  std::optional<IngressAuthority> authority(const K &key) const {
+  std::optional<IngressAuthority> authority(const K& key) const {
     auto v = view(key);
     return v ? v->authority() : std::nullopt;
   }
 
-  std::optional<IngressRetry> retry(const K &key) const {
+  std::optional<IngressRetry> retry(const K& key) const {
     auto v = view(key);
     return v ? v->retry() : std::nullopt;
   }
 
   /// The coalesced window awaiting drain.
-  std::optional<T> peek(const K &key) const {
+  std::optional<T> peek(const K& key) const {
     auto it = scopes_.find(key);
-    if (it == scopes_.end())
-      return std::nullopt;
+    if (it == scopes_.end()) return std::nullopt;
     return it->second.window;
   }
 
   /// Receipts on one channel, oldest first.
   std::vector<IngressReceipt<K>> receipts(IngressReceiptChannel channel) const {
     std::vector<IngressReceipt<K>> out;
-    for (const auto &receipt : receipts_)
-      if (receipt.channel() == channel)
-        out.push_back(receipt);
+    for (const auto& receipt : receipts_)
+      if (receipt.channel() == channel) out.push_back(receipt);
     return out;
   }
 
@@ -844,7 +809,7 @@ public:
       change.mark(std::move(key), IngressScopeChange::creation());
       return change;
     }
-    auto &scope = it->second;
+    auto& scope = it->second;
     const auto before_lifecycle = scope.lifecycle;
     const auto before_generation = scope.generation;
     const auto before_watermark = scope.delivered_through;
@@ -873,13 +838,11 @@ public:
   /// Suspend a scope: retain state and cursors, stop delivering. Returns the
   /// replay request a reconnect will need, or none when there was nothing to
   /// suspend.
-  std::pair<IngressChange<K>, std::optional<ReplayRequest>>
-  suspend(const K &key) {
+  std::pair<IngressChange<K>, std::optional<ReplayRequest>> suspend(const K& key) {
     IngressChange<K> change;
     auto it = scopes_.find(key);
-    if (it == scopes_.end())
-      return {change, std::nullopt};
-    auto &scope = it->second;
+    if (it == scopes_.end()) return {change, std::nullopt};
+    auto& scope = it->second;
     if (scope.lifecycle == IngressLifecycle::Suspended ||
         scope.lifecycle == IngressLifecycle::Closed)
       return {change, std::nullopt};
@@ -894,13 +857,11 @@ public:
   /// A higher generation is a producer handoff: the sequence space restarts, so
   /// the buffered reorder window and the coalesced value are discarded rather
   /// than replayed against a fence they no longer belong to.
-  std::pair<IngressChange<K>, ReplayRequest>
-  reconnect(const K &key, std::uint64_t generation) {
+  std::pair<IngressChange<K>, ReplayRequest> reconnect(const K& key, std::uint64_t generation) {
     IngressChange<K> change;
     const bool created = scopes_.find(key) == scopes_.end();
-    if (created)
-      scopes_.emplace(key, ingress_detail::Scope<T>(generation));
-    auto &scope = scopes_.find(key)->second;
+    if (created) scopes_.emplace(key, ingress_detail::Scope<T>(generation));
+    auto& scope = scopes_.find(key)->second;
     const bool handoff = generation > scope.generation;
     const bool had_window = scope.window.has_value();
     if (handoff) {
@@ -920,20 +881,17 @@ public:
     base.readiness = before_lifecycle != scope.lifecycle;
     base.authority = handoff;
     base.retry = had_errors;
-    change.mark(key,
-                created ? base.unite(IngressScopeChange::creation()) : base);
+    change.mark(key, created ? base.unite(IngressScopeChange::creation()) : base);
     return {change, request};
   }
 
   /// Close a scope. It admits nothing and claims no authority until reopened.
-  IngressChange<K> close(const K &key) {
+  IngressChange<K> close(const K& key) {
     IngressChange<K> change;
     auto it = scopes_.find(key);
-    if (it == scopes_.end())
-      return change;
-    auto &scope = it->second;
-    if (scope.lifecycle == IngressLifecycle::Closed)
-      return change;
+    if (it == scopes_.end()) return change;
+    auto& scope = it->second;
+    if (scope.lifecycle == IngressLifecycle::Closed) return change;
     const bool had_window = scope.window.has_value();
     const bool had_errors = scope.consecutive_errors > 0;
     scope.lifecycle = IngressLifecycle::Closed;
@@ -955,11 +913,10 @@ public:
   /// a polling shell from re-rendering on every tick.
   IngressChange<K> tick(std::uint64_t now) {
     IngressChange<K> change;
-    if (now == observed_now_)
-      return change;
+    if (now == observed_now_) return change;
     const std::uint64_t before = observed_now_;
     observed_now_ = now;
-    for (const auto &entry : scopes_) {
+    for (const auto& entry : scopes_) {
       if (entry.second.view(before, policy_).readiness() !=
           entry.second.view(now, policy_).readiness())
         change.mark(entry.first, IngressScopeChange::readiness_only());
@@ -968,18 +925,16 @@ public:
   }
 
   /// Record a transport/decode failure against a scope, deepening its backoff.
-  IngressChange<K> fail(const K &key, IngressError error) {
+  IngressChange<K> fail(const K& key, IngressError error) {
     IngressChange<K> change;
     const bool created = scopes_.find(key) == scopes_.end();
-    if (created)
-      scopes_.emplace(key, ingress_detail::Scope<T>(0));
-    auto &scope = scopes_.find(key)->second;
+    if (created) scopes_.emplace(key, ingress_detail::Scope<T>(0));
+    auto& scope = scopes_.find(key)->second;
     if (scope.consecutive_errors < std::numeric_limits<std::uint32_t>::max())
       ++scope.consecutive_errors;
     const std::uint64_t generation = scope.generation;
     const IngressScopeChange base = IngressScopeChange::retry_only();
-    change.mark(key,
-                created ? base.unite(IngressScopeChange::creation()) : base);
+    change.mark(key, created ? base.unite(IngressScopeChange::creation()) : base);
     IngressReceipt<K> receipt;
     receipt.key = key;
     receipt.generation = generation;
@@ -993,14 +948,12 @@ public:
   ///
   /// A drain is an *egress*, not an ack: it never moves the watermark, so a
   /// replay after a drain still resumes from the same sequence.
-  std::pair<IngressChange<K>, std::optional<T>> drain(const K &key) {
+  std::pair<IngressChange<K>, std::optional<T>> drain(const K& key) {
     IngressChange<K> change;
     auto it = scopes_.find(key);
-    if (it == scopes_.end())
-      return {change, std::nullopt};
-    auto &scope = it->second;
-    if (!scope.window.has_value())
-      return {change, std::nullopt};
+    if (it == scopes_.end()) return {change, std::nullopt};
+    auto& scope = it->second;
+    if (!scope.window.has_value()) return {change, std::nullopt};
     std::optional<T> value = std::move(scope.window);
     scope.window.reset();
     scope.window_depth = 0;
@@ -1016,8 +969,7 @@ public:
   /// sequence is consulted (else it reads as a duplicate and the zombie hides),
   /// and an expired envelope is rejected before it can occupy a reorder slot
   /// (else a slow zombie exhausts the buffer and starves live data).
-  std::pair<IngressChange<K>, IngressAdmission>
-  admit(IngressEnvelope<K, T> envelope) {
+  std::pair<IngressChange<K>, IngressAdmission> admit(IngressEnvelope<K, T> envelope) {
     const K key = envelope.key;
     const std::uint64_t generation = envelope.generation;
     const std::uint64_t sequence = envelope.sequence;
@@ -1031,17 +983,15 @@ public:
       before = scopes_.find(key)->second.stamp();
 
     const ingress_detail::Decision decision =
-        decide(scopes_.find(key)->second, policy_, observed_now_, generation,
-               sequence, stamped_at, std::move(envelope.payload));
+        decide(scopes_.find(key)->second, policy_, observed_now_, generation, sequence, stamped_at,
+               std::move(envelope.payload));
 
     // A refused envelope must not leave a scope behind: an expired or blocked
     // message for a key we do not track is not an admission plane, and
     // materializing one would report a readiness change that never happened.
-    const bool admitted =
-        decision.kind == ingress_detail::DecisionKind::Buffered ||
-        decision.kind == ingress_detail::DecisionKind::Delivered;
-    if (created && !admitted)
-      scopes_.erase(key);
+    const bool admitted = decision.kind == ingress_detail::DecisionKind::Buffered ||
+                          decision.kind == ingress_detail::DecisionKind::Delivered;
+    if (created && !admitted) scopes_.erase(key);
 
     IngressChange<K> change;
     auto scope_it = scopes_.find(key);
@@ -1063,8 +1013,7 @@ public:
       receipt.key = key;
       receipt.generation = fence;
       receipt.sequence = sequence;
-      receipt.outcome =
-          IngressReceiptOutcome::dropped(IngressDropReason::Backpressure);
+      receipt.outcome = IngressReceiptOutcome::dropped(IngressDropReason::Backpressure);
       change.mark_channel(push_receipt(std::move(receipt)));
       return {std::move(change), IngressAdmission::blocked()};
     }
@@ -1081,9 +1030,9 @@ public:
         const auto after = scope_it->second.stamp();
         IngressScopeChange diff;
         diff.value = before->has_window != after.has_window;
-        diff.readiness = before->lifecycle != after.lifecycle ||
-                         before->delivered_through.has_value() !=
-                             after.delivered_through.has_value();
+        diff.readiness =
+            before->lifecycle != after.lifecycle ||
+            before->delivered_through.has_value() != after.delivered_through.has_value();
         diff.authority = before->generation != after.generation ||
                          before->delivered_through != after.delivered_through;
         scope_change = scope_change.unite(diff);
@@ -1100,27 +1049,25 @@ public:
     receipt.key = key;
     receipt.generation = fence;
     receipt.sequence = sequence;
-    receipt.outcome = IngressReceiptOutcome::accepted(
-        decision.delivered_through, decision.conflated);
+    receipt.outcome =
+        IngressReceiptOutcome::accepted(decision.delivered_through, decision.conflated);
     change.mark_channel(push_receipt(std::move(receipt)));
 
     const IngressAdmission admission =
         decision.handoff
-            ? IngressAdmission::generation_handoff(decision.handoff_from,
-                                                   decision.handoff_to)
-            : (decision.conflated
-                   ? IngressAdmission::conflated(decision.delivered_through)
-                   : IngressAdmission::accepted(decision.delivered_through));
+            ? IngressAdmission::generation_handoff(decision.handoff_from, decision.handoff_to)
+            : (decision.conflated ? IngressAdmission::conflated(decision.delivered_through)
+                                  : IngressAdmission::accepted(decision.delivered_through));
     return {std::move(change), admission};
   }
 
 private:
   /// The admission algebra proper: pure over one scope, mutating only that scope,
   /// minting nothing.
-  static ingress_detail::Decision
-  decide(ingress_detail::Scope<T> &scope, const IngressPolicy &policy,
-         std::uint64_t observed_now, std::uint64_t generation,
-         std::uint64_t sequence, std::uint64_t stamped_at, T payload) {
+  static ingress_detail::Decision decide(ingress_detail::Scope<T>& scope,
+                                         const IngressPolicy& policy, std::uint64_t observed_now,
+                                         std::uint64_t generation, std::uint64_t sequence,
+                                         std::uint64_t stamped_at, T payload) {
     ingress_detail::Decision out;
 
     // 1. lifecycle.
@@ -1138,8 +1085,7 @@ private:
     }
     // 3. freshness -- BEFORE ordering, so an expired envelope never occupies a
     //    reorder slot.
-    const std::uint64_t age =
-        observed_now > stamped_at ? observed_now - stamped_at : 0;
+    const std::uint64_t age = observed_now > stamped_at ? observed_now - stamped_at : 0;
     if (age > policy.freshness_horizon) {
       out.kind = ingress_detail::DecisionKind::Refuse;
       out.reason = IngressDropReason::Expired;
@@ -1182,8 +1128,7 @@ private:
         out.reason = IngressDropReason::ReorderWindowOverflow;
         return out;
       }
-      scope.pending.emplace(sequence,
-                            std::make_pair(std::move(payload), stamped_at));
+      scope.pending.emplace(sequence, std::make_pair(std::move(payload), stamped_at));
       out.kind = ingress_detail::DecisionKind::Buffered;
       out.gap_from = expected;
       return out;
@@ -1229,8 +1174,7 @@ private:
     for (;;) {
       const std::uint64_t next = scope.next_expected();
       auto it = scope.pending.find(next);
-      if (it == scope.pending.end())
-        break;
+      if (it == scope.pending.end()) break;
       T buffered = std::move(it->second.first);
       const std::uint64_t buffered_stamp = it->second.second;
       scope.pending.erase(it);
@@ -1248,8 +1192,7 @@ private:
 
   /// Merge one payload into a scope's hot head. Returns whether it coalesced with
   /// an existing window.
-  static bool merge_into(ingress_detail::Scope<T> &scope, T payload,
-                         std::uint64_t stamped_at) {
+  static bool merge_into(ingress_detail::Scope<T>& scope, T payload, std::uint64_t stamped_at) {
     bool conflated;
     if (!scope.window.has_value()) {
       scope.window = std::move(payload);
@@ -1260,8 +1203,7 @@ private:
       conflated = true;
     }
     ++scope.window_depth;
-    if (stamped_at > scope.stamped_at)
-      scope.stamped_at = stamped_at;
+    if (stamped_at > scope.stamped_at) scope.stamped_at = stamped_at;
     return conflated;
   }
 
@@ -1285,9 +1227,9 @@ private:
 
 namespace ingress_detail {
 
-inline Context &graph(Context &ctx) { return ctx; }
-inline Context &graph(ThreadSafeContext &ctx) { return ctx.context(); }
-inline Context &graph(AsyncContext &ctx) { return ctx.context(); }
+inline Context& graph(Context& ctx) { return ctx; }
+inline Context& graph(ThreadSafeContext& ctx) { return ctx.context(); }
+inline Context& graph(AsyncContext& ctx) { return ctx.context(); }
 
 // Multi-root invalidation always goes through `batch()`. One admission can dirty
 // a scope's value, readiness, authority, and retry PLUS a receipt channel;
@@ -1296,31 +1238,29 @@ inline Context &graph(AsyncContext &ctx) { return ctx.context(); }
 // fan-out a generation handoff must never expose. `Context::clear_slot`
 // accumulates into `batched_slots_` while batching, and `finish_batch` flushes
 // effects exactly once for the whole set.
-template <typename F> void batch(Context &ctx, F &&fn) {
-  ctx.batch([&](Context &g) { fn(g); });
+template <typename F> void batch(Context& ctx, F&& fn) {
+  ctx.batch([&](Context& g) { fn(g); });
 }
-template <typename F> void batch(ThreadSafeContext &ctx, F &&fn) {
-  ctx.batch([&](Context &g) { fn(g); });
+template <typename F> void batch(ThreadSafeContext& ctx, F&& fn) {
+  ctx.batch([&](Context& g) { fn(g); });
 }
-template <typename F> void batch(AsyncContext &ctx, F &&fn) {
-  ctx.context().batch([&](Context &g) { fn(g); });
+template <typename F> void batch(AsyncContext& ctx, F&& fn) {
+  ctx.context().batch([&](Context& g) { fn(g); });
 }
 
-template <typename Cx, typename T> T read(Cx &ctx, const Computed<T> &handle) {
+template <typename Cx, typename T> T read(Cx& ctx, const Computed<T>& handle) {
   return ctx.get(handle);
 }
-template <typename T> T read(AsyncContext &ctx, const Computed<T> &handle) {
+template <typename T> T read(AsyncContext& ctx, const Computed<T>& handle) {
   return ctx.context().get(handle);
 }
 
 /// `false` when the reader's cache is invalid -- the probe the conformance corpus
 /// asserts `invalidates` through, in both directions.
-template <typename Cx, typename T>
-bool is_valid(Cx &ctx, const Computed<T> &handle) {
+template <typename Cx, typename T> bool is_valid(Cx& ctx, const Computed<T>& handle) {
   return ctx.is_set(handle);
 }
-template <typename T>
-bool is_valid(AsyncContext &ctx, const Computed<T> &handle) {
+template <typename T> bool is_valid(AsyncContext& ctx, const Computed<T>& handle) {
   return ctx.context().is_set(handle);
 }
 
@@ -1361,8 +1301,7 @@ template <typename K, typename T, typename M> struct IngressCellInner {
 /// The admission algebra lives in the flavor-neutral `IngressCore`; this shell
 /// adds only the reactivity -- four memoized `Computed`s per keyed scope, three
 /// receipt readers, and a derived schedule, minted on *this* context's graph.
-template <typename OwnerContext, typename K, typename T,
-          typename M = KeepLatest>
+template <typename OwnerContext, typename K, typename T, typename M = KeepLatest>
 class BasicIngressCell {
 public:
   using key_type = K;
@@ -1374,11 +1313,10 @@ public:
   /// `poll_interval` is retained even for an event channel so a later
   /// `set_transport` to `BoundedPolling` has a bound to fall back to rather than
   /// inventing one.
-  BasicIngressCell(OwnerContext &ctx, IngressPolicy policy,
-                   IngressTransportKind kind, std::uint64_t poll_interval)
-      : inner_(
-            std::make_shared<ingress_detail::IngressCellInner<K, T, M>>(policy)) {
-    Context &g = ingress_detail::graph(ctx);
+  BasicIngressCell(OwnerContext& ctx, IngressPolicy policy, IngressTransportKind kind,
+                   std::uint64_t poll_interval)
+      : inner_(std::make_shared<ingress_detail::IngressCellInner<K, T, M>>(policy)) {
+    Context& g = ingress_detail::graph(ctx);
     inner_->accepted = receipt_reader(g, IngressReceiptChannel::Accepted);
     inner_->dropped = receipt_reader(g, IngressReceiptChannel::Dropped);
     inner_->errors = receipt_reader(g, IngressReceiptChannel::Error);
@@ -1386,10 +1324,9 @@ public:
     inner_->poll_interval = g.template source<std::uint64_t>(poll_interval);
     const auto transport_handle = inner_->transport_kind;
     const auto interval_handle = inner_->poll_interval;
-    inner_->schedule = g.template computed<IngressSchedule>(
-        [transport_handle, interval_handle](Compute &c) {
-          return IngressSchedule::for_kind(c.get(transport_handle),
-                                          c.get(interval_handle));
+    inner_->schedule =
+        g.template computed<IngressSchedule>([transport_handle, interval_handle](Compute& c) {
+          return IngressSchedule::for_kind(c.get(transport_handle), c.get(interval_handle));
         });
   }
 
@@ -1397,7 +1334,7 @@ public:
   //    and only then applies the invalidation set the core reported. --
 
   /// Open (or reopen) a keyed scope at `generation`.
-  void open(OwnerContext &ctx, K key, std::uint64_t generation) {
+  void open(OwnerContext& ctx, K key, std::uint64_t generation) {
     IngressChange<K> change;
     {
       std::lock_guard<std::mutex> lock(inner_->core_mutex);
@@ -1407,7 +1344,7 @@ public:
   }
 
   /// Admit one decoded envelope.
-  IngressAdmission admit(OwnerContext &ctx, IngressEnvelope<K, T> envelope) {
+  IngressAdmission admit(OwnerContext& ctx, IngressEnvelope<K, T> envelope) {
     IngressChange<K> change;
     IngressAdmission admission;
     {
@@ -1422,7 +1359,7 @@ public:
 
   /// Suspend a scope, retaining its watermark. Returns the replay request a
   /// reconnect will need.
-  std::optional<ReplayRequest> suspend(OwnerContext &ctx, const K &key) {
+  std::optional<ReplayRequest> suspend(OwnerContext& ctx, const K& key) {
     IngressChange<K> change;
     std::optional<ReplayRequest> request;
     {
@@ -1436,8 +1373,7 @@ public:
   }
 
   /// Reconnect a scope at `generation`, clearing its error streak.
-  ReplayRequest reconnect(OwnerContext &ctx, const K &key,
-                          std::uint64_t generation) {
+  ReplayRequest reconnect(OwnerContext& ctx, const K& key, std::uint64_t generation) {
     IngressChange<K> change;
     ReplayRequest request;
     {
@@ -1451,7 +1387,7 @@ public:
   }
 
   /// Close a scope. It admits nothing and claims no authority until reopened.
-  void close(OwnerContext &ctx, const K &key) {
+  void close(OwnerContext& ctx, const K& key) {
     IngressChange<K> change;
     {
       std::lock_guard<std::mutex> lock(inner_->core_mutex);
@@ -1461,7 +1397,7 @@ public:
   }
 
   /// Record a transport/decode failure, deepening the scope's backoff.
-  void fail(OwnerContext &ctx, const K &key, IngressError error) {
+  void fail(OwnerContext& ctx, const K& key, IngressError error) {
     IngressChange<K> change;
     {
       std::lock_guard<std::mutex> lock(inner_->core_mutex);
@@ -1472,7 +1408,7 @@ public:
 
   /// Advance logical time. Only scopes that crossed the freshness horizon are
   /// invalidated.
-  void tick(OwnerContext &ctx, std::uint64_t now) {
+  void tick(OwnerContext& ctx, std::uint64_t now) {
     IngressChange<K> change;
     {
       std::lock_guard<std::mutex> lock(inner_->core_mutex);
@@ -1482,7 +1418,7 @@ public:
   }
 
   /// Drain a scope's coalesced window.
-  std::optional<T> drain(OwnerContext &ctx, const K &key) {
+  std::optional<T> drain(OwnerContext& ctx, const K& key) {
     IngressChange<K> change;
     std::optional<T> value;
     {
@@ -1500,28 +1436,25 @@ public:
   ///
   /// The only method that touches a transport, and it makes no decision of its
   /// own: the gap it replays is the one the algebra reports.
-  std::vector<IngressAdmission> pump(OwnerContext &ctx,
-                                     IngressTransportSeam<K, T> &transport) {
+  std::vector<IngressAdmission> pump(OwnerContext& ctx, IngressTransportSeam<K, T>& transport) {
     auto inbound = transport.drain_inbound();
     std::vector<IngressAdmission> outcomes;
     outcomes.reserve(inbound.size());
     std::vector<K> touched;
-    for (auto &envelope : inbound) {
+    for (auto& envelope : inbound) {
       K key = envelope.key;
       outcomes.push_back(admit(ctx, std::move(envelope)));
       if (std::find(touched.begin(), touched.end(), key) == touched.end())
         touched.push_back(std::move(key));
     }
-    for (const auto &key : touched) {
+    for (const auto& key : touched) {
       std::optional<ReplayRequest> gap;
       {
         std::lock_guard<std::mutex> lock(inner_->core_mutex);
         const auto view = inner_->core.view(key);
-        if (view && view->has_gap())
-          gap = ReplayRequest{view->generation, view->resume_from()};
+        if (view && view->has_gap()) gap = ReplayRequest{view->generation, view->resume_from()};
       }
-      if (gap)
-        transport.request_replay(key, *gap);
+      if (gap) transport.request_replay(key, *gap);
     }
     return outcomes;
   }
@@ -1529,85 +1462,76 @@ public:
   // -- Reactive reads. Each establishes a dependency on its memoized reader. --
 
   /// The coalesced window awaiting drain.
-  std::optional<T> value(OwnerContext &ctx, const K &key) {
+  std::optional<T> value(OwnerContext& ctx, const K& key) {
     return ingress_detail::read(ctx, ensure_readers(ctx, key).value);
   }
 
   /// Derived readiness.
-  IngressReadiness readiness(OwnerContext &ctx, const K &key) {
+  IngressReadiness readiness(OwnerContext& ctx, const K& key) {
     return ingress_detail::read(ctx, ensure_readers(ctx, key).readiness);
   }
 
   /// Derived authority.
-  std::optional<IngressAuthority> authority(OwnerContext &ctx, const K &key) {
+  std::optional<IngressAuthority> authority(OwnerContext& ctx, const K& key) {
     return ingress_detail::read(ctx, ensure_readers(ctx, key).authority);
   }
 
   /// Derived retry decision.
-  std::optional<IngressRetry> retry(OwnerContext &ctx, const K &key) {
+  std::optional<IngressRetry> retry(OwnerContext& ctx, const K& key) {
     return ingress_detail::read(ctx, ensure_readers(ctx, key).retry);
   }
 
   /// Accepted receipts, oldest first.
-  std::vector<IngressReceipt<K>> accepted(OwnerContext &ctx) {
+  std::vector<IngressReceipt<K>> accepted(OwnerContext& ctx) {
     return ingress_detail::read(ctx, inner_->accepted);
   }
   /// Dropped receipts, oldest first.
-  std::vector<IngressReceipt<K>> dropped(OwnerContext &ctx) {
+  std::vector<IngressReceipt<K>> dropped(OwnerContext& ctx) {
     return ingress_detail::read(ctx, inner_->dropped);
   }
   /// Error receipts, oldest first.
-  std::vector<IngressReceipt<K>> errors(OwnerContext &ctx) {
+  std::vector<IngressReceipt<K>> errors(OwnerContext& ctx) {
     return ingress_detail::read(ctx, inner_->errors);
   }
 
   /// The derived delivery schedule.
-  IngressSchedule schedule(OwnerContext &ctx) {
+  IngressSchedule schedule(OwnerContext& ctx) {
     return ingress_detail::read(ctx, inner_->schedule);
   }
 
   // -- Reader handles, for composing further derives and for cache probes. --
 
-  Computed<std::optional<T>> value_handle(OwnerContext &ctx, const K &key) {
+  Computed<std::optional<T>> value_handle(OwnerContext& ctx, const K& key) {
     return ensure_readers(ctx, key).value;
   }
-  Computed<IngressReadiness> readiness_handle(OwnerContext &ctx, const K &key) {
+  Computed<IngressReadiness> readiness_handle(OwnerContext& ctx, const K& key) {
     return ensure_readers(ctx, key).readiness;
   }
-  Computed<std::optional<IngressAuthority>>
-  authority_handle(OwnerContext &ctx, const K &key) {
+  Computed<std::optional<IngressAuthority>> authority_handle(OwnerContext& ctx, const K& key) {
     return ensure_readers(ctx, key).authority;
   }
-  Computed<std::optional<IngressRetry>> retry_handle(OwnerContext &ctx,
-                                                     const K &key) {
+  Computed<std::optional<IngressRetry>> retry_handle(OwnerContext& ctx, const K& key) {
     return ensure_readers(ctx, key).retry;
   }
-  Computed<std::vector<IngressReceipt<K>>> accepted_handle() const {
-    return inner_->accepted;
-  }
-  Computed<std::vector<IngressReceipt<K>>> dropped_handle() const {
-    return inner_->dropped;
-  }
-  Computed<std::vector<IngressReceipt<K>>> errors_handle() const {
-    return inner_->errors;
-  }
+  Computed<std::vector<IngressReceipt<K>>> accepted_handle() const { return inner_->accepted; }
+  Computed<std::vector<IngressReceipt<K>>> dropped_handle() const { return inner_->dropped; }
+  Computed<std::vector<IngressReceipt<K>>> errors_handle() const { return inner_->errors; }
   Computed<IngressSchedule> schedule_handle() const { return inner_->schedule; }
 
   /// Retune the transport live: falling back from an event channel to bounded
   /// polling is a cell write, so every schedule dependent reacts.
-  void set_transport(OwnerContext &ctx, IngressTransportKind kind) {
+  void set_transport(OwnerContext& ctx, IngressTransportKind kind) {
     ingress_detail::graph(ctx).set(inner_->transport_kind, kind);
   }
 
   /// Retune the poll bound live.
-  void set_poll_interval(OwnerContext &ctx, std::uint64_t interval) {
-    ingress_detail::graph(ctx).template set<std::uint64_t>(
-        inner_->poll_interval, interval);
+  void set_poll_interval(OwnerContext& ctx, std::uint64_t interval) {
+    ingress_detail::graph(ctx).template set<std::uint64_t>(inner_->poll_interval, interval);
   }
 
   // -- Non-reactive introspection (no dependency registered). --
 
-  std::optional<IngressScopeView> view(const K &key) const {
+  std::optional<IngressScopeView> view(const K& key) const {
     std::lock_guard<std::mutex> lock(inner_->core_mutex);
     return inner_->core.view(key);
   }
@@ -1625,50 +1549,45 @@ public:
 protected:
   std::shared_ptr<ingress_detail::IngressCellInner<K, T, M>> inner_;
 
-  Computed<std::vector<IngressReceipt<K>>>
-  receipt_reader(Context &g, IngressReceiptChannel channel) {
+  Computed<std::vector<IngressReceipt<K>>> receipt_reader(Context& g,
+                                                          IngressReceiptChannel channel) {
     const auto inner = inner_;
-    return g.template computed<std::vector<IngressReceipt<K>>>(
-        [inner, channel](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->core_mutex);
-          return inner->core.receipts(channel);
-        });
+    return g.template computed<std::vector<IngressReceipt<K>>>([inner, channel](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->core_mutex);
+      return inner->core.receipts(channel);
+    });
   }
 
   /// Mint (or return) one scope's four readers. Idempotent, so a consumer may
   /// hold a handle for a key that has not opened yet -- an unknown scope reads
   /// `Unknown`/none rather than failing.
-  ingress_detail::ScopeReaders<T> ensure_readers(OwnerContext &ctx,
-                                                 const K &key) {
+  ingress_detail::ScopeReaders<T> ensure_readers(OwnerContext& ctx, const K& key) {
     {
       std::lock_guard<std::mutex> lock(inner_->reader_mutex);
       const auto it = inner_->scopes.find(key);
-      if (it != inner_->scopes.end())
-        return it->second;
+      if (it != inner_->scopes.end()) return it->second;
     }
-    Context &g = ingress_detail::graph(ctx);
+    Context& g = ingress_detail::graph(ctx);
     const auto inner = inner_;
     ingress_detail::ScopeReaders<T> readers;
-    readers.value = g.template computed<std::optional<T>>(
-        [inner, key](Compute &) -> std::optional<T> {
+    readers.value =
+        g.template computed<std::optional<T>>([inner, key](Compute&) -> std::optional<T> {
           std::lock_guard<std::mutex> lock(inner->core_mutex);
           return inner->core.peek(key);
         });
-    readers.readiness =
-        g.template computed<IngressReadiness>([inner, key](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->core_mutex);
-          return inner->core.readiness(key);
-        });
-    readers.authority = g.template computed<std::optional<IngressAuthority>>(
-        [inner, key](Compute &) {
+    readers.readiness = g.template computed<IngressReadiness>([inner, key](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->core_mutex);
+      return inner->core.readiness(key);
+    });
+    readers.authority =
+        g.template computed<std::optional<IngressAuthority>>([inner, key](Compute&) {
           std::lock_guard<std::mutex> lock(inner->core_mutex);
           return inner->core.authority(key);
         });
-    readers.retry = g.template computed<std::optional<IngressRetry>>(
-        [inner, key](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->core_mutex);
-          return inner->core.retry(key);
-        });
+    readers.retry = g.template computed<std::optional<IngressRetry>>([inner, key](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->core_mutex);
+      return inner->core.retry(key);
+    });
     std::lock_guard<std::mutex> lock(inner_->reader_mutex);
     return inner_->scopes.emplace(key, readers).first->second;
   }
@@ -1676,32 +1595,23 @@ protected:
   /// Apply one core-reported invalidation set. Every affected reader is cleared
   /// inside ONE batch, so no reader observes a partial fan-out -- a generation
   /// handoff must never be visible as "new value, old authority".
-  void apply(OwnerContext &ctx, const IngressChange<K> &change) {
-    if (change.empty())
-      return;
+  void apply(OwnerContext& ctx, const IngressChange<K>& change) {
+    if (change.empty()) return;
     std::vector<SlotId> roots;
-    for (const auto &entry : change.scopes) {
+    for (const auto& entry : change.scopes) {
       // Minted BEFORE the batch opens: creating a reader is not an invalidation,
       // and it must not be folded into the frontier walk.
       const auto readers = ensure_readers(ctx, entry.first);
-      if (entry.second.value)
-        roots.push_back(readers.value.id());
-      if (entry.second.readiness)
-        roots.push_back(readers.readiness.id());
-      if (entry.second.authority)
-        roots.push_back(readers.authority.id());
-      if (entry.second.retry)
-        roots.push_back(readers.retry.id());
+      if (entry.second.value) roots.push_back(readers.value.id());
+      if (entry.second.readiness) roots.push_back(readers.readiness.id());
+      if (entry.second.authority) roots.push_back(readers.authority.id());
+      if (entry.second.retry) roots.push_back(readers.retry.id());
     }
-    if (change.accepted_receipts)
-      roots.push_back(inner_->accepted.id());
-    if (change.dropped_receipts)
-      roots.push_back(inner_->dropped.id());
-    if (change.error_receipts)
-      roots.push_back(inner_->errors.id());
-    if (roots.empty())
-      return;
-    ingress_detail::batch(ctx, [&](Context &g) {
+    if (change.accepted_receipts) roots.push_back(inner_->accepted.id());
+    if (change.dropped_receipts) roots.push_back(inner_->dropped.id());
+    if (change.error_receipts) roots.push_back(inner_->errors.id());
+    if (roots.empty()) return;
+    ingress_detail::batch(ctx, [&](Context& g) {
       for (const SlotId id : roots)
         g.clear_slot(id);
     });
@@ -1714,7 +1624,7 @@ class IngressCell : public BasicIngressCell<Context, K, T, M> {
   using Base = BasicIngressCell<Context, K, T, M>;
 
 public:
-  IngressCell(Context &ctx, IngressPolicy policy, IngressTransportKind kind,
+  IngressCell(Context& ctx, IngressPolicy policy, IngressTransportKind kind,
               std::uint64_t poll_interval)
       : Base(ctx, policy, kind, poll_interval) {}
 };
@@ -1722,13 +1632,12 @@ public:
 /// The `Send + Sync` flavor. Invalidation runs OUTSIDE the core lock and fans out
 /// through `batch()`, so one admission is one frontier walk.
 template <typename K, typename T, typename M = KeepLatest>
-class ThreadSafeIngressCell
-    : public BasicIngressCell<ThreadSafeContext, K, T, M> {
+class ThreadSafeIngressCell : public BasicIngressCell<ThreadSafeContext, K, T, M> {
   using Base = BasicIngressCell<ThreadSafeContext, K, T, M>;
 
 public:
-  ThreadSafeIngressCell(ThreadSafeContext &ctx, IngressPolicy policy,
-                        IngressTransportKind kind, std::uint64_t poll_interval)
+  ThreadSafeIngressCell(ThreadSafeContext& ctx, IngressPolicy policy, IngressTransportKind kind,
+                        std::uint64_t poll_interval)
       : Base(ctx, policy, kind, poll_interval) {}
 };
 
@@ -1740,8 +1649,8 @@ class AsyncIngressCell : public BasicIngressCell<AsyncContext, K, T, M> {
   using Base = BasicIngressCell<AsyncContext, K, T, M>;
 
 public:
-  AsyncIngressCell(AsyncContext &ctx, IngressPolicy policy,
-                   IngressTransportKind kind, std::uint64_t poll_interval)
+  AsyncIngressCell(AsyncContext& ctx, IngressPolicy policy, IngressTransportKind kind,
+                   std::uint64_t poll_interval)
       : Base(ctx, policy, kind, poll_interval) {}
 };
 

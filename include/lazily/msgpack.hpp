@@ -21,7 +21,7 @@ namespace lazily {
 // Packer — writes the smallest valid encoding of each value.
 // ─────────────────────────────────────────────────────────────────────────────
 class MsgPacker {
- public:
+public:
   const std::vector<uint8_t>& bytes() const { return buf_; }
   std::vector<uint8_t> take() && { return std::move(buf_); }
 
@@ -54,7 +54,7 @@ class MsgPacker {
       }
     } else {
       if (v >= -32) {
-        buf_.push_back(static_cast<uint8_t>(v));  // negative fixint
+        buf_.push_back(static_cast<uint8_t>(v)); // negative fixint
       } else if (v >= -128) {
         buf_.push_back(0xd0);
         push_u8(static_cast<uint64_t>(v) & 0xff);
@@ -126,7 +126,7 @@ class MsgPacker {
     }
   }
 
- private:
+private:
   std::vector<uint8_t> buf_;
   void push_u8(uint64_t v) { buf_.push_back(static_cast<uint8_t>(v & 0xff)); }
   void push_u16(uint64_t v) {
@@ -148,37 +148,57 @@ class MsgPacker {
 // Throws std::runtime_error on truncation / unsupported tags.
 // ─────────────────────────────────────────────────────────────────────────────
 class MsgUnpacker {
- public:
+public:
   MsgUnpacker(const uint8_t* data, size_t len) : p_(data), end_(data + len) {}
-  explicit MsgUnpacker(const std::vector<uint8_t>& b)
-      : p_(b.data()), end_(b.data() + b.size()) {}
+  explicit MsgUnpacker(const std::vector<uint8_t>& b) : p_(b.data()), end_(b.data() + b.size()) {}
 
   bool eof() const { return p_ >= end_; }
   size_t remaining() const { return end_ - p_; }
 
   // Peek the next value's wire category without consuming.
-  enum class Kind {
-    Nil, Bool, Int, Str, Bin, Array, Map, Float, Ext, Other
-  };
+  enum class Kind { Nil, Bool, Int, Str, Bin, Array, Map, Float, Ext, Other };
   Kind peek_kind() const {
     require(1);
     uint8_t b = *p_;
-    if (b <= 0x7f) return Kind::Int;            // positive fixint
-    if (b <= 0x8f) return Kind::Map;            // fixmap
-    if (b <= 0x9f) return Kind::Array;          // fixarray
-    if (b <= 0xbf) return Kind::Str;            // fixstr
-    if (b >= 0xe0) return Kind::Int;            // negative fixint
+    if (b <= 0x7f) return Kind::Int;   // positive fixint
+    if (b <= 0x8f) return Kind::Map;   // fixmap
+    if (b <= 0x9f) return Kind::Array; // fixarray
+    if (b <= 0xbf) return Kind::Str;   // fixstr
+    if (b >= 0xe0) return Kind::Int;   // negative fixint
     switch (b) {
-      case 0xc0: return Kind::Nil;
-      case 0xc2: case 0xc3: return Kind::Bool;
-      case 0xc4: case 0xc5: case 0xc6: return Kind::Bin;
-      case 0xca: case 0xcb: return Kind::Float;
-      case 0xcc: case 0xcd: case 0xce: case 0xcf:
-      case 0xd0: case 0xd1: case 0xd2: case 0xd3: return Kind::Int;
-      case 0xd9: case 0xda: case 0xdb: return Kind::Str;
-      case 0xdc: case 0xdd: return Kind::Array;
-      case 0xde: case 0xdf: return Kind::Map;
-      default: return Kind::Other;  // ext / fixext — lazily never produces these
+    case 0xc0:
+      return Kind::Nil;
+    case 0xc2:
+    case 0xc3:
+      return Kind::Bool;
+    case 0xc4:
+    case 0xc5:
+    case 0xc6:
+      return Kind::Bin;
+    case 0xca:
+    case 0xcb:
+      return Kind::Float;
+    case 0xcc:
+    case 0xcd:
+    case 0xce:
+    case 0xcf:
+    case 0xd0:
+    case 0xd1:
+    case 0xd2:
+    case 0xd3:
+      return Kind::Int;
+    case 0xd9:
+    case 0xda:
+    case 0xdb:
+      return Kind::Str;
+    case 0xdc:
+    case 0xdd:
+      return Kind::Array;
+    case 0xde:
+    case 0xdf:
+      return Kind::Map;
+    default:
+      return Kind::Other; // ext / fixext — lazily never produces these
     }
   }
 
@@ -198,18 +218,27 @@ class MsgUnpacker {
   int64_t read_i64() {
     require(1);
     uint8_t b = *p_++;
-    if (b <= 0x7f) return b;                       // positive fixint
-    if (b >= 0xe0) return static_cast<int8_t>(b);  // negative fixint
+    if (b <= 0x7f) return b;                      // positive fixint
+    if (b >= 0xe0) return static_cast<int8_t>(b); // negative fixint
     switch (b) {
-      case 0xcc: return read_u8();
-      case 0xcd: return read_u16();
-      case 0xce: return read_u32();
-      case 0xcf: return static_cast<int64_t>(read_u64());
-      case 0xd0: return static_cast<int8_t>(read_u8());
-      case 0xd1: return static_cast<int16_t>(read_u16());
-      case 0xd2: return static_cast<int32_t>(read_u32());
-      case 0xd3: return static_cast<int64_t>(read_u64());
-      default: throw std::runtime_error("msgpack: expected int");
+    case 0xcc:
+      return read_u8();
+    case 0xcd:
+      return read_u16();
+    case 0xce:
+      return read_u32();
+    case 0xcf:
+      return static_cast<int64_t>(read_u64());
+    case 0xd0:
+      return static_cast<int8_t>(read_u8());
+    case 0xd1:
+      return static_cast<int16_t>(read_u16());
+    case 0xd2:
+      return static_cast<int32_t>(read_u32());
+    case 0xd3:
+      return static_cast<int64_t>(read_u64());
+    default:
+      throw std::runtime_error("msgpack: expected int");
     }
   }
 
@@ -218,7 +247,7 @@ class MsgUnpacker {
     uint8_t b = *p_++;
     size_t n;
     if ((b & 0xe0) == 0xa0) {
-      n = b & 0x1f;  // fixstr
+      n = b & 0x1f; // fixstr
     } else if (b == 0xd9) {
       n = read_u8();
     } else if (b == 0xda) {
@@ -244,7 +273,7 @@ class MsgUnpacker {
     uint8_t b = *p_++;
     size_t n;
     if ((b & 0xe0) == 0xa0) {
-      n = b & 0x1f;  // fixstr
+      n = b & 0x1f; // fixstr
     } else if (b == 0xd9) {
       n = read_u8();
     } else if (b == 0xda) {
@@ -282,7 +311,7 @@ class MsgUnpacker {
   uint32_t read_array_header() {
     require(1);
     uint8_t b = *p_++;
-    if ((b & 0xf0) == 0x90) return b & 0x0f;  // fixarray
+    if ((b & 0xf0) == 0x90) return b & 0x0f; // fixarray
     if (b == 0xdc) return read_u16();
     if (b == 0xdd) return read_u32();
     throw std::runtime_error("msgpack: expected array");
@@ -290,7 +319,7 @@ class MsgUnpacker {
   uint32_t read_map_header() {
     require(1);
     uint8_t b = *p_++;
-    if ((b & 0xf0) == 0x80) return b & 0x0f;  // fixmap
+    if ((b & 0xf0) == 0x80) return b & 0x0f; // fixmap
     if (b == 0xde) return read_u16();
     if (b == 0xdf) return read_u32();
     throw std::runtime_error("msgpack: expected map");
@@ -299,30 +328,44 @@ class MsgUnpacker {
   // Skip any value (used to ignore unknown map keys for forward compatibility).
   void skip() {
     switch (peek_kind()) {
-      case Kind::Nil: expect_nil(); break;
-      case Kind::Bool: (void)read_bool(); break;
-      case Kind::Int: (void)read_i64(); break;
-      case Kind::Str: (void)read_str(); break;
-      case Kind::Bin: (void)read_bin(); break;
-      case Kind::Array: {
-        uint32_t n = read_array_header();
-        for (uint32_t i = 0; i < n; ++i) skip();
-        break;
+    case Kind::Nil:
+      expect_nil();
+      break;
+    case Kind::Bool:
+      (void)read_bool();
+      break;
+    case Kind::Int:
+      (void)read_i64();
+      break;
+    case Kind::Str:
+      (void)read_str();
+      break;
+    case Kind::Bin:
+      (void)read_bin();
+      break;
+    case Kind::Array: {
+      uint32_t n = read_array_header();
+      for (uint32_t i = 0; i < n; ++i)
+        skip();
+      break;
+    }
+    case Kind::Map: {
+      uint32_t n = read_map_header();
+      for (uint32_t i = 0; i < n; ++i) {
+        skip();
+        skip();
       }
-      case Kind::Map: {
-        uint32_t n = read_map_header();
-        for (uint32_t i = 0; i < n; ++i) { skip(); skip(); }
-        break;
-      }
-      default: throw std::runtime_error("msgpack: cannot skip unsupported value");
+      break;
+    }
+    default:
+      throw std::runtime_error("msgpack: cannot skip unsupported value");
     }
   }
 
- private:
+private:
   const uint8_t *p_, *end_;
   void require(size_t n) const {
-    if (static_cast<size_t>(end_ - p_) < n)
-      throw std::runtime_error("msgpack: truncated");
+    if (static_cast<size_t>(end_ - p_) < n) throw std::runtime_error("msgpack: truncated");
   }
   uint8_t read_u8() {
     require(1);
@@ -336,20 +379,20 @@ class MsgUnpacker {
   }
   uint32_t read_u32() {
     require(4);
-    uint32_t v = (uint32_t(p_[0]) << 24) | (uint32_t(p_[1]) << 16) |
-                 (uint32_t(p_[2]) << 8) | p_[3];
+    uint32_t v = (uint32_t(p_[0]) << 24) | (uint32_t(p_[1]) << 16) | (uint32_t(p_[2]) << 8) | p_[3];
     p_ += 4;
     return v;
   }
   uint64_t read_u64() {
     require(8);
     uint64_t v = 0;
-    for (int i = 0; i < 8; ++i) v = (v << 8) | p_[i];
+    for (int i = 0; i < 8; ++i)
+      v = (v << 8) | p_[i];
     p_ += 8;
     return v;
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_MSGPACK_HPP
+#endif // LAZILY_MSGPACK_HPP

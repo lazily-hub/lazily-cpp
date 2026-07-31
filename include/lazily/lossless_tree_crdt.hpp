@@ -34,19 +34,49 @@ struct TreeSortKey {
   bool operator==(const TreeSortKey& o) const { return compare(o) == 0; }
 };
 
-struct TreeNodeSeedElement { std::string kind; };
-struct TreeNodeSeedLeaf { LeafKind kind; std::string text; };
+struct TreeNodeSeedElement {
+  std::string kind;
+};
+struct TreeNodeSeedLeaf {
+  LeafKind kind;
+  std::string text;
+};
 using TreeNodeSeed = std::variant<TreeNodeSeedElement, TreeNodeSeedLeaf>;
 
-struct TreeOpCreateNode { OpId id; OpId parent; TreeSortKey sort; TreeNodeSeed seed; };
-struct TreeOpTombstone { OpId node; };
-struct TreeOpReorder { OpId node; TreeSortKey sort; };
-struct TreeOpLeafEdit { OpId node; OpId prev; std::vector<TextOp> ops; };
-struct TreeOpSplitLeaf { OpId node; OpId new_id; TreeSortKey sort; int at_char; OpId prev; };
-struct TreeOpMergeLeaves { OpId left; OpId right; OpId prev_left; OpId prev_right; };
+struct TreeOpCreateNode {
+  OpId id;
+  OpId parent;
+  TreeSortKey sort;
+  TreeNodeSeed seed;
+};
+struct TreeOpTombstone {
+  OpId node;
+};
+struct TreeOpReorder {
+  OpId node;
+  TreeSortKey sort;
+};
+struct TreeOpLeafEdit {
+  OpId node;
+  OpId prev;
+  std::vector<TextOp> ops;
+};
+struct TreeOpSplitLeaf {
+  OpId node;
+  OpId new_id;
+  TreeSortKey sort;
+  int at_char;
+  OpId prev;
+};
+struct TreeOpMergeLeaves {
+  OpId left;
+  OpId right;
+  OpId prev_left;
+  OpId prev_right;
+};
 
-using TreeOpKind = std::variant<TreeOpCreateNode, TreeOpTombstone, TreeOpReorder,
-                                  TreeOpLeafEdit, TreeOpSplitLeaf, TreeOpMergeLeaves>;
+using TreeOpKind = std::variant<TreeOpCreateNode, TreeOpTombstone, TreeOpReorder, TreeOpLeafEdit,
+                                TreeOpSplitLeaf, TreeOpMergeLeaves>;
 
 struct TreeOp {
   OpId id;
@@ -85,15 +115,12 @@ struct TreeVersionFrontier {
     return it->second.contains(id.counter);
   }
 
-  void observe(const OpId& id) {
-    dots[id.peer].observe(id.counter);
-  }
+  void observe(const OpId& id) { dots[id.peer].observe(id.counter); }
 };
 
 inline const OpId kTreeRoot = {0, 0};
 
-inline std::vector<int> tree_key_between(const std::vector<int>* lo,
-                                            const std::vector<int>* hi) {
+inline std::vector<int> tree_key_between(const std::vector<int>* lo, const std::vector<int>* hi) {
   if (!lo && !hi) return {128};
   if (!lo) {
     if (hi->front() > 1) return {hi->front() / 2};
@@ -133,9 +160,8 @@ struct TreeNode {
 };
 
 class LosslessTreeCrdt {
- public:
-  explicit LosslessTreeCrdt(PeerId peer)
-      : peer_(peer), counter_(0) {
+public:
+  explicit LosslessTreeCrdt(PeerId peer) : peer_(peer), counter_(0) {
     TreeNode root;
     root.id = kTreeRoot;
     root.sort = {{128}, peer};
@@ -152,9 +178,8 @@ class LosslessTreeCrdt {
 
     auto left = after ? &nodes_[*after].sort : nullptr;
     auto right = find_right_sibling(parent, after);
-    auto key = TreeSortKey{tree_key_between(
-        left ? &left->frac : nullptr,
-        right ? &right->frac : nullptr), peer_};
+    auto key = TreeSortKey{
+        tree_key_between(left ? &left->frac : nullptr, right ? &right->frac : nullptr), peer_};
 
     TreeNode node;
     node.id = id;
@@ -198,9 +223,8 @@ class LosslessTreeCrdt {
 
     auto left = after ? &nodes_[*after].sort : nullptr;
     auto right = find_right_sibling(*parent, after);
-    auto key = TreeSortKey{tree_key_between(
-        left ? &left->frac : nullptr,
-        right ? &right->frac : nullptr), peer_};
+    auto key = TreeSortKey{
+        tree_key_between(left ? &left->frac : nullptr, right ? &right->frac : nullptr), peer_};
 
     auto stamp = next_id();
     it->second.sort = key;
@@ -209,7 +233,7 @@ class LosslessTreeCrdt {
   }
 
   void edit_leaf(const OpId& node_id, size_t at_byte, size_t delete_bytes,
-                  const std::string& insert) {
+                 const std::string& insert) {
     auto it = nodes_.find(node_id);
     if (it == nodes_.end() || !it->second.is_leaf || !it->second.text) return;
 
@@ -270,8 +294,8 @@ class LosslessTreeCrdt {
     nodes_[new_id] = tail_node;
     children_[parent].push_back(new_id);
 
-    record(TreeOp{stamp, TreeOpSplitLeaf{node_id, new_id, tail_node.sort,
-                                          static_cast<int>(char_pos), prev}});
+    record(TreeOp{
+        stamp, TreeOpSplitLeaf{node_id, new_id, tail_node.sort, static_cast<int>(char_pos), prev}});
     return new_id;
   }
 
@@ -356,10 +380,10 @@ class LosslessTreeCrdt {
 
   void apply_update(const TreeUpdate& update) {
     for (auto& op : update.ops) {
-      if (frontier_.contains(op.id)) continue;  // already known — idempotent
+      if (frontier_.contains(op.id)) continue; // already known — idempotent
       apply_op(op);
-      record(op);  // observe into the frontier AND append to the log so this
-                   // replica can forward the op transitively (anti-entropy).
+      record(op); // observe into the frontier AND append to the log so this
+                  // replica can forward the op transitively (anti-entropy).
     }
   }
 
@@ -381,7 +405,7 @@ class LosslessTreeCrdt {
     return clone;
   }
 
- private:
+private:
   PeerId peer_;
   int64_t counter_;
   // Hash-indexed (OpId has std::hash — see crdt.hpp). Mirrors the TextCrdt
@@ -516,8 +540,8 @@ class LosslessTreeCrdt {
       auto& k = std::get<TreeOpMergeLeaves>(op.kind);
       auto lit = nodes_.find(k.left);
       auto rit = nodes_.find(k.right);
-      if (lit != nodes_.end() && rit != nodes_.end() &&
-          lit->second.is_leaf && rit->second.is_leaf) {
+      if (lit != nodes_.end() && rit != nodes_.end() && lit->second.is_leaf &&
+          rit->second.is_leaf) {
         std::string merged = lit->second.text->text() + rit->second.text->text();
         lit->second.text = std::make_shared<TextCrdt>(peer_);
         lit->second.text->insert_str(0, merged);
@@ -538,6 +562,6 @@ class LosslessTreeCrdt {
   }
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_LOSSLESS_TREE_CRDT_HPP
+#endif // LAZILY_LOSSLESS_TREE_CRDT_HPP

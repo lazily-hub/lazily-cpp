@@ -9,15 +9,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // -- SourceMap basics --
@@ -38,9 +38,7 @@ TEST(test_sourcemap_membership_reactive) {
   auto a = map.entry(ctx, "a", 1);
   map.entry(ctx, "b", 2);
 
-  auto count = ctx.computed<int>([&](Compute& c) {
-    return (int)map.len(c);
-  });
+  auto count = ctx.computed<int>([&](Compute& c) { return (int)map.len(c); });
   assert(ctx.get(count) == 2);
 
   ctx.set(a, 100);
@@ -59,9 +57,7 @@ TEST(test_sourcemap_per_entry_independent) {
   auto a = map.entry(ctx, "a", 1);
   auto b = map.entry(ctx, "b", 2);
 
-  auto view_a = ctx.computed<int>([&](Compute& c) {
-    return map.get(c, "a").value_or(0) * 10;
-  });
+  auto view_a = ctx.computed<int>([&](Compute& c) { return map.get(c, "a").value_or(0) * 10; });
   assert(ctx.get(view_a) == 10);
 
   ctx.set(b, 222);
@@ -93,12 +89,8 @@ TEST(test_sourcemap_pure_move_spares_membership) {
   map.entry(ctx, "b", 2);
   map.entry(ctx, "c", 3);
 
-  auto count = ctx.computed<int>([&](Compute& c) {
-    return (int)map.len(c);
-  });
-  auto has_b = ctx.computed<bool>([&](Compute& c) {
-    return map.contains_key(c, "b");
-  });
+  auto count = ctx.computed<int>([&](Compute& c) { return (int)map.len(c); });
+  auto has_b = ctx.computed<bool>([&](Compute& c) { return map.contains_key(c, "b"); });
   ctx.get(count);
   ctx.get(has_b);
 
@@ -110,7 +102,8 @@ TEST(test_sourcemap_pure_move_spares_membership) {
 TEST(test_sourcemap_move_before_after) {
   Context ctx;
   SourceMap<int, int> map(ctx);
-  for (int k = 0; k < 4; ++k) map.entry(ctx, k, k * 10);
+  for (int k = 0; k < 4; ++k)
+    map.entry(ctx, k, k * 10);
 
   assert(map.move_before(ctx, 3, 1));
   auto keys = map.keys(ctx);
@@ -179,7 +172,8 @@ TEST(test_reconcile_insert_remove_update) {
   for (auto& op : ops) {
     if (op.kind == DiffOp<std::string, int>::Kind::Remove && op.key == "b") has_remove_b = true;
     if (op.kind == DiffOp<std::string, int>::Kind::Insert && op.key == "d") has_insert_d = true;
-    if (op.kind == DiffOp<std::string, int>::Kind::Update && op.key == "a" && *op.value == 9) has_update_a = true;
+    if (op.kind == DiffOp<std::string, int>::Kind::Update && op.key == "a" && *op.value == 9)
+      has_update_a = true;
   }
   assert(has_remove_b && has_insert_d && has_update_a);
 }
@@ -189,7 +183,8 @@ TEST(test_reconcile_full_reversal) {
   std::vector<std::pair<int, int>> new_seq = {{4, 0}, {3, 0}, {2, 0}, {1, 0}};
   auto ops = reconcile(old_seq, new_seq);
   size_t moves = 0;
-  for (auto& op : ops) if (op.kind == DiffOp<int, int>::Kind::Move) moves++;
+  for (auto& op : ops)
+    if (op.kind == DiffOp<int, int>::Kind::Move) moves++;
   assert(moves == 3);
 }
 
@@ -202,9 +197,7 @@ TEST(test_reconcile_apply_to_map) {
 
   auto a_handle = map.handle("a").value();
 
-  auto a_view = ctx.computed<int>([&](Compute& c) {
-    return map.get(c, "a").value_or(0) * 100;
-  });
+  auto a_view = ctx.computed<int>([&](Compute& c) { return map.get(c, "a").value_or(0) * 100; });
   assert(ctx.get(a_view) == 100);
 
   map.reconcile(ctx, {{"a", 1}, {"c", 3}, {"b", 2}});
@@ -222,9 +215,8 @@ TEST(test_reconcile_apply_to_tree) {
   root.insert_child(ctx, "b", 2);
   root.insert_child(ctx, "c", 3);
 
-  auto ops = reconcile<std::string, int>(
-    {{"a", 1}, {"b", 2}, {"c", 3}},
-    {{"c", 3}, {"a", 9}, {"d", 4}});
+  auto ops =
+      reconcile<std::string, int>({{"a", 1}, {"b", 2}, {"c", 3}}, {{"c", 3}, {"a", 9}, {"d", 4}});
   apply_to_tree(ctx, root, ops);
 
   auto ids = root.child_ids(ctx);
@@ -235,7 +227,7 @@ TEST(test_reconcile_apply_to_tree) {
 }
 
 int main() {
-  std::cout << "lazily-cpp collections tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp collections tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

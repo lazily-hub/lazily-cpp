@@ -20,8 +20,8 @@
 #include <cstdint>
 #include <optional>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -30,8 +30,7 @@ namespace lazily {
 // (empty `emitted`) never touches the cell, so dependents survive. `set_cell`
 // dedups, so an emit that repeats the current value is a no-op invalidation.
 template <typename T>
-inline void rateshape_set_output(Context& ctx,
-                                 const Source<std::optional<T>>& cell,
+inline void rateshape_set_output(Context& ctx, const Source<std::optional<T>>& cell,
                                  const std::optional<T>& emitted) {
   if (emitted) ctx.set(cell, std::optional<T>(*emitted));
 }
@@ -40,9 +39,8 @@ inline void rateshape_set_output(Context& ctx,
 
 // Debounce compute core: coalesce inputs (KeepLatest) and emit the latest value
 // only after `quiet` ticks with no new input — every input resets the deadline.
-template <typename T>
-class DebounceCore {
- public:
+template <typename T> class DebounceCore {
+public:
   explicit DebounceCore(uint64_t quiet) : quiet_(quiet) {}
 
   // Record an input; resets the quiet deadline to `now + quiet`.
@@ -63,7 +61,7 @@ class DebounceCore {
     return std::nullopt;
   }
 
- private:
+private:
   uint64_t quiet_;
   std::optional<T> pending_{};
   uint64_t fire_at_ = 0;
@@ -71,9 +69,8 @@ class DebounceCore {
 };
 
 // Reactive debounce over any reactive source.
-template <typename T>
-class DebounceCell {
- public:
+template <typename T> class DebounceCell {
+public:
   DebounceCell(Context& ctx, uint64_t quiet)
       : core_(quiet), output_(ctx.source(std::optional<T>{})) {}
 
@@ -88,7 +85,7 @@ class DebounceCell {
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   DebounceCore<T> core_;
   Source<std::optional<T>> output_;
 };
@@ -104,11 +101,9 @@ enum class ThrottleEdge {
 };
 
 // Throttle compute core: at most one emit per `window`.
-template <typename T>
-class ThrottleCore {
- public:
-  ThrottleCore(ThrottleEdge edge, uint64_t window)
-      : edge_(edge), window_(window) {}
+template <typename T> class ThrottleCore {
+public:
+  ThrottleCore(ThrottleEdge edge, uint64_t window) : edge_(edge), window_(window) {}
 
   // Record an input. Leading emits (or drops); Trailing coalesces and holds.
   std::optional<T> input(uint64_t now, T v) {
@@ -136,18 +131,17 @@ class ThrottleCore {
     return std::nullopt;
   }
 
- private:
+private:
   ThrottleEdge edge_;
   uint64_t window_;
-  std::optional<uint64_t> window_end_{};    // Leading.
-  std::optional<uint64_t> window_start_{};  // Trailing.
+  std::optional<uint64_t> window_end_{};   // Leading.
+  std::optional<uint64_t> window_start_{}; // Trailing.
   std::optional<T> pending_{};
 };
 
 // Reactive throttle over any reactive source.
-template <typename T>
-class ThrottleCell {
- public:
+template <typename T> class ThrottleCell {
+public:
   ThrottleCell(Context& ctx, ThrottleEdge edge, uint64_t window)
       : core_(edge, window), output_(ctx.source(std::optional<T>{})) {}
 
@@ -166,7 +160,7 @@ class ThrottleCell {
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   ThrottleCore<T> core_;
   Source<std::optional<T>> output_;
 };
@@ -190,12 +184,10 @@ struct SampleMode {
 };
 
 // Deterministic sampling compute core.
-template <typename T>
-class SampleCore {
- public:
+template <typename T> class SampleCore {
+public:
   explicit SampleCore(SampleMode mode) : mode_(mode) {
-    next_ = (mode.kind == SampleKind::Time) ? (mode.value < 1 ? 1 : mode.value)
-                                            : 0;
+    next_ = (mode.kind == SampleKind::Time) ? (mode.value < 1 ? 1 : mode.value) : 0;
   }
 
   // Record an input. Count mode emits on every `n`-th; Time mode holds the
@@ -223,7 +215,7 @@ class SampleCore {
     return held_;
   }
 
- private:
+private:
   SampleMode mode_;
   uint64_t counter_ = 0;
   uint64_t next_ = 0;
@@ -231,9 +223,8 @@ class SampleCore {
 };
 
 // Reactive sampler over any reactive source.
-template <typename T>
-class SampleCell {
- public:
+template <typename T> class SampleCell {
+public:
   SampleCell(Context& ctx, SampleMode mode)
       : core_(mode), output_(ctx.source(std::optional<T>{})) {}
 
@@ -252,7 +243,7 @@ class SampleCell {
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   SampleCore<T> core_;
   Source<std::optional<T>> output_;
 };
@@ -262,7 +253,7 @@ class SampleCell {
 // An injectable RNG so probabilistic sampling is deterministic under a fixed
 // seed. `next_f64` yields a draw in `[0, 1)`.
 class SampleRng {
- public:
+public:
   virtual ~SampleRng() = default;
   virtual double next_f64() = 0;
 };
@@ -270,7 +261,7 @@ class SampleRng {
 // A small deterministic SplitMix64 LCG — no external dependency, reproducible
 // for the distribution property test. Bit-identical to `Lcg` in rateshape.rs.
 class Lcg : public SampleRng {
- public:
+public:
   explicit Lcg(uint64_t seed) : state_(seed) {}
 
   double next_f64() override {
@@ -281,18 +272,17 @@ class Lcg : public SampleRng {
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
     z ^= z >> 31;
     // 53-bit mantissa → [0, 1).
-    return static_cast<double>(z >> 11) /
-           static_cast<double>(uint64_t(1) << 53);
+    return static_cast<double>(z >> 11) / static_cast<double>(uint64_t(1) << 53);
   }
 
- private:
+private:
   uint64_t state_;
 };
 
 // Probabilistic (tail) sampling compute core — the plan's only new algorithm.
 // A draw in `[0, 1)` passes iff `draw < rate`.
 class ProbabilisticSampleCore {
- public:
+public:
   explicit ProbabilisticSampleCore(double rate)
       : rate_(rate < 0.0 ? 0.0 : (rate > 1.0 ? 1.0 : rate)) {}
 
@@ -301,17 +291,15 @@ class ProbabilisticSampleCore {
   // Whether an input with this random `draw` is sampled.
   bool decide(double draw) const { return draw < rate_; }
 
- private:
+private:
   double rate_;
 };
 
 // Reactive probabilistic sampler; owns an injectable `SampleRng` (`R`).
-template <typename T, typename R>
-class ProbabilisticSampleCell {
- public:
+template <typename T, typename R> class ProbabilisticSampleCell {
+public:
   ProbabilisticSampleCell(Context& ctx, double rate, R rng)
-      : core_(rate), rng_(std::move(rng)),
-        output_(ctx.source(std::optional<T>{})) {}
+      : core_(rate), rng_(std::move(rng)), output_(ctx.source(std::optional<T>{})) {}
 
   // Sample an input using the owned RNG.
   std::optional<T> input(Context& ctx, T v) {
@@ -331,12 +319,12 @@ class ProbabilisticSampleCell {
   std::optional<T> output(Context& ctx) const { return output_.get(ctx); }
   Source<std::optional<T>> output_cell() const { return output_; }
 
- private:
+private:
   ProbabilisticSampleCore core_;
   R rng_;
   Source<std::optional<T>> output_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_RATESHAPE_HPP
+#endif // LAZILY_RATESHAPE_HPP

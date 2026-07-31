@@ -25,9 +25,9 @@
 // `lazily-rs/src/thread_safe_reactive_family.rs`.
 
 #include <cstddef>
-#include <lazily/cell.hpp>
 #include <functional>
 #include <initializer_list>
+#include <lazily/cell.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -43,23 +43,19 @@ namespace lazily {
 // (input cells) and `Computed<V>` (derived slots). The `Send + Sync` analog of
 // `MapHandleTraits`; only these two specializations exist. Materialization and
 // observation run against a `ThreadSafeContext`.
-template <typename H>
-struct ThreadSafeMapHandleTraits;  // primary template intentionally undefined
+template <typename H> struct ThreadSafeMapHandleTraits; // primary template intentionally undefined
 
-template <typename V>
-struct ThreadSafeMapHandleTraits<Source<V>> {
+template <typename V> struct ThreadSafeMapHandleTraits<Source<V>> {
   static constexpr EntryKind kind = EntryKind::Source;
 
   // An input has no derivation: materialize by setting its value directly.
   template <typename K>
   static Source<V> materialize(ThreadSafeContext& ctx, const K& key,
-                                   const std::function<V(const K&)>& factory) {
+                               const std::function<V(const K&)>& factory) {
     return ctx.template source<V>(factory(key));
   }
 
-  static V observe(const Source<V>& h, ThreadSafeContext& ctx) {
-    return ctx.get(h);
-  }
+  static V observe(const Source<V>& h, ThreadSafeContext& ctx) { return ctx.get(h); }
 
   // Disposal on removal. The thread-safe context projects onto a real `Context`
   // (`BasicThreadSafeContext` holds one), so the same node-level teardown the
@@ -70,8 +66,7 @@ struct ThreadSafeMapHandleTraits<Source<V>> {
   }
 };
 
-template <typename V>
-struct ThreadSafeMapHandleTraits<Computed<V>> {
+template <typename V> struct ThreadSafeMapHandleTraits<Computed<V>> {
   static constexpr EntryKind kind = EntryKind::Computed;
 
   // A derived node: the same node an eager pre-mint would allocate. The factory
@@ -79,23 +74,19 @@ struct ThreadSafeMapHandleTraits<Computed<V>> {
   // lock.
   template <typename K>
   static Computed<V> materialize(ThreadSafeContext& ctx, const K& key,
-                                   const std::function<V(const K&)>& factory) {
+                                 const std::function<V(const K&)>& factory) {
     K k = key;
-    return ctx.template computed<V>(
-        [factory, k](auto&) -> V { return factory(k); });
+    return ctx.template computed<V>([factory, k](auto&) -> V { return factory(k); });
   }
 
-  static V observe(const Computed<V>& h, ThreadSafeContext& ctx) {
-    return ctx.get(h);
-  }
+  static V observe(const Computed<V>& h, ThreadSafeContext& ctx) { return ctx.get(h); }
 
   static void clear_dependents(const Computed<V>& h, ThreadSafeContext& ctx) {
     h.clear(ctx.context());
   }
 };
 
-template <typename K, typename H>
-struct ThreadSafeReactiveMapInner {
+template <typename K, typename H> struct ThreadSafeReactiveMapInner {
   // Present-set state guarded by `state_mutex`.
   mutable std::mutex state_mutex;
   KeyedOrder<K, H> keyed;
@@ -117,9 +108,8 @@ struct ThreadSafeReactiveMapInner {
 // Cheap to copy (a `shared_ptr` to shared inner state) so it can be captured by
 // compute/effect closures and stored in a cross-thread owner. Operations run
 // against the owning `ThreadSafeContext`.
-template <typename K, typename V, typename H>
-class ThreadSafeReactiveMap {
- public:
+template <typename K, typename V, typename H> class ThreadSafeReactiveMap {
+public:
   using Handle = H;
   using Traits = ThreadSafeMapHandleTraits<H>;
 
@@ -134,15 +124,13 @@ class ThreadSafeReactiveMap {
 
   // Get the entry handle for `key`, minting it via `factory(key)` on first access
   // (the lazy pull) and caching it. Returns the same handle on repeat.
-  H get_or_insert_handle(ThreadSafeContext& ctx, const K& key,
-                         std::function<V(const K&)> factory) {
+  H get_or_insert_handle(ThreadSafeContext& ctx, const K& key, std::function<V(const K&)> factory) {
     return mint_with(ctx, key, factory);
   }
 
   // Get the value at `key`, minting the entry via `factory(key)` first if absent.
   // For a `ThreadSafeComputedMap` this is the lazy materialization pull.
-  V get_or_insert_with(ThreadSafeContext& ctx, const K& key,
-                       std::function<V(const K&)> factory) {
+  V get_or_insert_with(ThreadSafeContext& ctx, const K& key, std::function<V(const K&)> factory) {
     return Traits::observe(get_or_insert_handle(ctx, key, factory), ctx);
   }
 
@@ -192,29 +180,25 @@ class ThreadSafeReactiveMap {
   // `Compute&` registers a dependency edge, a bare `ThreadSafeContext&` does
   // not. A reader that could only be spelled with the context would never be
   // able to subscribe from inside a derived node.
-  template <typename Cx>
-  std::vector<K> keys(Cx& ctx) {
+  template <typename Cx> std::vector<K> keys(Cx& ctx) {
     (void)ctx.get(inner_->order_signal);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     return inner_->keyed.keys();
   }
 
   // Reactive entry count. Subscribes the caller to membership changes only.
-  template <typename Cx>
-  size_t len(Cx& ctx) {
+  template <typename Cx> size_t len(Cx& ctx) {
     (void)ctx.get(inner_->membership);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     return inner_->keyed.len();
   }
 
   // Reactive emptiness check.
-  template <typename Cx>
-  bool is_empty(Cx& ctx) { return len(ctx) == 0; }
+  template <typename Cx> bool is_empty(Cx& ctx) { return len(ctx) == 0; }
 
   // Reactive membership test for `key`. Subscribes to membership changes
   // (add/remove of any key), not to value changes.
-  template <typename Cx>
-  bool contains_key(Cx& ctx, const K& key) {
+  template <typename Cx> bool contains_key(Cx& ctx, const K& key) {
     (void)ctx.get(inner_->membership);
     std::lock_guard<std::mutex> g(inner_->state_mutex);
     return inner_->keyed.contains(key);
@@ -282,16 +266,15 @@ class ThreadSafeReactiveMap {
   // This map's entry kind (`EntryKind::Source` / `EntryKind::Computed`).
   EntryKind entry_kind() const { return Traits::kind; }
 
- protected:
+protected:
   std::shared_ptr<ThreadSafeReactiveMapInner<K, H>> inner_;
 
-  H mint_with(ThreadSafeContext& ctx, const K& key,
-              const std::function<V(const K&)>& factory) {
+  H mint_with(ThreadSafeContext& ctx, const K& key, const std::function<V(const K&)>& factory) {
     // Fast path: already allocated. Release the map lock before touching `ctx` so
     // a slot recompute triggered later can never re-enter this lock.
     {
       std::lock_guard<std::mutex> g(inner_->state_mutex);
-      if (auto warm = inner_->keyed.get(key)) return *warm;  // warm.
+      if (auto warm = inner_->keyed.get(key)) return *warm; // warm.
     }
     H handle = Traits::materialize(ctx, key, factory);
     // `H` is not required to be default-constructible (an `AsyncSource`
@@ -346,9 +329,8 @@ class ThreadSafeReactiveMap {
 // A thread-safe **input-cell** map: every entry is an always-materialized
 // `Source<V>`. Adds cell-only `set`. The `Send + Sync` analog of `SourceMap`.
 template <typename K, typename V>
-class ThreadSafeSourceMap
-    : public ThreadSafeReactiveMap<K, V, Source<V>> {
- public:
+class ThreadSafeSourceMap : public ThreadSafeReactiveMap<K, V, Source<V>> {
+public:
   using Base = ThreadSafeReactiveMap<K, V, Source<V>>;
   using Base::Base;
 
@@ -359,17 +341,15 @@ class ThreadSafeSourceMap
       ctx.set(*h, std::move(value));
       return;
     }
-    this->get_or_insert_handle(ctx, key,
-                               [value](const K&) -> V { return value; });
+    this->get_or_insert_handle(ctx, key, [value](const K&) -> V { return value; });
   }
 };
 
 // A thread-safe **derived-slot** map: entries are `Computed<V>` minted lazily
 // on access or eagerly via `materialize_all`.
 template <typename K, typename V>
-class ThreadSafeComputedMap
-    : public ThreadSafeReactiveMap<K, V, Computed<V>> {
- public:
+class ThreadSafeComputedMap : public ThreadSafeReactiveMap<K, V, Computed<V>> {
+public:
   using Base = ThreadSafeReactiveMap<K, V, Computed<V>>;
   using Base::Base;
 
@@ -398,6 +378,6 @@ template <typename K, typename V>
 using ThreadSafeSlotMap [[deprecated("renamed to ThreadSafeComputedMap")]] =
     ThreadSafeComputedMap<K, V>;
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_THREAD_SAFE_REACTIVE_FAMILY_HPP
+#endif // LAZILY_THREAD_SAFE_REACTIVE_FAMILY_HPP

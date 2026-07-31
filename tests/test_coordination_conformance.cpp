@@ -11,33 +11,32 @@
 
 #include <lazily/coordination.hpp>
 
+#include "test_assertion_keys.hpp"
+#include "test_json.hpp"
+#include "test_spec_fixture.hpp"
 #include <cassert>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include "test_assertion_keys.hpp"
-#include "test_json.hpp"
-#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 static lazily_test::JsonPtr fixture(const std::string& name) {
-  return lazily_test::parse_json(
-      lazily_test::spec_fixture_text("coordination", name));
+  return lazily_test::parse_json(lazily_test::spec_fixture_text("coordination", name));
 }
 
 // Cache-survival probe: the observing slot was dropped iff the op invalidated
@@ -45,8 +44,7 @@ static lazily_test::JsonPtr fixture(const std::string& name) {
 // own claim reaches the comparison (#lzconsumednotasserted).
 template <typename T>
 static void assert_inval(Context& ctx, const Computed<T>& observed,
-                         lazily_test::AssertionKeys& expected,
-                         const std::string& reader) {
+                         lazily_test::AssertionKeys& expected, const std::string& reader) {
   const bool was = ctx.is_set(observed);
   (void)ctx.get(observed);
   expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
@@ -60,41 +58,30 @@ TEST(test_lease) {
   Context ctx;
   LeaseCell<uint64_t> lease(ctx);
   auto hc = lease.holder_cell();
-  auto observed =
-      ctx.computed<std::optional<uint64_t>>([hc](Compute& c) { return hc.get(c); });
+  auto observed = ctx.computed<std::optional<uint64_t>>([hc](Compute& c) { return hc.get(c); });
   (void)ctx.get(observed);
 
-
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "acquire") {
-      assert(lease.acquire(
-                 ctx,
-                 lazily_test::json_u64(lazily_test::json_member(op, "peer")),
-                 now,
-                 lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
-             lazily_test::json_optional_u64(
-                 lazily_test::json_member(item, "returns")));
+      assert(lease.acquire(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now,
+                           lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
+             lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     } else if (type == "renew") {
-      assert(lease.renew(
-                 ctx,
-                 lazily_test::json_u64(lazily_test::json_member(op, "peer")),
-                 now,
-                 lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
+      assert(lease.renew(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now,
+                         lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     } else {
       assert(type == "tick");
       assert(lease.tick(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     }
-    expected.assert_key("holder", lease.holder(now),
-                        lazily_test::json_optional_u64);
+    expected.assert_key("holder", lease.holder(now), lazily_test::json_optional_u64);
     expected.assert_key("held", lease.is_held(now));
     expected.assert_key("fence", lease.fence());
     assert_inval(ctx, observed, expected, "holder");
@@ -105,31 +92,25 @@ TEST(test_lease) {
 TEST(test_leader) {
   const auto fx = fixture("leader.json");
   Context ctx;
-  LeaderCell<uint64_t> leader(
-      ctx, lazily_test::json_u64(lazily_test::json_member(
-               lazily_test::json_member(*fx, "config"), "me")));
+  LeaderCell<uint64_t> leader(ctx, lazily_test::json_u64(lazily_test::json_member(
+                                       lazily_test::json_member(*fx, "config"), "me")));
   auto lc = leader.current_leader_cell();
-  auto observed =
-      ctx.computed<std::optional<uint64_t>>([lc](Compute& c) { return lc.get(c); });
+  auto observed = ctx.computed<std::optional<uint64_t>>([lc](Compute& c) { return lc.get(c); });
   (void)ctx.get(observed);
 
-
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     LeaderRole got;
     if (type == "campaign") {
-      got = leader.campaign(
-          ctx, now, lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
+      got = leader.campaign(ctx, now, lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
     } else if (type == "contend") {
-      got = leader.contend(
-          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
-          now, lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
+      got = leader.contend(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now,
+                           lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
     } else {
       assert(type == "tick");
       got = leader.tick(ctx, now);
@@ -138,8 +119,7 @@ TEST(test_leader) {
       const auto role = lazily_test::json_string(value);
       const auto want = role == "Leader"
                             ? LeaderRole::Leader
-                            : (role == "Follower" ? LeaderRole::Follower
-                                                  : LeaderRole::Candidate);
+                            : (role == "Follower" ? LeaderRole::Follower : LeaderRole::Candidate);
       return got == want;
     });
     expected.assert_key("current_leader", leader.current_leader(now),
@@ -157,26 +137,19 @@ TEST(test_lock) {
   auto observed = ctx.computed<bool>([lc](Compute& c) { return lc.get(c); });
   (void)ctx.get(observed);
 
-
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "acquire") {
-      assert(lock.acquire(
-                 ctx,
-                 lazily_test::json_u64(lazily_test::json_member(op, "peer")),
-                 now,
-                 lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
-             lazily_test::json_optional_u64(
-                 lazily_test::json_member(item, "returns")));
+      assert(lock.acquire(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now,
+                          lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
+             lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     } else if (type == "validate") {
-      assert(lock.validate(
-                 lazily_test::json_u64(lazily_test::json_member(op, "fence"))) ==
+      assert(lock.validate(lazily_test::json_u64(lazily_test::json_member(op, "fence"))) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     } else {
       assert(type == "tick");
@@ -193,24 +166,20 @@ TEST(test_lock) {
 TEST(test_semaphore) {
   const auto fx = fixture("semaphore.json");
   Context ctx;
-  SemaphoreCell sem(
-      ctx, lazily_test::json_u64(lazily_test::json_member(
-               lazily_test::json_member(*fx, "config"), "capacity")));
+  SemaphoreCell sem(ctx, lazily_test::json_u64(lazily_test::json_member(
+                             lazily_test::json_member(*fx, "config"), "capacity")));
   auto pc = sem.permits_available_cell();
   auto observed = ctx.computed<uint64_t>([pc](Compute& c) { return pc.get(c); });
   (void)ctx.get(observed);
 
-
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     if (type == "acquire") {
-      assert(sem.acquire(ctx) ==
-             lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+      assert(sem.acquire(ctx) == lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     } else {
       assert(type == "release");
       assert(lazily_test::json_member(item, "returns").is_null());
@@ -225,23 +194,20 @@ TEST(test_semaphore) {
 TEST(test_quorum) {
   const auto fx = fixture("quorum.json");
   Context ctx;
-  auto q = BarrierCell<uint64_t>::quorum(
-      ctx, lazily_test::json_u64(lazily_test::json_member(
-               lazily_test::json_member(*fx, "config"), "total")));
+  auto q =
+      BarrierCell<uint64_t>::quorum(ctx, lazily_test::json_u64(lazily_test::json_member(
+                                             lazily_test::json_member(*fx, "config"), "total")));
   auto oc = q.is_open_cell();
   auto observed = ctx.computed<bool>([oc](Compute& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
-
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "vote");
-    assert(q.arrive(
-               ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer"))) ==
+    assert(q.arrive(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer"))) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     expected.assert_key("votes", q.count());
     expected.assert_key("is_open", q.is_open(ctx));
@@ -250,4 +216,6 @@ TEST(test_quorum) {
 }
 
 int main() {
-  REQUIRE_FIXTURES_LOADED(5); return test_count == test_passed ? 0 : 1; }
+  REQUIRE_FIXTURES_LOADED(5);
+  return test_count == test_passed ? 0 : 1;
+}

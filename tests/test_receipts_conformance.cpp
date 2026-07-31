@@ -54,7 +54,7 @@ static ReceiptOutcome outcome_of(const std::string& spelling) {
   if (spelling == "applied") return ReceiptOutcome::Applied;
   if (spelling == "rejected") return ReceiptOutcome::Rejected;
   REQUIRE(false, "unknown receipt outcome spelling in fixture");
-  return ReceiptOutcome::Observed;  // unreachable
+  return ReceiptOutcome::Observed; // unreachable
 }
 
 static std::vector<std::string> str_array(const Json* node) {
@@ -78,12 +78,10 @@ static std::string require_str(const Json* obj, const char* key) {
 // `reason` / `payload_hash` are explicitly `null` in the corpus when unset. A
 // MISSING key is a different thing and is rejected: absence would otherwise be
 // indistinguishable from an explicit null, hiding a renamed field.
-static std::optional<std::string> require_nullable(const Json* obj,
-                                                   const char* key) {
+static std::optional<std::string> require_nullable(const Json* obj, const char* key) {
   const Json* node = obj->find(key);
-  REQUIRE(node != nullptr,
-          "fixture receipt is missing a nullable field — a renamed key must not "
-          "read as an absent value");
+  REQUIRE(node != nullptr, "fixture receipt is missing a nullable field — a renamed key must not "
+                           "read as an absent value");
   if (node->is_null()) return std::nullopt;
   REQUIRE(node->type == Json::Type::String, "nullable field must be a string or null");
   (void)key;
@@ -93,17 +91,14 @@ static std::optional<std::string> require_nullable(const Json* obj,
 // Assertion keys this runner verifies. Anything else means the corpus grew a
 // property nobody checks.
 static bool is_known_assertion(const std::string& key) {
-  return key == "receipt_count" || key == "current_generation" ||
-         key == "causation_id" || key == "terminal_outcome" ||
-         key == "stale_receipt_ids" || key == "nonterminal_outcomes";
+  return key == "receipt_count" || key == "current_generation" || key == "causation_id" ||
+         key == "terminal_outcome" || key == "stale_receipt_ids" || key == "nonterminal_outcomes";
 }
 
-template <typename T>
-static void check_eq(const char* what, const T& actual, const T& expected) {
+template <typename T> static void check_eq(const char* what, const T& actual, const T& expected) {
   ++g_checks;
   if (actual == expected) return;
-  std::cout << "FAIL: " << what << ": expected " << expected << ", got "
-            << actual << std::endl;
+  std::cout << "FAIL: " << what << ": expected " << expected << ", got " << actual << std::endl;
   std::abort();
 }
 
@@ -125,8 +120,7 @@ int main() {
           "fixture is not a CausalReceipt corpus");
 
   const Json* assertions = fixture->find("assertions");
-  REQUIRE(assertions != nullptr && assertions->is_object(),
-          "fixture has no assertions block");
+  REQUIRE(assertions != nullptr && assertions->is_object(), "fixture has no assertions block");
   for (const auto& kv : assertions->object)
     REQUIRE(is_known_assertion(kv.first),
             "unrecognised receipts assertion key in fixture — it would be "
@@ -188,12 +182,10 @@ int main() {
 
   const Json* want_count = assertions->find("receipt_count");
   REQUIRE(want_count != nullptr, "assertions have no receipt_count");
-  check_eq("receipt_count (frame size)",
-           static_cast<long long>(receipts->array.size()),
+  check_eq("receipt_count (frame size)", static_cast<long long>(receipts->array.size()),
            static_cast<long long>(want_count->as_int()));
 
-  const std::vector<std::string> want_stale =
-      str_array(assertions->find("stale_receipt_ids"));
+  const std::vector<std::string> want_stale = str_array(assertions->find("stale_receipt_ids"));
   std::vector<std::string> got_stale = classified_stale;
   std::sort(got_stale.begin(), got_stale.end());
   std::vector<std::string> sorted_want = want_stale;
@@ -201,9 +193,11 @@ int main() {
   ++g_checks;
   if (got_stale != sorted_want) {
     std::cout << "FAIL: stale_receipt_ids mismatch\n  expected:";
-    for (const auto& s : sorted_want) std::cout << " " << s;
+    for (const auto& s : sorted_want)
+      std::cout << " " << s;
     std::cout << "\n  actual:  ";
-    for (const auto& s : got_stale) std::cout << " " << s;
+    for (const auto& s : got_stale)
+      std::cout << " " << s;
     std::cout << std::endl;
     std::abort();
   }
@@ -216,8 +210,7 @@ int main() {
           "the projection's stale set disagrees with its per-receipt statuses");
 
   // Non-stale receipts are the ones the projection retains.
-  check_eq("recorded receipts",
-           static_cast<long long>(projection.receipt_count()),
+  check_eq("recorded receipts", static_cast<long long>(projection.receipt_count()),
            static_cast<long long>(receipts->array.size() - want_stale.size()));
   check_eq("recorded receipts (loop count)", static_cast<long long>(recorded),
            static_cast<long long>(receipts->array.size() - want_stale.size()));
@@ -226,8 +219,7 @@ int main() {
 
   const auto terminal = projection.terminal_for(want_causation->str);
   ++g_checks;
-  REQUIRE(terminal.has_value(),
-          "the causation id named by the fixture has no terminal receipt");
+  REQUIRE(terminal.has_value(), "the causation id named by the fixture has no terminal receipt");
   const Json* want_terminal = assertions->find("terminal_outcome");
   REQUIRE(want_terminal != nullptr && want_terminal->type == Json::Type::String,
           "assertions have no terminal_outcome");
@@ -270,8 +262,8 @@ int main() {
           "the receipts replay did too little work to be meaningful — the "
           "corpus is empty, truncated, or short-circuited");
 
-  std::cout << "receipts conformance: " << g_receipts_replayed
-            << " receipts folded, " << g_checks << " assertions" << std::endl;
+  std::cout << "receipts conformance: " << g_receipts_replayed << " receipts folded, " << g_checks
+            << " assertions" << std::endl;
 
   REQUIRE_FIXTURES_LOADED(1);
   return 0;

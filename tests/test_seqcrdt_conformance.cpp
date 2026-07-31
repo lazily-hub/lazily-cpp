@@ -28,15 +28,15 @@ using lazily_test::Json;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // A fixture value is either an integer or a string (the seqcrdt corpus uses
@@ -109,15 +109,13 @@ static void apply_op(Replica& replica, const Json* op, long long now) {
 static void assert_order(const Replica& r, const Json* expected, const std::string& msg) {
   std::vector<std::string> want;
   for (const auto& e : expected->array)
-    want.push_back(e->type == Json::Type::String ? e->str
-                                                  : std::to_string(e->as_int()));
+    want.push_back(e->type == Json::Type::String ? e->str : std::to_string(e->as_int()));
   const auto got = r.order();
   REQUIRE(got == want, ("order mismatch: " + msg).c_str());
 }
 
 static void run_scenario(const Json* scenario, size_t idx) {
-  lazily_test::record_scenario_at("collections/seqcrdt_convergence.json",
-                                  *scenario, idx);
+  lazily_test::record_scenario_at("collections/seqcrdt_convergence.json", *scenario, idx);
   Replicas replicas;
 
   if (const Json* seed = scenario->find("seed")) {
@@ -140,11 +138,10 @@ static void run_scenario(const Json* scenario, size_t idx) {
   for (const auto& step : steps->array) {
     if (const Json* fork = step->find("fork")) {
       const long long peer = step->find("peer")->as_int();
-      replicas.insert_or_assign(fork->str,
-                                replicas.at("a").fork(static_cast<PeerId>(peer)));
+      replicas.insert_or_assign(fork->str, replicas.at("a").fork(static_cast<PeerId>(peer)));
     } else if (const Json* clone = step->find("clone")) {
       const std::string& from = field_str(step.get(), "from");
-      replicas.insert_or_assign(clone->str, replicas.at(from));  // deep copy
+      replicas.insert_or_assign(clone->str, replicas.at(from)); // deep copy
     } else if (const Json* merge = step->find("merge")) {
       const std::string& into = field_str(merge, "into");
       const std::string& from = field_str(merge, "from");
@@ -169,13 +166,10 @@ static void run_scenario(const Json* scenario, size_t idx) {
   // unknown op; the expectation side did not. It does now.
   for (const auto& kv : expect->object)
     REQUIRE(kv.first == "order" || kv.first == "get" || kv.first == "len" ||
-                kv.first == "orders_equal" || kv.first == "order_on" ||
-                kv.first == "get_on" || kv.first == "contains_all" ||
-                kv.first == "not_contains_on",
-            ("unrecognised seqcrdt expect key — it would be silently ignored: " +
-             tag).c_str());
-  REQUIRE(!expect->object.empty(),
-          ("a seqcrdt scenario asserts nothing: " + tag).c_str());
+                kv.first == "orders_equal" || kv.first == "order_on" || kv.first == "get_on" ||
+                kv.first == "contains_all" || kv.first == "not_contains_on",
+            ("unrecognised seqcrdt expect key — it would be silently ignored: " + tag).c_str());
+  REQUIRE(!expect->object.empty(), ("a seqcrdt scenario asserts nothing: " + tag).c_str());
 
   // `len`/`contains_all` target: first element of the first `orders_equal` pair,
   // else replica "a". The fallback is correct for the single-replica scenarios
@@ -194,8 +188,7 @@ static void run_scenario(const Json* scenario, size_t idx) {
     return "a";
   };
 
-  if (const Json* order = expect->find("order"))
-    assert_order(replicas.at("a"), order, tag);
+  if (const Json* order = expect->find("order")) assert_order(replicas.at("a"), order, tag);
 
   if (const Json* gets = expect->find("get")) {
     for (const auto& kv : gets->object) {
@@ -259,7 +252,7 @@ TEST(conformance_seqcrdt_convergence) {
 
 int main() {
   REQUIRE_FIXTURES_LOADED(1);
-  std::cout << "lazily-cpp seqcrdt conformance: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp seqcrdt conformance: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

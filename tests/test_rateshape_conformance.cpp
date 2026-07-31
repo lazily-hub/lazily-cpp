@@ -8,29 +8,29 @@
 
 #include <lazily/rateshape.hpp>
 
+#include "test_assertion_keys.hpp"
+#include "test_json.hpp"
+#include "test_spec_fixture.hpp"
 #include <cassert>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-#include "test_assertion_keys.hpp"
-#include "test_json.hpp"
-#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 using OptS = std::optional<std::string>;
@@ -54,7 +54,7 @@ struct Step {
   std::string value;
   double draw;
   OptS returns;                     // expected emit (top-level `returns`)
-  lazily_test::AssertionKeys* keys;  // this step's `expected` block
+  lazily_test::AssertionKeys* keys; // this step's `expected` block
 };
 
 struct Fixture {
@@ -72,8 +72,8 @@ static Fixture fixture(const std::string& file) {
   for (const auto& step_ptr : steps) {
     const auto& step = *step_ptr;
     const auto& op = json_member(step, "op");
-    result.keys.push_back(std::make_unique<AssertionKeys>(
-        std::string(__func__) + " expected", json_member(step, "expected")));
+    result.keys.push_back(std::make_unique<AssertionKeys>(std::string(__func__) + " expected",
+                                                          json_member(step, "expected")));
     const auto type = json_string(json_member(op, "type"));
     const Json* now = op.find("now");
     const Json* value = op.find("value");
@@ -93,8 +93,8 @@ static Fixture fixture(const std::string& file) {
 // Shared per-step assertion harness: given the emitted value + current output
 // for this step, check emit, output, and cache-survival invalidation.
 template <typename Drive>
-static void run(Context& ctx, const std::vector<Step>& steps,
-                const Computed<OptS>& observed, Drive drive) {
+static void run(Context& ctx, const std::vector<Step>& steps, const Computed<OptS>& observed,
+                Drive drive) {
   (void)ctx.get(observed);
   for (const auto& step : steps) {
     OptS emitted;
@@ -105,11 +105,9 @@ static void run(Context& ctx, const std::vector<Step>& steps,
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    step.keys->assert_key_with(
-        "invalidates", [&](const lazily_test::Json& want) {
-          return lazily_test::json_bool(
-                     lazily_test::json_member(want, "output")) == !was_cached;
-        });
+    step.keys->assert_key_with("invalidates", [&](const lazily_test::Json& want) {
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    });
   }
 }
 
@@ -119,8 +117,7 @@ TEST(debounce) {
   const auto fx = fixture("debounce.json");
   const auto& initial = lazily_test::json_member(*fx.root, "initial");
   Context ctx;
-  const uint64_t quiet =
-      lazily_test::json_u64(lazily_test::json_member(initial, "quiet"));
+  const uint64_t quiet = lazily_test::json_u64(lazily_test::json_member(initial, "quiet"));
   DebounceCell<std::string> cell(ctx, quiet);
   auto out = cell.output_cell();
   auto observed = ctx.computed<OptS>([out](Compute& c) { return out.get(c); });
@@ -141,13 +138,10 @@ TEST(debounce) {
 static void run_throttle(const std::string& file) {
   const auto fx = fixture(file);
   const auto& initial = lazily_test::json_member(*fx.root, "initial");
-  const auto edge_name =
-      lazily_test::json_string(lazily_test::json_member(initial, "edge"));
-  const auto edge =
-      edge_name == "Leading" ? ThrottleEdge::Leading : ThrottleEdge::Trailing;
+  const auto edge_name = lazily_test::json_string(lazily_test::json_member(initial, "edge"));
+  const auto edge = edge_name == "Leading" ? ThrottleEdge::Leading : ThrottleEdge::Trailing;
   Context ctx;
-  const uint64_t window =
-      lazily_test::json_u64(lazily_test::json_member(initial, "window"));
+  const uint64_t window = lazily_test::json_u64(lazily_test::json_member(initial, "window"));
   ThrottleCell<std::string> cell(ctx, edge, window);
   auto out = cell.output_cell();
   auto observed = ctx.computed<OptS>([out](Compute& c) { return out.get(c); });
@@ -161,13 +155,9 @@ static void run_throttle(const std::string& file) {
   });
 }
 
-TEST(throttle_leading) {
-  run_throttle("throttle_leading.json");
-}
+TEST(throttle_leading) { run_throttle("throttle_leading.json"); }
 
-TEST(throttle_trailing) {
-  run_throttle("throttle_trailing.json");
-}
+TEST(throttle_trailing) { run_throttle("throttle_trailing.json"); }
 
 // -- Sample (Count) --
 
@@ -175,8 +165,7 @@ TEST(sample_count) {
   const auto fx = fixture("sample_count.json");
   const auto& initial = lazily_test::json_member(*fx.root, "initial");
   Context ctx;
-  const uint64_t n =
-      lazily_test::json_u64(lazily_test::json_member(initial, "n"));
+  const uint64_t n = lazily_test::json_u64(lazily_test::json_member(initial, "n"));
   SampleCell<std::string> cell(ctx, SampleMode::Count(n));
   auto out = cell.output_cell();
   auto observed = ctx.computed<OptS>([out](Compute& c) { return out.get(c); });
@@ -193,8 +182,7 @@ TEST(sample_time) {
   const auto fx = fixture("sample_time.json");
   const auto& initial = lazily_test::json_member(*fx.root, "initial");
   Context ctx;
-  const uint64_t period =
-      lazily_test::json_u64(lazily_test::json_member(initial, "period"));
+  const uint64_t period = lazily_test::json_u64(lazily_test::json_member(initial, "period"));
   SampleCell<std::string> cell(ctx, SampleMode::Time(period));
   auto out = cell.output_cell();
   auto observed = ctx.computed<OptS>([out](Compute& c) { return out.get(c); });
@@ -216,8 +204,7 @@ TEST(probabilistic_sample) {
   const auto fx = fixture("probabilistic_sample.json");
   const auto& initial = lazily_test::json_member(*fx.root, "initial");
   Context ctx;
-  const double rate =
-      lazily_test::json_number(lazily_test::json_member(initial, "rate"));
+  const double rate = lazily_test::json_number(lazily_test::json_member(initial, "rate"));
   // Draws are injected per step via `input_with_draw`; the owned RNG is unused,
   // a deterministic `Lcg` satisfies the type bound.
   ProbabilisticSampleCell<std::string, Lcg> cell(ctx, rate, Lcg(0));
@@ -233,8 +220,7 @@ TEST(probabilistic_sample) {
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
     s.keys->assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
-             !was_cached;
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
     });
   }
 
@@ -256,4 +242,6 @@ TEST(probabilistic_sample) {
 }
 
 int main() {
-  REQUIRE_FIXTURES_LOADED(6); return test_count == test_passed ? 0 : 1; }
+  REQUIRE_FIXTURES_LOADED(6);
+  return test_count == test_passed ? 0 : 1;
+}

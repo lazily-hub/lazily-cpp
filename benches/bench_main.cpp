@@ -24,10 +24,10 @@ struct BenchResult {
 static std::vector<BenchResult> results;
 
 template <typename F>
-void bench(const std::string& group, const std::string& case_name,
-           int iterations, F&& body) {
+void bench(const std::string& group, const std::string& case_name, int iterations, F&& body) {
   // Warmup
-  for (int i = 0; i < std::min(100, iterations / 10); ++i) body();
+  for (int i = 0; i < std::min(100, iterations / 10); ++i)
+    body();
 
   std::vector<double> times;
   times.reserve(iterations);
@@ -38,14 +38,15 @@ void bench(const std::string& group, const std::string& case_name,
     times.push_back(std::chrono::duration<double, std::nano>(end - start).count());
   }
   double sum = 0;
-  for (auto t : times) sum += t;
+  for (auto t : times)
+    sum += t;
   double mean = sum / times.size();
   results.push_back({group, case_name, mean, iterations, {}});
 }
 
 // Report a derived (non-duration) metric with an explicit unit.
-void report(const std::string& group, const std::string& case_name,
-            double value, int samples, const std::string& unit) {
+void report(const std::string& group, const std::string& case_name, double value, int samples,
+            const std::string& unit) {
   results.push_back({group, case_name, value, samples, unit});
 }
 
@@ -59,13 +60,19 @@ void print_results() {
       unit = r.unit_override;
     } else {
       unit = "ns";
-      if (val >= 1e9) { val /= 1e9; unit = "s"; }
-      else if (val >= 1e6) { val /= 1e6; unit = "ms"; }
-      else if (val >= 1e3) { val /= 1e3; unit = "us"; }
+      if (val >= 1e9) {
+        val /= 1e9;
+        unit = "s";
+      } else if (val >= 1e6) {
+        val /= 1e6;
+        unit = "ms";
+      } else if (val >= 1e3) {
+        val /= 1e3;
+        unit = "us";
+      }
     }
-    std::cout << "| " << r.group << " | " << r.case_name << " | "
-              << std::fixed << std::setprecision(3) << val << " " << unit
-              << " | " << r.samples << " |\n";
+    std::cout << "| " << r.group << " | " << r.case_name << " | " << std::fixed
+              << std::setprecision(3) << val << " " << unit << " | " << r.samples << " |\n";
   }
 }
 
@@ -74,20 +81,16 @@ void bench_cached_reads() {
   Context ctx;
   auto c = ctx.source(42);
   auto s = ctx.slot<int>([c](Compute& ctx) { return ctx.get(c) * 2; });
-  ctx.get(s);  // prime cache
+  ctx.get(s); // prime cache
 
-  bench("cached_reads", "context", 1000000, [&]() {
-    (void)ctx.get(s);
-  });
+  bench("cached_reads", "context", 1000000, [&]() { (void)ctx.get(s); });
 
   ThreadSafeContext ts_ctx;
   auto tc = ts_ctx.source(42);
   auto ts = ts_ctx.slot<int>([tc](Compute& c) { return c.get(tc) * 2; });
-  ts_ctx.get(ts);  // prime cache
+  ts_ctx.get(ts); // prime cache
 
-  bench("cached_reads", "thread_safe_context", 1000000, [&]() {
-    (void)ts_ctx.get(ts);
-  });
+  bench("cached_reads", "thread_safe_context", 1000000, [&]() { (void)ts_ctx.get(ts); });
 }
 
 // -- Cold first get --
@@ -114,16 +117,16 @@ void bench_fan_out() {
     auto src = ctx.source(1);
     std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
-        return c.get(src) + i;
-      }));
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) { return c.get(src) + i; }));
     }
-    for (auto& s : slots) (void)ctx.get(s);  // prime
-    ctx.set(src, 2);  // invalidate
+    for (auto& s : slots)
+      (void)ctx.get(s); // prime
+    ctx.set(src, 2);    // invalidate
 
     std::string label = "context / " + std::to_string(n);
     bench("dependency_fan_out", label, 10000, [&]() {
-      for (auto& s : slots) (void)ctx.get(s);
+      for (auto& s : slots)
+        (void)ctx.get(s);
     });
 
     // Invalidate again for next round
@@ -135,16 +138,16 @@ void bench_fan_out() {
     auto src = ctx.source(1);
     std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
-        return c.get(src) + i;
-      }));
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) { return c.get(src) + i; }));
     }
-    for (auto& s : slots) (void)ctx.get(s);
+    for (auto& s : slots)
+      (void)ctx.get(s);
     ctx.set(src, 2);
 
     std::string label = "thread_safe_context / " + std::to_string(n);
     bench("dependency_fan_out", label, 10000, [&]() {
-      for (auto& s : slots) (void)ctx.get(s);
+      for (auto& s : slots)
+        (void)ctx.get(s);
     });
     ctx.set(src, 1);
   }
@@ -158,15 +161,14 @@ void bench_set_cell_invalidation() {
     auto src = ctx.source(0);
     std::vector<Computed<int>> slots;
     for (int i = 0; i < 512; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
-        return c.get(src) + i;
-      }));
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) { return c.get(src) + i; }));
     }
-    for (auto& s : slots) (void)ctx.get(s);
+    for (auto& s : slots)
+      (void)ctx.get(s);
 
     bench("set_cell_invalidation", "high_fan_out / 512", 1000, [&]() {
       ctx.set(src, 1);
-      ctx.set(src, 0);  // reset
+      ctx.set(src, 0); // reset
     });
   }
 
@@ -176,11 +178,10 @@ void bench_set_cell_invalidation() {
     auto src = ctx.source(0);
     std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
-      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
-        return c.get(src) + i;
-      }));
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) { return c.get(src) + i; }));
     }
-    for (auto& s : slots) (void)ctx.get(s);
+    for (auto& s : slots)
+      (void)ctx.get(s);
 
     std::string label = "same_slot_contention / " + std::to_string(n);
     bench("set_cell_invalidation", label, 10000, [&]() {
@@ -196,16 +197,17 @@ void bench_set_cell_invalidation() {
     std::vector<Computed<int>> slots;
     for (int i = 0; i < n; ++i) {
       cells.push_back(ctx.source(i));
-      slots.push_back(ctx.slot<int>([&, i](Compute& c) {
-        return c.get(cells[i]) + 1;
-      }));
+      slots.push_back(ctx.slot<int>([&, i](Compute& c) { return c.get(cells[i]) + 1; }));
     }
-    for (auto& s : slots) (void)ctx.get(s);
+    for (auto& s : slots)
+      (void)ctx.get(s);
 
     std::string label = "independent_slot_contention / " + std::to_string(n);
     bench("set_cell_invalidation", label, 10000, [&]() {
-      for (int i = 0; i < n; ++i) ctx.set(cells[i], i + 100);
-      for (int i = 0; i < n; ++i) ctx.set(cells[i], i);
+      for (int i = 0; i < n; ++i)
+        ctx.set(cells[i], i + 100);
+      for (int i = 0; i < n; ++i)
+        ctx.set(cells[i], i);
     });
   }
 }
@@ -215,26 +217,20 @@ void bench_memo_equality() {
   Context ctx;
   auto src = ctx.source(2);
   auto m = ctx.computed<int>([&](Compute& c) {
-    return c.get(src) / 2;  // 2/2=1, 3/2=1 (unchanged)
+    return c.get(src) / 2; // 2/2=1, 3/2=1 (unchanged)
   });
-  auto downstream = ctx.slot<int>([&](Compute& c) {
-    return c.get(m) + 1;
-  });
+  auto downstream = ctx.slot<int>([&](Compute& c) { return c.get(m) + 1; });
   (void)ctx.get(downstream);
 
   bench("memo_equality_suppression", "context", 100000, [&]() {
-    ctx.set(src, 3);  // memo unchanged → downstream stays cached
-    ctx.set(src, 2);  // reset
+    ctx.set(src, 3); // memo unchanged → downstream stays cached
+    ctx.set(src, 2); // reset
   });
 
   ThreadSafeContext ts_ctx;
   auto ts_src = ts_ctx.source(2);
-  auto ts_m = ts_ctx.computed<int>([&](Compute& c) {
-    return c.get(ts_src) / 2;
-  });
-  auto ts_down = ts_ctx.slot<int>([&](Compute& c) {
-    return c.get(ts_m) + 1;
-  });
+  auto ts_m = ts_ctx.computed<int>([&](Compute& c) { return c.get(ts_src) / 2; });
+  auto ts_down = ts_ctx.slot<int>([&](Compute& c) { return c.get(ts_m) + 1; });
   (void)ts_ctx.get(ts_down);
 
   bench("memo_equality_suppression", "thread_safe_context", 100000, [&]() {
@@ -248,9 +244,7 @@ void bench_effect_flushing() {
   Context ctx;
   auto src = ctx.source(0);
   int sink = 0;
-  auto eff = ctx.effect_void([&](Compute& c) {
-    sink = c.get(src);
-  });
+  auto eff = ctx.effect_void([&](Compute& c) { sink = c.get(src); });
 
   bench("effect_flushing", "context", 1000000, [&]() {
     ctx.set(src, 1);
@@ -260,9 +254,7 @@ void bench_effect_flushing() {
   ThreadSafeContext ts_ctx;
   auto ts_src = ts_ctx.source(0);
   int ts_sink = 0;
-  auto ts_eff = ts_ctx.effect_void([&](Compute& c) {
-    ts_sink = c.get(ts_src);
-  });
+  auto ts_eff = ts_ctx.effect_void([&](Compute& c) { ts_sink = c.get(ts_src); });
 
   bench("effect_flushing", "thread_safe_context", 1000000, [&]() {
     ts_ctx.set(ts_src, 1);
@@ -274,39 +266,47 @@ void bench_effect_flushing() {
 void bench_batch_storms() {
   Context ctx;
   std::vector<Source<int>> cells;
-  for (int i = 0; i < 64; ++i) cells.push_back(ctx.source(i));
+  for (int i = 0; i < 64; ++i)
+    cells.push_back(ctx.source(i));
   auto sum = ctx.slot<int>([&](Compute& c) {
     int s = 0;
-    for (auto& cell : cells) s += c.get(cell);
+    for (auto& cell : cells)
+      s += c.get(cell);
     return s;
   });
   (void)ctx.get(sum);
 
   bench("batch_storms", "context / 64", 100000, [&]() {
     ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set(cells[i], i + 1);
+      for (int i = 0; i < 64; ++i)
+        c.set(cells[i], i + 1);
     });
     ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set(cells[i], i);
+      for (int i = 0; i < 64; ++i)
+        c.set(cells[i], i);
     });
   });
 
   ThreadSafeContext ts_ctx;
   std::vector<Source<int>> ts_cells;
-  for (int i = 0; i < 64; ++i) ts_cells.push_back(ts_ctx.source(i));
+  for (int i = 0; i < 64; ++i)
+    ts_cells.push_back(ts_ctx.source(i));
   auto ts_sum = ts_ctx.slot<int>([&](Compute& c) {
     int s = 0;
-    for (auto& cell : ts_cells) s += c.get(cell);
+    for (auto& cell : ts_cells)
+      s += c.get(cell);
     return s;
   });
   (void)ts_ctx.get(ts_sum);
 
   bench("batch_storms", "thread_safe_context / 64", 100000, [&]() {
     ts_ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set(ts_cells[i], i + 1);
+      for (int i = 0; i < 64; ++i)
+        c.set(ts_cells[i], i + 1);
     });
     ts_ctx.batch([&](Context& c) {
-      for (int i = 0; i < 64; ++i) c.set(ts_cells[i], i);
+      for (int i = 0; i < 64; ++i)
+        c.set(ts_cells[i], i);
     });
   });
 }
@@ -320,8 +320,7 @@ void bench_batch_storms() {
 // under any single-writer-cell design; the comparison across lock policies
 // shows the exclusive-acquire cost trade-off (RW's heavier exclusive acquire
 // regresses write-heavy single-thread paths).
-template <typename Ctx>
-void ts_contention_for(const std::string& policy) {
+template <typename Ctx> void ts_contention_for(const std::string& policy) {
   constexpr int kWindowMs = 30;
   for (int n : {1, 2, 4, 8, 16}) {
     Ctx ctx;
@@ -336,7 +335,8 @@ void ts_contention_for(const std::string& policy) {
     for (int t = 0; t < n; ++t) {
       threads.emplace_back([&]() {
         --barrier;
-        while (barrier > 0) std::this_thread::yield();
+        while (barrier > 0)
+          std::this_thread::yield();
         uint64_t local = 0;
         int v = 0;
         while (!stop.load(std::memory_order_relaxed)) {
@@ -352,20 +352,18 @@ void ts_contention_for(const std::string& policy) {
     auto start = clk::now();
     std::this_thread::sleep_for(std::chrono::milliseconds(kWindowMs));
     stop.store(true, std::memory_order_relaxed);
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+      t.join();
     auto end = clk::now();
 
-    double window_ns =
-        std::chrono::duration<double, std::nano>(end - start).count();
+    double window_ns = std::chrono::duration<double, std::nano>(end - start).count();
     uint64_t total_ops = ops.load();
-    double throughput_mops = (total_ops / (window_ns / 1e9)) / 1e6;  // ops/s → Mops/s
+    double throughput_mops = (total_ops / (window_ns / 1e9)) / 1e6; // ops/s → Mops/s
     double per_op_ns = total_ops ? window_ns / static_cast<double>(total_ops) : 0.0;
 
     std::string nthr = std::to_string(n);
-    report("contention/" + policy, "total_throughput / " + nthr,
-           throughput_mops, n, "Mops/s");
-    report("contention/" + policy, "per_op_latency / " + nthr,
-           per_op_ns, n, {});
+    report("contention/" + policy, "total_throughput / " + nthr, throughput_mops, n, "Mops/s");
+    report("contention/" + policy, "per_op_latency / " + nthr, per_op_ns, n, {});
   }
 }
 
@@ -380,14 +378,13 @@ void bench_ts_contention() {
 // Many concurrent CACHED reads with no writes. Recursive policy: reads take an
 // exclusive lock and serialize (no scaling). RW policy: cached reads take a
 // SHARED lock and scale across cores (~1.7× at 16 threads on this host).
-template <typename Ctx>
-void read_scaling_for(const std::string& policy) {
+template <typename Ctx> void read_scaling_for(const std::string& policy) {
   constexpr int kWindowMs = 30;
   for (int n : {1, 2, 4, 8, 16}) {
     Ctx ctx;
     auto cell = ctx.source(42);
     auto slot = ctx.template slot<int>([&](Compute& c) { return c.get(cell) * 2; });
-    (void)ctx.get(slot);  // prime cache (clean)
+    (void)ctx.get(slot); // prime cache (clean)
 
     std::atomic<int> barrier{n};
     std::atomic<bool> stop{false};
@@ -396,7 +393,8 @@ void read_scaling_for(const std::string& policy) {
     for (int t = 0; t < n; ++t) {
       threads.emplace_back([&]() {
         --barrier;
-        while (barrier > 0) std::this_thread::yield();
+        while (barrier > 0)
+          std::this_thread::yield();
         uint64_t local = 0;
         while (!stop.load(std::memory_order_relaxed)) {
           (void)ctx.get(cell);
@@ -410,20 +408,18 @@ void read_scaling_for(const std::string& policy) {
     auto start = clk::now();
     std::this_thread::sleep_for(std::chrono::milliseconds(kWindowMs));
     stop.store(true, std::memory_order_relaxed);
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+      t.join();
     auto end = clk::now();
 
-    double window_ns =
-        std::chrono::duration<double, std::nano>(end - start).count();
+    double window_ns = std::chrono::duration<double, std::nano>(end - start).count();
     uint64_t total_ops = ops.load();
     double throughput_mops = (total_ops / (window_ns / 1e9)) / 1e6;
     double per_op_ns = total_ops ? window_ns / static_cast<double>(total_ops) : 0.0;
 
     std::string nthr = std::to_string(n);
-    report("read_scaling/" + policy, "total_throughput / " + nthr,
-           throughput_mops, n, "Mops/s");
-    report("read_scaling/" + policy, "per_op_latency / " + nthr,
-           per_op_ns, n, {});
+    report("read_scaling/" + policy, "total_throughput / " + nthr, throughput_mops, n, "Mops/s");
+    report("read_scaling/" + policy, "per_op_latency / " + nthr, per_op_ns, n, {});
   }
 }
 
@@ -446,8 +442,7 @@ void bench_crdt_sync() {
     auto delta = a.delta_since(vv_empty);
     std::string label = std::to_string(n);
 
-    bench("crdt_sync", "version_vector / " + label, 20,
-          [&]() { (void)a.version_vector(); });
+    bench("crdt_sync", "version_vector / " + label, 20, [&]() { (void)a.version_vector(); });
     bench("crdt_sync", "delta_since_empty / " + label, 20,
           [&]() { (void)a.delta_since(vv_empty); });
     bench("crdt_sync", "apply_delta_full / " + label, 20, [&]() {
@@ -467,8 +462,7 @@ void bench_codec() {
     Snapshot s;
     s.epoch = n;
     for (long long i = 0; i < n; ++i) {
-      s.nodes.push_back({static_cast<NodeId>(i), "cell",
-                         NodeStatePayload{{0xAB, 0xCD, 0xEF, 0x01}},
+      s.nodes.push_back({static_cast<NodeId>(i), "cell", NodeStatePayload{{0xAB, 0xCD, 0xEF, 0x01}},
                          NodeKey::create("doc/n" + std::to_string(i))});
     }
     IpcMessage m = IpcMessageSnapshot{std::move(s)};
@@ -491,15 +485,13 @@ void bench_codec_decode_throughput() {
     Snapshot s;
     s.epoch = n;
     for (long long i = 0; i < n; ++i) {
-      s.nodes.push_back({static_cast<NodeId>(i), "cell",
-                         NodeStatePayload{{0xAB, 0xCD, 0xEF, 0x01}},
+      s.nodes.push_back({static_cast<NodeId>(i), "cell", NodeStatePayload{{0xAB, 0xCD, 0xEF, 0x01}},
                          NodeKey::create("doc/n" + std::to_string(i))});
     }
     auto bytes = encode(IpcMessageSnapshot{std::move(s)});
     std::string label = std::to_string(n) + "n/" + std::to_string(bytes.size()) + "B";
 
-    bench("codec_decode", "decode_snapshot / " + label, 50,
-          [&]() { (void)decode(bytes); });
+    bench("codec_decode", "decode_snapshot / " + label, 50, [&]() { (void)decode(bytes); });
 
     double window_ns = results.back().mean_ns;
     double gb_per_s =
@@ -521,16 +513,14 @@ void bench_lossless_tree_crdt() {
     std::vector<OpId> leaves;
     leaves.reserve(static_cast<size_t>(n));
     for (long long i = 0; i < n; ++i) {
-      leaves.push_back(a.create_node(
-          kTreeRoot, nullptr,
-          TreeNodeSeedLeaf{LeafKind::Token, std::to_string(i)}));
+      leaves.push_back(
+          a.create_node(kTreeRoot, nullptr, TreeNodeSeedLeaf{LeafKind::Token, std::to_string(i)}));
     }
     TreeVersionFrontier empty;
     TreeUpdate delta = a.diff(empty);
     std::string label = std::to_string(n);
 
-    bench("lossless_tree", "diff_empty / " + label, 20,
-          [&]() { (void)a.diff(empty); });
+    bench("lossless_tree", "diff_empty / " + label, 20, [&]() { (void)a.diff(empty); });
     bench("lossless_tree", "apply_update_full / " + label, 20, [&]() {
       LosslessTreeCrdt b(2);
       (void)b.apply_update(delta);
@@ -563,8 +553,9 @@ void bench_effect_alloc() {
           return [&, i]() { sink_a -= i; };
         }));
       }
-      ctx.set(src, 1);  // fires every effect (re-installs cleanup)
-      for (auto& e : effects) e.dispose(ctx);
+      ctx.set(src, 1); // fires every effect (re-installs cleanup)
+      for (auto& e : effects)
+        e.dispose(ctx);
     });
   }
 }
@@ -582,14 +573,9 @@ void bench_shm_blob() {
     auto ref = arena.write(payload);
     std::string label = std::to_string(sz);
 
-    bench("shm_blob", "write / " + label + "B", 10000,
-          [&]() { (void)arena.write(payload); });
-    bench("shm_blob", "read / " + label + "B", 10000, [&]() {
-      (void)arena.read(ref);
-    });
-    bench("shm_blob", "read_view / " + label + "B", 10000, [&]() {
-      (void)arena.read_view(ref);
-    });
+    bench("shm_blob", "write / " + label + "B", 10000, [&]() { (void)arena.write(payload); });
+    bench("shm_blob", "read / " + label + "B", 10000, [&]() { (void)arena.read(ref); });
+    bench("shm_blob", "read_view / " + label + "B", 10000, [&]() { (void)arena.read_view(ref); });
   }
 }
 
@@ -622,15 +608,11 @@ void bench_transport() {
     size_t inline_wire = encode(mi).size();
     size_t spill_wire = encode(ms).size();
 
-    bench("transport", "encode_decode_inline / " + label + "B", 500, [&]() {
-      (void)decode(encode(mi));
-    });
-    bench("transport", "encode_decode_spilled / " + label + "B", 500, [&]() {
-      (void)decode(encode(ms));
-    });
-    bench("transport", "resolve / " + label + "B", 2000, [&]() {
-      (void)backend.read_view(ref);
-    });
+    bench("transport", "encode_decode_inline / " + label + "B", 500,
+          [&]() { (void)decode(encode(mi)); });
+    bench("transport", "encode_decode_spilled / " + label + "B", 500,
+          [&]() { (void)decode(encode(ms)); });
+    bench("transport", "resolve / " + label + "B", 2000, [&]() { (void)backend.read_view(ref); });
     report("transport", "wire_inline / " + label + "B", static_cast<double>(inline_wire), 1, "B");
     report("transport", "wire_spilled / " + label + "B", static_cast<double>(spill_wire), 1, "B");
   }
@@ -649,18 +631,16 @@ void bench_scale() {
       std::vector<Computed<int>> formulas;
       inputs.reserve(n);
       formulas.reserve(n);
-      for (long long i = 0; i < n; ++i) inputs.push_back(ctx.source(static_cast<int>(i)));
+      for (long long i = 0; i < n; ++i)
+        inputs.push_back(ctx.source(static_cast<int>(i)));
       for (long long i = 0; i < n; ++i) {
         if (i == 0) {
-          formulas.push_back(ctx.slot<int>([&](Compute& c) {
-            return c.get(inputs[0]);
-          }));
+          formulas.push_back(ctx.slot<int>([&](Compute& c) { return c.get(inputs[0]); }));
         } else {
           auto prev = inputs[i - 1];
           auto cur = inputs[i];
-          formulas.push_back(ctx.slot<int>([prev, cur](Compute& c) {
-            return c.get(cur) + c.get(prev);
-          }));
+          formulas.push_back(
+              ctx.slot<int>([prev, cur](Compute& c) { return c.get(cur) + c.get(prev); }));
         }
       }
       auto end = clk::now();
@@ -671,29 +651,33 @@ void bench_scale() {
 
       // Cold full recalc
       start = clk::now();
-      for (auto& f : formulas) (void)ctx.get(f);
+      for (auto& f : formulas)
+        (void)ctx.get(f);
       end = clk::now();
       label = "cold_full_recalc / " + std::to_string(n);
-      results.push_back({"scale", label,
-        std::chrono::duration<double, std::nano>(end - start).count(), 1});
+      results.push_back(
+          {"scale", label, std::chrono::duration<double, std::nano>(end - start).count(), 1});
 
       // Full recalc invalidate all
       start = clk::now();
-      for (long long i = 0; i < n; ++i) ctx.set(inputs[i], static_cast<int>(i + 1));
-      for (auto& f : formulas) (void)ctx.get(f);
+      for (long long i = 0; i < n; ++i)
+        ctx.set(inputs[i], static_cast<int>(i + 1));
+      for (auto& f : formulas)
+        (void)ctx.get(f);
       end = clk::now();
       label = "full_recalc_invalidate_all / " + std::to_string(n);
-      results.push_back({"scale", label,
-        std::chrono::duration<double, std::nano>(end - start).count(), 1});
+      results.push_back(
+          {"scale", label, std::chrono::duration<double, std::nano>(end - start).count(), 1});
 
       // Viewport recalc (edit 1, read 1000)
       start = clk::now();
       ctx.set(inputs[0], 999);
-      for (int i = 0; i < std::min(1000LL, n); ++i) (void)ctx.get(formulas[i]);
+      for (int i = 0; i < std::min(1000LL, n); ++i)
+        (void)ctx.get(formulas[i]);
       end = clk::now();
       label = "viewport_recalc / " + std::to_string(n);
-      results.push_back({"scale", label,
-        std::chrono::duration<double, std::nano>(end - start).count(), 1});
+      results.push_back(
+          {"scale", label, std::chrono::duration<double, std::nano>(end - start).count(), 1});
     }
   }
 }

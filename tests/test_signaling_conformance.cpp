@@ -75,9 +75,12 @@ void check_frame(int step, const ServerMessage& got, const Json& want) {
 
   if (const auto* w = want.find("peer")) {
     PeerId got_peer = 0;
-    if (std::holds_alternative<ServerWelcome>(got)) got_peer = std::get<ServerWelcome>(got).peer;
-    else if (std::holds_alternative<ServerPeerJoined>(got)) got_peer = std::get<ServerPeerJoined>(got).peer;
-    else if (std::holds_alternative<ServerPeerLeft>(got)) got_peer = std::get<ServerPeerLeft>(got).peer;
+    if (std::holds_alternative<ServerWelcome>(got))
+      got_peer = std::get<ServerWelcome>(got).peer;
+    else if (std::holds_alternative<ServerPeerJoined>(got))
+      got_peer = std::get<ServerPeerJoined>(got).peer;
+    else if (std::holds_alternative<ServerPeerLeft>(got))
+      got_peer = std::get<ServerPeerLeft>(got).peer;
     if (got_peer != static_cast<PeerId>(w->number)) {
       fail(step, want_type + ".peer = " + std::to_string(got_peer) + ", fixture says " +
                      std::to_string(static_cast<PeerId>(w->number)));
@@ -87,10 +90,14 @@ void check_frame(int step, const ServerMessage& got, const Json& want) {
   // ANTI-SPOOF: `from` must be the sender's server-registered id.
   if (const auto* w = want.find("from")) {
     PeerId got_from = 0;
-    if (std::holds_alternative<ServerOffer>(got)) got_from = std::get<ServerOffer>(got).from;
-    else if (std::holds_alternative<ServerAnswer>(got)) got_from = std::get<ServerAnswer>(got).from;
-    else if (std::holds_alternative<ServerIce>(got)) got_from = std::get<ServerIce>(got).from;
-    else if (std::holds_alternative<ServerRelay>(got)) got_from = std::get<ServerRelay>(got).from;
+    if (std::holds_alternative<ServerOffer>(got))
+      got_from = std::get<ServerOffer>(got).from;
+    else if (std::holds_alternative<ServerAnswer>(got))
+      got_from = std::get<ServerAnswer>(got).from;
+    else if (std::holds_alternative<ServerIce>(got))
+      got_from = std::get<ServerIce>(got).from;
+    else if (std::holds_alternative<ServerRelay>(got))
+      got_from = std::get<ServerRelay>(got).from;
     if (got_from != static_cast<PeerId>(w->number)) {
       fail(step, want_type + ".from = " + std::to_string(got_from) + ", fixture says " +
                      std::to_string(static_cast<PeerId>(w->number)) +
@@ -140,7 +147,7 @@ void check_frame(int step, const ServerMessage& got, const Json& want) {
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   const std::string text = spec_fixture_text("signaling", "anti_spoof_session.json");
@@ -149,7 +156,7 @@ int main() {
   REQUIRE(doc->find("mode")->str == "open", "this runner drives an open room");
 
   SignalingRoom room(SignalingMode::Open);
-  std::map<std::string, SignalingRoom::ConnID> conns;  // fixture conn label -> real ConnID
+  std::map<std::string, SignalingRoom::ConnID> conns; // fixture conn label -> real ConnID
 
   const Json* steps = doc->find("steps");
   REQUIRE(steps != nullptr && !steps->array.empty(), "a replay of zero steps is not a replay");
@@ -171,11 +178,11 @@ int main() {
       registered_peers.insert(static_cast<PeerId>(recv.find("peer")->number));
       direct = room.process(conn, ClientJoin{static_cast<PeerId>(recv.find("peer")->number), {}});
     } else if (kind == "offer") {
-      direct = room.process(conn, ClientOffer{static_cast<PeerId>(recv.find("to")->number),
-                                              recv.find("sdp")->str});
+      direct = room.process(
+          conn, ClientOffer{static_cast<PeerId>(recv.find("to")->number), recv.find("sdp")->str});
     } else if (kind == "answer") {
-      direct = room.process(conn, ClientAnswer{static_cast<PeerId>(recv.find("to")->number),
-                                               recv.find("sdp")->str});
+      direct = room.process(
+          conn, ClientAnswer{static_cast<PeerId>(recv.find("to")->number), recv.find("sdp")->str});
     } else if (kind == "ice") {
       direct = room.process(conn, ClientIce{static_cast<PeerId>(recv.find("to")->number),
                                             recv.find("candidate")->str});
@@ -202,8 +209,8 @@ int main() {
       const Json& want = *expect->find("frame");
       auto& queue = delivered[to];
       if (queue.empty()) {
-        fail(static_cast<int>(i), "expected a `" + want.find("type")->str +
-                                      "` frame to conn " + to + " but nothing was delivered");
+        fail(static_cast<int>(i), "expected a `" + want.find("type")->str + "` frame to conn " +
+                                      to + " but nothing was delivered");
         continue;
       }
       const ServerMessage& got = queue.front();
@@ -230,41 +237,36 @@ int main() {
   {
     lazily_test::AssertionKeys keys("signaling/anti_spoof_session.json assertions",
                                     lazily_test::json_member(*doc, "assertions"));
-    keys.assert_key_with_if_present(
-        "roster_excludes_self", [&](const Json& want) {
-          REQUIRE(!observed_welcomes.empty(),
-                  "roster_excludes_self: no welcome observed");
-          bool excludes = true;
-          for (const auto& w : observed_welcomes)
-            for (const PeerId p : w.peers)
-              if (p == w.peer) excludes = false;
-          if (excludes == want.as_bool()) return true;
-          fail(-1, "roster_excludes_self");
-          return false;
-        });
-    keys.assert_key_with_if_present(
-        "roster_sorted_ascending", [&](const Json& want) {
-          REQUIRE(!observed_welcomes.empty(),
-                  "roster_sorted_ascending: no welcome observed");
-          bool sorted = true;
-          for (const auto& w : observed_welcomes)
-            for (size_t i = 1; i < w.peers.size(); ++i)
-              if (w.peers[i - 1] >= w.peers[i]) sorted = false;
-          if (sorted == want.as_bool()) return true;
-          fail(-1, "roster_sorted_ascending");
-          return false;
-        });
-    keys.assert_key_with_if_present(
-        "forwarded_from_is_server_registered", [&](const Json& want) {
-          REQUIRE(!observed_forward_from.empty(),
-                  "forwarded_from_is_server_registered: nothing was forwarded");
-          bool ok = true;
-          for (const PeerId from : observed_forward_from)
-            if (registered_peers.count(from) == 0) ok = false;
-          if (ok == want.as_bool()) return true;
-          fail(-1, "forwarded_from_is_server_registered");
-          return false;
-        });
+    keys.assert_key_with_if_present("roster_excludes_self", [&](const Json& want) {
+      REQUIRE(!observed_welcomes.empty(), "roster_excludes_self: no welcome observed");
+      bool excludes = true;
+      for (const auto& w : observed_welcomes)
+        for (const PeerId p : w.peers)
+          if (p == w.peer) excludes = false;
+      if (excludes == want.as_bool()) return true;
+      fail(-1, "roster_excludes_self");
+      return false;
+    });
+    keys.assert_key_with_if_present("roster_sorted_ascending", [&](const Json& want) {
+      REQUIRE(!observed_welcomes.empty(), "roster_sorted_ascending: no welcome observed");
+      bool sorted = true;
+      for (const auto& w : observed_welcomes)
+        for (size_t i = 1; i < w.peers.size(); ++i)
+          if (w.peers[i - 1] >= w.peers[i]) sorted = false;
+      if (sorted == want.as_bool()) return true;
+      fail(-1, "roster_sorted_ascending");
+      return false;
+    });
+    keys.assert_key_with_if_present("forwarded_from_is_server_registered", [&](const Json& want) {
+      REQUIRE(!observed_forward_from.empty(),
+              "forwarded_from_is_server_registered: nothing was forwarded");
+      bool ok = true;
+      for (const PeerId from : observed_forward_from)
+        if (registered_peers.count(from) == 0) ok = false;
+      if (ok == want.as_bool()) return true;
+      fail(-1, "forwarded_from_is_server_registered");
+      return false;
+    });
     keys.finish();
   }
 

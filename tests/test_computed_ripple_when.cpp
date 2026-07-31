@@ -21,15 +21,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // A custom significance policy: the derived value carries a `bucket` proxy;
@@ -38,14 +38,14 @@ TEST(ripple_when_custom_significance_propagates_on_proxy_change) {
   Context ctx;
   auto input = ctx.source<std::uint64_t>(0);
 
-  using Pair = std::pair<std::uint64_t, std::uint64_t>;  // (payload, bucket)
+  using Pair = std::pair<std::uint64_t, std::uint64_t>; // (payload, bucket)
   auto derived = ctx.computed_ripple_when<Pair>(
       [input](Compute& c) -> Pair {
         auto v = c.get(input);
         return {v, v / 10};
       },
       [](const Pair& old_v, const Pair& new_v) {
-        return old_v.second != new_v.second;  // propagate when bucket changed
+        return old_v.second != new_v.second; // propagate when bucket changed
       });
 
   auto recomputes = std::make_shared<int>(0);
@@ -77,7 +77,7 @@ TEST(ripple_when_propagate_every_n_via_value_carried_counter) {
   auto sampled = ctx.computed_ripple_when<std::uint64_t>(
       [input](Compute& c) { return c.get(input); },
       [](const std::uint64_t& old_v, const std::uint64_t& new_v) {
-        return new_v / 3 != old_v / 3;  // cross a size-3 window boundary
+        return new_v / 3 != old_v / 3; // cross a size-3 window boundary
       });
 
   auto seen = std::make_shared<int>(0);
@@ -146,7 +146,7 @@ TEST(slot_is_pass_through_always_propagates) {
   Context ctx;
   auto input = ctx.source<std::uint64_t>(0);
   auto passthrough = ctx.slot<std::uint64_t>([input](Compute& c) {
-    (void)c.get(input);  // depend on input, but always yield the same value
+    (void)c.get(input); // depend on input, but always yield the same value
     return std::uint64_t{0};
   });
 
@@ -162,12 +162,11 @@ TEST(slot_is_pass_through_always_propagates) {
   // Value stays 0, but the pass-through slot has no guard, so the dependent re-fires.
   ctx.set(input, std::uint64_t{5});
   REQUIRE(ctx.get(observer) == 0, "value unchanged");
-  REQUIRE(*recomputes > base,
-          "pass-through slot propagates even when the value is unchanged");
+  REQUIRE(*recomputes > base, "pass-through slot propagates even when the value is unchanged");
 }
 
 int main() {
-  std::cout << "lazily-cpp computed_ripple_when tests: " << test_passed << "/"
-            << test_count << " passed" << std::endl;
+  std::cout << "lazily-cpp computed_ripple_when tests: " << test_passed << "/" << test_count
+            << " passed" << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

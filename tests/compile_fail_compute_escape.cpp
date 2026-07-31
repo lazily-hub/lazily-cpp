@@ -15,7 +15,7 @@ using namespace lazily;
 int main() {
   Context ctx;
   Compute view(ctx, SlotId(0), 0);
-  Compute escaped = view;  // ERROR: Compute copy constructor is deleted
+  Compute escaped = view; // ERROR: Compute copy constructor is deleted
   (void)escaped;
   return 0;
 }

@@ -28,8 +28,8 @@
 #include <set>
 #include <vector>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -47,21 +47,20 @@ enum class PeerState {
 
 inline const char* peer_state_name(PeerState s) {
   switch (s) {
-    case PeerState::Alive:
-      return "Alive";
-    case PeerState::Suspect:
-      return "Suspect";
-    case PeerState::Dead:
-      return "Dead";
-    case PeerState::Left:
-      return "Left";
+  case PeerState::Alive:
+    return "Alive";
+  case PeerState::Suspect:
+    return "Suspect";
+  case PeerState::Dead:
+    return "Dead";
+  case PeerState::Left:
+    return "Left";
   }
   return "Alive";
 }
 
 // A diff event over the membership cell.
-template <typename P>
-struct PeerChangeEvent {
+template <typename P> struct PeerChangeEvent {
   enum class Kind { Joined, Left, StateChanged };
 
   Kind kind;
@@ -71,12 +70,10 @@ struct PeerChangeEvent {
   PeerState to;
 
   static PeerChangeEvent joined(P peer) {
-    return PeerChangeEvent{Kind::Joined, std::move(peer), PeerState::Alive,
-                           PeerState::Alive};
+    return PeerChangeEvent{Kind::Joined, std::move(peer), PeerState::Alive, PeerState::Alive};
   }
   static PeerChangeEvent left(P peer) {
-    return PeerChangeEvent{Kind::Left, std::move(peer), PeerState::Alive,
-                           PeerState::Alive};
+    return PeerChangeEvent{Kind::Left, std::move(peer), PeerState::Alive, PeerState::Alive};
   }
   static PeerChangeEvent state_changed(P peer, PeerState from, PeerState to) {
     return PeerChangeEvent{Kind::StateChanged, std::move(peer), from, to};
@@ -103,16 +100,14 @@ struct MembershipConfig {
 };
 
 namespace membership_detail {
-inline uint64_t saturating_sub(uint64_t a, uint64_t b) {
-  return a >= b ? a - b : 0;
-}
-}  // namespace membership_detail
+inline uint64_t saturating_sub(uint64_t a, uint64_t b) { return a >= b ? a - b : 0; }
+} // namespace membership_detail
 
 // Phi-accrual failure detector over a sliding window of heartbeat inter-arrival
 // times. `phi` is bit-portable across bindings via the Akka-style logistic
 // approximation of the normal CDF.
 class PhiAccrual {
- public:
+public:
   PhiAccrual(size_t max_samples, double min_std)
       : max_samples_(max_samples < 1 ? 1 : max_samples), min_std_(min_std) {}
 
@@ -122,7 +117,8 @@ class PhiAccrual {
       double interval =
           static_cast<double>(membership_detail::saturating_sub(now, *last_heartbeat_));
       window_.push_back(interval);
-      while (window_.size() > max_samples_) window_.pop_front();
+      while (window_.size() > max_samples_)
+        window_.pop_front();
     }
     last_heartbeat_ = now;
   }
@@ -131,8 +127,7 @@ class PhiAccrual {
   double phi(uint64_t now) const {
     if (!last_heartbeat_) return 0.0;
     if (window_.empty()) return 0.0;
-    double elapsed =
-        static_cast<double>(membership_detail::saturating_sub(now, *last_heartbeat_));
+    double elapsed = static_cast<double>(membership_detail::saturating_sub(now, *last_heartbeat_));
     double mean = this->mean();
     double std = this->std(mean);
     double y = (elapsed - mean) / std;
@@ -144,7 +139,7 @@ class PhiAccrual {
     }
   }
 
- private:
+private:
   std::deque<double> window_;
   size_t max_samples_;
   double min_std_;
@@ -153,14 +148,16 @@ class PhiAccrual {
   double mean() const {
     double n = static_cast<double>(window_.size());
     double sum = 0.0;
-    for (double x : window_) sum += x;
+    for (double x : window_)
+      sum += x;
     return sum / n;
   }
 
   double std(double mean) const {
     double n = static_cast<double>(window_.size());
     double var = 0.0;
-    for (double x : window_) var += (x - mean) * (x - mean);
+    for (double x : window_)
+      var += (x - mean) * (x - mean);
     var /= n;
     double s = std::sqrt(var);
     return s > min_std_ ? s : min_std_;
@@ -169,9 +166,8 @@ class PhiAccrual {
 
 // The pure membership compute core: the SWIM state machine over a keyed peer
 // map, driven by heartbeats and a logical clock. Emits `PeerChangeEvent`s.
-template <typename P>
-class MembershipCore {
- public:
+template <typename P> class MembershipCore {
+public:
   using Event = PeerChangeEvent<P>;
 
   explicit MembershipCore(MembershipConfig config) : config_(config) {}
@@ -245,35 +241,32 @@ class MembershipCore {
       const P& peer = kv.first;
       PeerRecord& record = kv.second;
       switch (record.state) {
-        case PeerState::Alive: {
-          if (record.detector.phi(now) > threshold) {
-            record.state = PeerState::Suspect;
-            record.suspect_since = now;
-            events.push_back(
-                Event::state_changed(peer, PeerState::Alive, PeerState::Suspect));
-          }
-          break;
+      case PeerState::Alive: {
+        if (record.detector.phi(now) > threshold) {
+          record.state = PeerState::Suspect;
+          record.suspect_since = now;
+          events.push_back(Event::state_changed(peer, PeerState::Alive, PeerState::Suspect));
         }
-        case PeerState::Suspect: {
-          bool expired =
-              record.suspect_since &&
-              membership_detail::saturating_sub(now, *record.suspect_since) >= timeout;
-          if (expired) {
-            record.state = PeerState::Dead;
-            events.push_back(
-                Event::state_changed(peer, PeerState::Suspect, PeerState::Dead));
-          }
-          break;
+        break;
+      }
+      case PeerState::Suspect: {
+        bool expired = record.suspect_since &&
+                       membership_detail::saturating_sub(now, *record.suspect_since) >= timeout;
+        if (expired) {
+          record.state = PeerState::Dead;
+          events.push_back(Event::state_changed(peer, PeerState::Suspect, PeerState::Dead));
         }
-        case PeerState::Dead:
-        case PeerState::Left:
-          break;
+        break;
+      }
+      case PeerState::Dead:
+      case PeerState::Left:
+        break;
       }
     }
     return events;
   }
 
- private:
+private:
   struct PeerRecord {
     PeerState state;
     PhiAccrual detector;
@@ -285,16 +278,13 @@ class MembershipCore {
   // deterministic in key order.
   std::map<P, PeerRecord> peers_;
 
-  PhiAccrual new_detector() const {
-    return PhiAccrual(config_.max_samples, config_.min_std);
-  }
+  PhiAccrual new_detector() const { return PhiAccrual(config_.max_samples, config_.min_std); }
 };
 
 // Reactive membership: drives a `MembershipCore` and projects the alive set
 // onto a `Cell` so the `PeerSet` invalidates only on a set change.
-template <typename P>
-class MembershipCell {
- public:
+template <typename P> class MembershipCell {
+public:
   using Event = PeerChangeEvent<P>;
 
   MembershipCell(Context& ctx, MembershipConfig config)
@@ -332,7 +322,7 @@ class MembershipCell {
 
   std::optional<PeerState> state(const P& peer) const { return core_.state(peer); }
 
- private:
+private:
   MembershipCore<P> core_;
   Source<std::set<P>> peer_set_;
 
@@ -345,9 +335,8 @@ class MembershipCell {
 
 // The derived reactive alive-peer set — a `Cell<std::set<P>>` handle exposed by
 // `MembershipCell::peer_set_cell`.
-template <typename P>
-using PeerSet = Source<std::set<P>>;
+template <typename P> using PeerSet = Source<std::set<P>>;
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_MEMBERSHIP_HPP
+#endif // LAZILY_MEMBERSHIP_HPP

@@ -52,9 +52,8 @@ static const char* kArea = "statechart";
 // Every fixture in the area. Compared against the directory listing in `main`,
 // so a fixture landing upstream fails this runner instead of being ignored.
 static const std::vector<std::string> kFixtures = {
-    "entry_exit_actions.json", "flat_cycle.json",
-    "guarded_door.json",       "hierarchical_player.json",
-    "history_deep.json",       "history_shallow.json",
+    "entry_exit_actions.json",  "flat_cycle.json",   "guarded_door.json",
+    "hierarchical_player.json", "history_deep.json", "history_shallow.json",
     "parallel_regions.json",
 };
 
@@ -72,7 +71,7 @@ static bool history_is_deep(const std::string& spelling) {
   if (spelling == "deep") return true;
   if (spelling == "shallow") return false;
   REQUIRE(false, "unknown statechart history depth in fixture");
-  return false;  // unreachable
+  return false; // unreachable
 }
 
 static std::vector<std::string> str_array(const Json* node) {
@@ -90,8 +89,7 @@ static std::vector<std::string> str_array(const Json* node) {
 static std::vector<std::string> active_expectation(const Json* node) {
   REQUIRE(node != nullptr, "step has no `active` expectation");
   if (node->type == Json::Type::String) return {node->str};
-  REQUIRE(node->is_array(),
-          "`active` must be a state id or an array of state ids");
+  REQUIRE(node->is_array(), "`active` must be a state id or an array of state ids");
   auto out = str_array(node);
   std::sort(out.begin(), out.end());
   return out;
@@ -99,15 +97,13 @@ static std::vector<std::string> active_expectation(const Json* node) {
 
 // A transition is either a bare target id or an object carrying target/guard/
 // action/internal. Both spellings appear in the corpus.
-static void add_transition(StateBuilder& sb, const std::string& event,
-                           const Json* value) {
+static void add_transition(StateBuilder& sb, const std::string& event, const Json* value) {
   REQUIRE(value != nullptr, "transition has no value");
   if (value->type == Json::Type::String) {
     sb.on(event, value->str);
     return;
   }
-  REQUIRE(value->is_object(),
-          "a transition must be a target id or a transition object");
+  REQUIRE(value->is_object(), "a transition must be a target id or a transition object");
   const Json* target = value->find("target");
   REQUIRE(target != nullptr && target->type == Json::Type::String,
           "transition object has no target");
@@ -117,7 +113,8 @@ static void add_transition(StateBuilder& sb, const std::string& event,
     tb.guard(guard->str);
   }
   if (const Json* action = value->find("action")) {
-    for (const auto& act : str_array(action)) tb.action(act);
+    for (const auto& act : str_array(action))
+      tb.action(act);
   }
   if (const Json* internal = value->find("internal")) {
     REQUIRE(internal->type == Json::Type::Bool, "`internal` must be a boolean");
@@ -143,13 +140,11 @@ static StateBuilder build_state(const std::string& id, const Json* def) {
 
   StateBuilder sb = StateBuilder::atomic(id);
   if (is_parallel) {
-    REQUIRE(history == nullptr,
-            "a state cannot be both parallel and a history pseudo-state");
+    REQUIRE(history == nullptr, "a state cannot be both parallel and a history pseudo-state");
     sb = StateBuilder::parallel(id);
   } else if (history != nullptr) {
     REQUIRE(history->type == Json::Type::String, "`history` must be a spelling");
-    REQUIRE(initial == nullptr,
-            "a history pseudo-state has a `default`, never an `initial`");
+    REQUIRE(initial == nullptr, "a history pseudo-state has a `default`, never an `initial`");
     sb = history_is_deep(history->str) ? StateBuilder::history_deep(id)
                                        : StateBuilder::history_shallow(id);
     const Json* fallback = def->find("default");
@@ -166,14 +161,17 @@ static StateBuilder build_state(const std::string& id, const Json* def) {
     sb.parent(parent->str);
   }
   if (const Json* entry = def->find("entry")) {
-    for (const auto& act : str_array(entry)) sb.entry(act);
+    for (const auto& act : str_array(entry))
+      sb.entry(act);
   }
   if (const Json* exit_actions = def->find("exit")) {
-    for (const auto& act : str_array(exit_actions)) sb.exit(act);
+    for (const auto& act : str_array(exit_actions))
+      sb.exit(act);
   }
   if (const Json* on = def->find("on")) {
     REQUIRE(on->is_object(), "`on` must be an event map");
-    for (const auto& kv : on->object) add_transition(sb, kv.first, kv.second.get());
+    for (const auto& kv : on->object)
+      add_transition(sb, kv.first, kv.second.get());
   }
   return sb;
 }
@@ -186,8 +184,7 @@ static ChartDef build_chart(const Json* chart) {
   for (const auto& kv : states->object)
     builder.state(build_state(kv.first, kv.second.get()));
   auto def = builder.build();
-  REQUIRE(def.has_value(),
-          "the fixture's chart does not build — duplicate ids or no single root");
+  REQUIRE(def.has_value(), "the fixture's chart does not build — duplicate ids or no single root");
   return std::move(*def);
 }
 
@@ -195,17 +192,17 @@ static ChartDef build_chart(const Json* chart) {
 // Replay
 // ---------------------------------------------------------------------------
 
-static void expect_states(const std::string& fixture, size_t step,
-                          const char* what,
+static void expect_states(const std::string& fixture, size_t step, const char* what,
                           const std::vector<std::string>& actual,
                           const std::vector<std::string>& expected) {
   ++g_assertions;
   if (actual == expected) return;
-  std::cout << "FAIL: " << fixture << " step " << step << ": " << what
-            << " mismatch\n  expected:";
-  for (const auto& s : expected) std::cout << " " << s;
+  std::cout << "FAIL: " << fixture << " step " << step << ": " << what << " mismatch\n  expected:";
+  for (const auto& s : expected)
+    std::cout << " " << s;
   std::cout << "\n  actual:  ";
-  for (const auto& s : actual) std::cout << " " << s;
+  for (const auto& s : actual)
+    std::cout << " " << s;
   std::cout << std::endl;
   std::abort();
 }
@@ -213,9 +210,8 @@ static void expect_states(const std::string& fixture, size_t step,
 // Keys a step may carry. An unrecognised key means the corpus grew an assertion
 // this runner does not make — reporting green then is a false green.
 static bool is_known_step_key(const std::string& key) {
-  return key == "event" || key == "guards" || key == "accepted" ||
-         key == "active" || key == "actions" || key == "matches" ||
-         key == "note" || key == "description";
+  return key == "event" || key == "guards" || key == "accepted" || key == "active" ||
+         key == "actions" || key == "matches" || key == "note" || key == "description";
 }
 
 static void replay(const std::string& name) {
@@ -224,14 +220,12 @@ static void replay(const std::string& name) {
   REQUIRE(fixture->is_object(), "fixture root is not an object");
 
   const Json* kind = fixture->find("kind");
-  REQUIRE(kind != nullptr && kind->str == "StateChart",
-          "fixture is not a StateChart corpus");
+  REQUIRE(kind != nullptr && kind->str == "StateChart", "fixture is not a StateChart corpus");
 
   Context ctx;
   StateChart chart(ctx, build_chart(fixture->find("chart")));
 
-  expect_states(name, 0, "initial active configuration",
-                chart.active_leaves(ctx),
+  expect_states(name, 0, "initial active configuration", chart.active_leaves(ctx),
                 active_expectation(fixture->find("initial_active")));
 
   if (const Json* initial_actions = fixture->find("initial_actions")) {
@@ -252,15 +246,13 @@ static void replay(const std::string& name) {
               "silently ignored");
 
     const Json* event = step.find("event");
-    REQUIRE(event != nullptr && event->type == Json::Type::String,
-            "step has no event");
+    REQUIRE(event != nullptr && event->type == Json::Type::String, "step has no event");
 
     std::unordered_map<std::string, bool> guards;
     if (const Json* g = step.find("guards")) {
       REQUIRE(g->is_object(), "`guards` must be an object");
       for (const auto& kv : g->object) {
-        REQUIRE(kv.second->type == Json::Type::Bool,
-                "a guard resolution must be a boolean");
+        REQUIRE(kv.second->type == Json::Type::Bool, "a guard resolution must be a boolean");
         guards[kv.first] = kv.second->as_bool();
       }
     }
@@ -273,10 +265,9 @@ static void replay(const std::string& name) {
             "step has no `accepted` expectation");
     ++g_assertions;
     if (accepted != want_accepted->as_bool()) {
-      std::cout << "FAIL: " << name << " step " << (i + 1) << " event "
-                << event->str << ": expected accepted="
-                << (want_accepted->as_bool() ? "true" : "false") << ", got "
-                << (accepted ? "true" : "false") << std::endl;
+      std::cout << "FAIL: " << name << " step " << (i + 1) << " event " << event->str
+                << ": expected accepted=" << (want_accepted->as_bool() ? "true" : "false")
+                << ", got " << (accepted ? "true" : "false") << std::endl;
       std::abort();
     }
 
@@ -284,21 +275,18 @@ static void replay(const std::string& name) {
                   active_expectation(step.find("active")));
 
     if (const Json* actions = step.find("actions")) {
-      expect_states(name, i + 1, "action trace", chart.last_actions(),
-                    str_array(actions));
+      expect_states(name, i + 1, "action trace", chart.last_actions(), str_array(actions));
     }
 
     if (const Json* matches = step.find("matches")) {
       REQUIRE(matches->is_object(), "`matches` must be an object");
       for (const auto& kv : matches->object) {
-        REQUIRE(kv.second->type == Json::Type::Bool,
-                "a `matches` expectation must be a boolean");
+        REQUIRE(kv.second->type == Json::Type::Bool, "a `matches` expectation must be a boolean");
         ++g_assertions;
         const bool got = chart.matches(ctx, kv.first);
         if (got != kv.second->as_bool()) {
-          std::cout << "FAIL: " << name << " step " << (i + 1) << ": matches(\""
-                    << kv.first << "\") expected "
-                    << (kv.second->as_bool() ? "true" : "false") << ", got "
+          std::cout << "FAIL: " << name << " step " << (i + 1) << ": matches(\"" << kv.first
+                    << "\") expected " << (kv.second->as_bool() ? "true" : "false") << ", got "
                     << (got ? "true" : "false") << std::endl;
           std::abort();
         }
@@ -320,29 +308,25 @@ int main() {
   // landing upstream that this runner does not replay fails here instead of
   // shrinking coverage silently.
   std::vector<std::string> on_disk;
-  for (const auto& entry : std::filesystem::directory_iterator(
-           lazily_test::spec_conformance_dir() / kArea)) {
-    if (entry.path().extension() == ".json")
-      on_disk.push_back(entry.path().filename().string());
+  for (const auto& entry :
+       std::filesystem::directory_iterator(lazily_test::spec_conformance_dir() / kArea)) {
+    if (entry.path().extension() == ".json") on_disk.push_back(entry.path().filename().string());
   }
   std::sort(on_disk.begin(), on_disk.end());
   std::vector<std::string> known = kFixtures;
   std::sort(known.begin(), known.end());
-  REQUIRE(on_disk == known,
-          "the statechart corpus on disk does not match this runner's fixture "
-          "list — a fixture was added or renamed upstream");
+  REQUIRE(on_disk == known, "the statechart corpus on disk does not match this runner's fixture "
+                            "list — a fixture was added or renamed upstream");
 
-  for (const auto& name : kFixtures) replay(name);
+  for (const auto& name : kFixtures)
+    replay(name);
 
-  REQUIRE(g_steps_replayed >= 33,
-          "the statechart replay performed too few steps — the corpus is "
-          "empty, truncated, or short-circuited");
-  REQUIRE(g_assertions >= 80,
-          "the statechart replay made too few assertions to be meaningful");
+  REQUIRE(g_steps_replayed >= 33, "the statechart replay performed too few steps — the corpus is "
+                                  "empty, truncated, or short-circuited");
+  REQUIRE(g_assertions >= 80, "the statechart replay made too few assertions to be meaningful");
 
-  std::cout << "statechart conformance: " << kFixtures.size() << " fixtures, "
-            << g_steps_replayed << " steps, " << g_assertions << " assertions"
-            << std::endl;
+  std::cout << "statechart conformance: " << kFixtures.size() << " fixtures, " << g_steps_replayed
+            << " steps, " << g_assertions << " assertions" << std::endl;
 
   REQUIRE_FIXTURES_LOADED(7);
   return 0;

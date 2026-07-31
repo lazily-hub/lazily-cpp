@@ -31,10 +31,7 @@ struct KeepLatest {
   static constexpr bool commutative = false;
   static constexpr bool idempotent = true;
   static constexpr bool conflates = true;
-  template <typename T>
-  static T merge(const T&, T op) {
-    return op;
-  }
+  template <typename T> static T merge(const T&, T op) { return op; }
 };
 
 /// Additive commutative monoid (old + op). Not idempotent.
@@ -43,10 +40,7 @@ struct Sum {
   static constexpr bool commutative = true;
   static constexpr bool idempotent = false;
   static constexpr bool conflates = true;
-  template <typename T>
-  static T merge(const T& a, T b) {
-    return a + b;
-  }
+  template <typename T> static T merge(const T& a, T b) { return a + b; }
 };
 
 /// Max semilattice (max(old, op)). Associative, commutative, idempotent.
@@ -55,10 +49,7 @@ struct Max {
   static constexpr bool commutative = true;
   static constexpr bool idempotent = true;
   static constexpr bool conflates = true;
-  template <typename T>
-  static T merge(const T& a, T b) {
-    return b > a ? b : a;
-  }
+  template <typename T> static T merge(const T& a, T b) { return b > a ? b : a; }
 };
 
 /// Grow-only set-union semilattice over std::set<E>.
@@ -67,8 +58,7 @@ struct SetUnion {
   static constexpr bool commutative = true;
   static constexpr bool idempotent = true;
   static constexpr bool conflates = true;
-  template <typename S>
-  static S merge(const S& a, S b) {
+  template <typename S> static S merge(const S& a, S b) {
     S out = a;
     out.insert(b.begin(), b.end());
     return out;
@@ -82,8 +72,7 @@ struct RawFifo {
   static constexpr bool commutative = false;
   static constexpr bool idempotent = false;
   static constexpr bool conflates = false;
-  template <typename V>
-  static V merge(const V& a, V b) {
+  template <typename V> static V merge(const V& a, V b) {
     V out = a;
     out.insert(out.end(), b.begin(), b.end());
     return out;
@@ -95,15 +84,13 @@ struct RawFifo {
 /// A cell whose write is a merge under `Policy` rather than a replace.
 /// Cell ≡ MergeCell<KeepLatest>. `merge` routes through the cell's ==-guarded
 /// set_cell, so an idempotent policy's no-op merge fires no cascade (free dedup).
-template <typename T, typename Policy>
-class MergeCell {
- public:
+template <typename T, typename Policy> class MergeCell {
+public:
   // `#lzcellkernel`: the cell is held by id (`Source<T>` lives in cell.hpp,
   // which includes this header — storing the id keeps merge.hpp free of that
   // cycle; the `Source<T>` handle is materialized inside each template method,
   // which is only instantiated where cell.hpp is already complete).
-  MergeCell(Context& ctx, T initial)
-      : ctx_(&ctx), cell_(ctx.source(std::move(initial)).id()) {}
+  MergeCell(Context& ctx, T initial) : ctx_(&ctx), cell_(ctx.source(std::move(initial)).id()) {}
 
   /// The underlying reactive cell (for wiring derived readers).
   Source<T> cell() const { return Source<T>(cell_); }
@@ -112,8 +99,7 @@ class MergeCell {
   /// `Compute&` (value-threaded tracking, registers a dependency) or a
   /// `Context&` (untracked). This is the tracking read for use inside a
   /// compute/effect closure (`#lzcellkernel`).
-  template <typename Cx>
-  T get(Cx& cx) const { return cx.get(Source<T>(cell_)); }
+  template <typename Cx> T get(Cx& cx) const { return cx.get(Source<T>(cell_)); }
 
   /// Read the current converged value untracked (outside any computation).
   T get() const { return ctx_->get(Source<T>(cell_)); }
@@ -128,11 +114,11 @@ class MergeCell {
     ctx_->set(h, Policy::template merge<T>(old, std::move(op)));
   }
 
- private:
+private:
   Context* ctx_;
   SlotId cell_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_MERGE_HPP
+#endif // LAZILY_MERGE_HPP

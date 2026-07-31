@@ -22,7 +22,7 @@ inline constexpr size_t kNodeKeyMaxLen = 1024;
 inline constexpr size_t kNodeKeyMaxSegments = 32;
 
 class NodeKey {
- public:
+public:
   static std::optional<NodeKey> create(std::string_view path) {
     if (path.empty()) return std::nullopt;
     if (path.size() > kNodeKeyMaxLen) return std::nullopt;
@@ -50,7 +50,7 @@ class NodeKey {
     return result;
   }
 
- private:
+private:
   explicit NodeKey(std::string path) : path_(std::move(path)) {}
   std::string path_;
 };
@@ -66,9 +66,12 @@ enum class BlobBackendKind : uint8_t { Shm, Arrow, InProcess };
 
 inline const char* blob_backend_kind_str(BlobBackendKind k) {
   switch (k) {
-    case BlobBackendKind::Shm: return "shm";
-    case BlobBackendKind::Arrow: return "arrow";
-    case BlobBackendKind::InProcess: return "in_process";
+  case BlobBackendKind::Shm:
+    return "shm";
+  case BlobBackendKind::Arrow:
+    return "arrow";
+  case BlobBackendKind::InProcess:
+    return "in_process";
   }
   return "shm";
 }
@@ -76,7 +79,7 @@ inline const char* blob_backend_kind_str(BlobBackendKind k) {
 inline BlobBackendKind blob_backend_kind_from_str(std::string_view s) {
   if (s == "arrow") return BlobBackendKind::Arrow;
   if (s == "in_process") return BlobBackendKind::InProcess;
-  return BlobBackendKind::Shm;  // default (covers absent/unknown → shm)
+  return BlobBackendKind::Shm; // default (covers absent/unknown → shm)
 }
 
 // -- ShmBlobRef: descriptor into a blob backend --
@@ -87,7 +90,7 @@ struct ShmBlobRef {
   int64_t generation;
   int64_t epoch;
   int64_t checksum;
-  BlobBackendKind backend = BlobBackendKind::Shm;  // optional; defaults to Shm
+  BlobBackendKind backend = BlobBackendKind::Shm; // optional; defaults to Shm
 
   static bool validate(const ShmBlobRef& ref, std::optional<int64_t> max_len = std::nullopt) {
     if (ref.offset < 0 || ref.len < 0 || ref.generation < 0 || ref.epoch < 0 || ref.checksum < 0)
@@ -99,16 +102,24 @@ struct ShmBlobRef {
 
 // -- NodeState: body of NodeSnapshot/NodeAdd --
 
-struct NodeStatePayload { std::vector<uint8_t> bytes; };
-struct NodeStateSharedBlob { ShmBlobRef blob; };
+struct NodeStatePayload {
+  std::vector<uint8_t> bytes;
+};
+struct NodeStateSharedBlob {
+  ShmBlobRef blob;
+};
 struct NodeStateOpaque {};
 
 using NodeState = std::variant<NodeStatePayload, NodeStateSharedBlob, NodeStateOpaque>;
 
 // -- IpcValue: cell payload --
 
-struct IpcValueInline { std::vector<uint8_t> bytes; };
-struct IpcValueSharedBlob { ShmBlobRef blob; };
+struct IpcValueInline {
+  std::vector<uint8_t> bytes;
+};
+struct IpcValueSharedBlob {
+  ShmBlobRef blob;
+};
 
 using IpcValue = std::variant<IpcValueInline, IpcValueSharedBlob>;
 
@@ -146,22 +157,48 @@ struct Snapshot {
 
 // -- DeltaOp variants --
 
-struct DeltaOpCellSet { NodeId node; IpcValue payload; };
-struct DeltaOpSlotValue { NodeId node; IpcValue payload; };
-struct DeltaOpInvalidate { NodeId node; };
-struct DeltaOpNodeAdd { NodeId node; std::string type_tag; NodeState state; std::optional<NodeKey> key; };
-struct DeltaOpNodeRemove { NodeId node; };
-struct DeltaOpEdgeAdd { NodeId dependent; NodeId dependency; };
-struct DeltaOpEdgeRemove { NodeId dependent; NodeId dependency; };
+struct DeltaOpCellSet {
+  NodeId node;
+  IpcValue payload;
+};
+struct DeltaOpSlotValue {
+  NodeId node;
+  IpcValue payload;
+};
+struct DeltaOpInvalidate {
+  NodeId node;
+};
+struct DeltaOpNodeAdd {
+  NodeId node;
+  std::string type_tag;
+  NodeState state;
+  std::optional<NodeKey> key;
+};
+struct DeltaOpNodeRemove {
+  NodeId node;
+};
+struct DeltaOpEdgeAdd {
+  NodeId dependent;
+  NodeId dependency;
+};
+struct DeltaOpEdgeRemove {
+  NodeId dependent;
+  NodeId dependency;
+};
 
-using DeltaOp = std::variant<DeltaOpCellSet, DeltaOpSlotValue, DeltaOpInvalidate,
-                              DeltaOpNodeAdd, DeltaOpNodeRemove,
-                              DeltaOpEdgeAdd, DeltaOpEdgeRemove>;
+using DeltaOp = std::variant<DeltaOpCellSet, DeltaOpSlotValue, DeltaOpInvalidate, DeltaOpNodeAdd,
+                             DeltaOpNodeRemove, DeltaOpEdgeAdd, DeltaOpEdgeRemove>;
 
 // -- Delta apply status --
 
-struct DeltaApplyStatusApply { Epoch new_epoch; };
-struct DeltaApplyStatusResync { Epoch last_epoch; Epoch base_epoch; Epoch epoch; };
+struct DeltaApplyStatusApply {
+  Epoch new_epoch;
+};
+struct DeltaApplyStatusResync {
+  Epoch last_epoch;
+  Epoch base_epoch;
+  Epoch epoch;
+};
 
 using DeltaApplyStatus = std::variant<DeltaApplyStatusApply, DeltaApplyStatusResync>;
 
@@ -177,8 +214,7 @@ struct Delta {
   }
 
   DeltaApplyStatus apply_status(Epoch last_epoch) const {
-    if (is_next_after(last_epoch))
-      return DeltaApplyStatusApply{epoch};
+    if (is_next_after(last_epoch)) return DeltaApplyStatusApply{epoch};
     return DeltaApplyStatusResync{last_epoch, base_epoch, epoch};
   }
 };
@@ -215,20 +251,34 @@ struct CrdtSync {
 
 // Emitted by a ResyncCoordinator that detected a gap. Requests a fresh Snapshot
 // covering `from_epoch` (the receiver's current last_epoch).
-struct ResyncRequest { Epoch from_epoch; };
+struct ResyncRequest {
+  Epoch from_epoch;
+};
 
 // Emitted by a receiver to prove receipt through `through_epoch`. Advances the
 // sender's DurableOutbox retention cursor; on reconnect it doubles as the resume
 // cursor. A retention/cursor signal, NOT a domain delivery authority.
-struct OutboxAck { Epoch through_epoch; };
+struct OutboxAck {
+  Epoch through_epoch;
+};
 
 // -- IPC message envelope --
 
-struct IpcMessageSnapshot { Snapshot value; };
-struct IpcMessageDelta { Delta value; };
-struct IpcMessageCrdtSync { CrdtSync value; };
-struct IpcMessageResyncRequest { ResyncRequest value; };
-struct IpcMessageOutboxAck { OutboxAck value; };
+struct IpcMessageSnapshot {
+  Snapshot value;
+};
+struct IpcMessageDelta {
+  Delta value;
+};
+struct IpcMessageCrdtSync {
+  CrdtSync value;
+};
+struct IpcMessageResyncRequest {
+  ResyncRequest value;
+};
+struct IpcMessageOutboxAck {
+  OutboxAck value;
+};
 
 using IpcMessage = std::variant<IpcMessageSnapshot, IpcMessageDelta, IpcMessageCrdtSync,
                                 IpcMessageResyncRequest, IpcMessageOutboxAck>;
@@ -259,7 +309,7 @@ struct PermissionDenied {
 };
 
 class PeerPermissions {
- public:
+public:
   bool allow(PeerId peer, const RemoteOp& op) {
     return peers_[peer][op.kind].insert(op.node).second;
   }
@@ -282,9 +332,7 @@ class PeerPermissions {
     return kit->second.count(op.node) > 0;
   }
 
-  bool can_read(PeerId peer, NodeId node) const {
-    return is_allowed(peer, read_op(node));
-  }
+  bool can_read(PeerId peer, NodeId node) const { return is_allowed(peer, read_op(node)); }
 
   int peer_count() const { return static_cast<int>(peers_.size()); }
 
@@ -296,14 +344,14 @@ class PeerPermissions {
     return result;
   }
 
- private:
+private:
   std::unordered_map<PeerId, std::unordered_map<OpKind, std::unordered_set<NodeId>>> peers_;
 };
 
 // -- ShmBlobArena --
 
 class ShmBlobArena {
- public:
+public:
   explicit ShmBlobArena(Epoch epoch) : epoch_(epoch), generation_(0) {}
 
   Epoch epoch() const { return epoch_; }
@@ -356,7 +404,7 @@ class ShmBlobArena {
     }
   }
 
- private:
+private:
   struct Entry {
     int64_t generation;
     Epoch epoch;
@@ -374,8 +422,7 @@ class ShmBlobArena {
     }
 
     ShmBlobRef to_ref(int64_t offset) const {
-      return {offset, static_cast<int64_t>(payload.size()), generation, epoch,
-              checksum_cached};
+      return {offset, static_cast<int64_t>(payload.size()), generation, epoch, checksum_cached};
     }
   };
 
@@ -427,18 +474,15 @@ struct CapabilityHandshake {
   }
 
   CapabilityCheck check_compatible(const CapabilityHandshake& other,
-                                    const std::vector<std::string>& required_features) const {
-    if (protocol_id != other.protocol_id)
-      return {false, "protocol_id", "protocol id mismatch"};
+                                   const std::vector<std::string>& required_features) const {
+    if (protocol_id != other.protocol_id) return {false, "protocol_id", "protocol id mismatch"};
     if (protocol_major_version != other.protocol_major_version)
       return {false, "protocol_major_version", "major version mismatch"};
-    if (codec != other.codec)
-      return {false, "codec", "codec mismatch"};
+    if (codec != other.codec) return {false, "codec", "codec mismatch"};
     if (!ordered_reliable || !other.ordered_reliable)
       return {false, "ordered_reliable", "both peers must require ordered reliable"};
     for (auto& f : required_features) {
-      if (!other.has_feature(f))
-        return {false, "features", "missing required feature: " + f};
+      if (!other.has_feature(f)) return {false, "features", "missing required feature: " + f};
     }
     return {true, "", ""};
   }
@@ -455,6 +499,6 @@ inline CapabilityHandshake new_capability_handshake(PeerId peer_id, const std::s
   return h;
 }
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_IPC_HPP
+#endif // LAZILY_IPC_HPP

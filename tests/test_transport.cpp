@@ -19,11 +19,15 @@ using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() { ++test_count; name(); ++test_passed; } \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 static bool bytes_eq(BlobView v, const std::vector<uint8_t>& expected) {
@@ -46,13 +50,13 @@ TEST(test_in_process_resolve_write) {
 TEST(test_backend_isolation) {
   InProcessBackend inproc;
   ShmBlobRef ref = inproc.write({9, 9, 9});
-  BlobRouter router;  // no backends registered
+  BlobRouter router; // no backends registered
   assert(!router.read_view(ref));
   router.register_backend(inproc);
-  assert(router.read_view(ref));  // now resolves
+  assert(router.read_view(ref)); // now resolves
   ShmBlobRef shm_ref = ref;
   shm_ref.backend = BlobBackendKind::Shm;
-  assert(!router.read_view(shm_ref));  // shm kind → no shm backend registered
+  assert(!router.read_view(shm_ref)); // shm kind → no shm backend registered
 }
 
 // ABA generation safety (resolve_stale_generation): a stale generation rejects.
@@ -114,12 +118,13 @@ TEST(test_shm_backend_cross_process) {
   std::string name = "/lazily_shm_test_" + std::to_string(::getpid());
   ShmBackend::unlink(name);
   std::vector<uint8_t> payload(1000);
-  for (size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<uint8_t>(i * 7 + 1);
+  for (size_t i = 0; i < payload.size(); ++i)
+    payload[i] = static_cast<uint8_t>(i * 7 + 1);
 
   ShmBackend parent(name, 1 << 20, true);
   ShmBlobRef ref = parent.write(payload);
   assert(ref.backend == BlobBackendKind::Shm);
-  assert(bytes_eq(parent.read_view(ref), payload));  // same-process resolve works
+  assert(bytes_eq(parent.read_view(ref), payload)); // same-process resolve works
 
   pid_t pid = ::fork();
   if (pid == 0) {
@@ -128,7 +133,7 @@ TEST(test_shm_backend_cross_process) {
     BlobView view = child.read_view(ref);
     bool ok = view && view.size == payload.size() &&
               std::memcmp(view.data, payload.data(), payload.size()) == 0;
-    std::quick_exit(ok ? 0 : 1);  // quick_exit avoids running the test runners' dtors
+    std::quick_exit(ok ? 0 : 1); // quick_exit avoids running the test runners' dtors
   }
   int status = 0;
   ::waitpid(pid, &status, 0);
@@ -138,7 +143,7 @@ TEST(test_shm_backend_cross_process) {
 #endif
 
 int main() {
-  std::cout << "lazily-cpp transport tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp transport tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

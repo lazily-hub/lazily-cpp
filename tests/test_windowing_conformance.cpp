@@ -13,36 +13,35 @@
 // Every scenario parses its config, operations, and expectations from the
 // canonical fixture.
 
-#include <lazily/windowing.hpp>
 #include <lazily/merge.hpp>
+#include <lazily/windowing.hpp>
 
+#include "test_assertion_keys.hpp"
+#include "test_json.hpp"
+#include "test_spec_fixture.hpp"
 #include <cassert>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include "test_assertion_keys.hpp"
-#include "test_json.hpp"
-#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 static lazily_test::JsonPtr fixture(const std::string& file) {
-  return lazily_test::parse_json(
-      lazily_test::spec_fixture_text("windowing", file));
+  return lazily_test::parse_json(lazily_test::spec_fixture_text("windowing", file));
 }
 
 using OptU = std::optional<uint64_t>;
@@ -56,26 +55,22 @@ TEST(test_tumbling_count) {
       ctx, lazily_test::json_u64(lazily_test::json_member(config, "n")));
   auto oc = w.output_cell();
   auto observed = ctx.computed<OptU>([&](Compute& c) { return oc.get(c); });
-  (void)ctx.get(observed);  // prime the cache
+  (void)ctx.get(observed); // prime the cache
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "push");
-    const OptU emit =
-        w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
-    assert(emit == lazily_test::json_optional_u64(
-                       lazily_test::json_member(item, "returns")));
+    const OptU emit = w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
+    assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
-             !was_cached;
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
     });
   }
 }
@@ -91,33 +86,28 @@ TEST(test_tumbling_time) {
   auto observed = ctx.computed<OptU>([&](Compute& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     OptU emit;
     if (type == "push") {
-      w.push(ctx,
-             lazily_test::json_u64(lazily_test::json_member(op, "now")),
+      w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "now")),
              lazily_test::json_u64(lazily_test::json_member(op, "value")));
       emit = std::nullopt;
     } else {
       assert(type == "tick");
-      emit = w.tick(
-          ctx, lazily_test::json_u64(lazily_test::json_member(op, "now")));
+      emit = w.tick(ctx, lazily_test::json_u64(lazily_test::json_member(op, "now")));
     }
-    assert(emit == lazily_test::json_optional_u64(
-                       lazily_test::json_member(item, "returns")));
+    assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
-             !was_cached;
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
     });
   }
 }
@@ -127,30 +117,26 @@ TEST(test_sliding_count) {
   const auto fx = fixture("sliding_count.json");
   const auto& config = lazily_test::json_member(*fx, "config");
   Context ctx;
-  SlidingWindow<uint64_t, Sum> w(
-      ctx, lazily_test::json_u64(lazily_test::json_member(config, "size")),
-      lazily_test::json_u64(lazily_test::json_member(config, "slide")));
+  SlidingWindow<uint64_t, Sum> w(ctx,
+                                 lazily_test::json_u64(lazily_test::json_member(config, "size")),
+                                 lazily_test::json_u64(lazily_test::json_member(config, "slide")));
   auto oc = w.output_cell();
   auto observed = ctx.computed<OptU>([&](Compute& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
-    const OptU emit =
-        w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
-    assert(emit == lazily_test::json_optional_u64(
-                       lazily_test::json_member(item, "returns")));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
+    const OptU emit = w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
+    assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
-             !was_cached;
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
     });
   }
 }
@@ -160,35 +146,31 @@ TEST(test_session) {
   const auto fx = fixture("session.json");
   const auto& config = lazily_test::json_member(*fx, "config");
   Context ctx;
-  SessionWindow<uint64_t, Sum> w(
-      ctx, lazily_test::json_u64(lazily_test::json_member(config, "gap")));
+  SessionWindow<uint64_t, Sum> w(ctx,
+                                 lazily_test::json_u64(lazily_test::json_member(config, "gap")));
   auto oc = w.output_cell();
   auto observed = ctx.computed<OptU>([&](Compute& c) { return oc.get(c); });
   (void)ctx.get(observed);
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     const OptU emit =
         type == "push"
-            ? w.push(ctx, now,
-                     lazily_test::json_u64(lazily_test::json_member(op, "value")))
+            ? w.push(ctx, now, lazily_test::json_u64(lazily_test::json_member(op, "value")))
             : w.flush(ctx, now);
     assert(type == "push" || type == "flush");
-    assert(emit == lazily_test::json_optional_u64(
-                       lazily_test::json_member(item, "returns")));
+    assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) ==
-             !was_cached;
+      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
     });
   }
 }
@@ -211,7 +193,7 @@ TEST(test_pure_cores) {
     assert(c.tick(2) == OptU(3));
     c.push(3, 4);
     assert(c.tick(4) == OptU(4));
-    assert(c.tick(6) == std::nullopt);  // empty window
+    assert(c.tick(6) == std::nullopt); // empty window
   }
   {
     SlidingCore<uint64_t, Sum> c(3, 1);
@@ -225,7 +207,7 @@ TEST(test_pure_cores) {
     SessionCore<uint64_t, Sum> c(3);
     assert(c.push(0, 1) == std::nullopt);
     assert(c.push(1, 2) == std::nullopt);
-    assert(c.push(10, 5) == OptU(3));  // gap closes previous
+    assert(c.push(10, 5) == OptU(3)); // gap closes previous
     assert(c.flush(20) == OptU(5));
     assert(c.push(21, 7) == std::nullopt);
     assert(c.flush(30) == OptU(7));
@@ -233,4 +215,6 @@ TEST(test_pure_cores) {
 }
 
 int main() {
-  REQUIRE_FIXTURES_LOADED(4); return test_count == test_passed ? 0 : 1; }
+  REQUIRE_FIXTURES_LOADED(4);
+  return test_count == test_passed ? 0 : 1;
+}

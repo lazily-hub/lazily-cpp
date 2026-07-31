@@ -20,8 +20,8 @@
 #include <utility>
 #include <vector>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -39,7 +39,7 @@ namespace lazily {
 /// A monotone logical clock a manual runtime (game loop, test) can own to drive
 /// sources. `advance` clamps backwards moves so `now` is always non-decreasing.
 class ManualClock {
- public:
+public:
   ManualClock() : now_(0) {}
   uint64_t now() const { return now_; }
   /// Advance to `now` (monotone: a smaller value is clamped to the current
@@ -49,7 +49,7 @@ class ManualClock {
     return now_;
   }
 
- private:
+private:
   uint64_t now_;
 };
 
@@ -60,7 +60,7 @@ class ManualClock {
 /// Single-shot compute core: `false → true` (`None → Some(())`) at the first
 /// tick with `now >= fire_at`; fires exactly once (idempotent thereafter).
 class TimerCore {
- public:
+public:
   explicit TimerCore(uint64_t fire_at) : fire_at_(fire_at), fired_(false) {}
 
   bool fired() const { return fired_; }
@@ -76,12 +76,10 @@ class TimerCore {
     return fire_at_;
   }
 
-  bool operator==(const TimerCore& o) const {
-    return fire_at_ == o.fire_at_ && fired_ == o.fired_;
-  }
+  bool operator==(const TimerCore& o) const { return fire_at_ == o.fire_at_ && fired_ == o.fired_; }
   bool operator!=(const TimerCore& o) const { return !(*this == o); }
 
- private:
+private:
   uint64_t fire_at_;
   bool fired_;
 };
@@ -91,9 +89,8 @@ class TimerCore {
 /// `set_cell` store-guard makes a repeat tick a no-op, so dependents invalidate
 /// exactly once.
 class TimerCell {
- public:
-  TimerCell(Context& ctx, uint64_t fire_at)
-      : core_(fire_at), fired_(ctx.source(false)) {}
+public:
+  TimerCell(Context& ctx, uint64_t fire_at) : core_(fire_at), fired_(ctx.source(false)) {}
 
   /// Advance to logical time `now`; returns the fire edge. On a fire the backing
   /// cell flips to `true`.
@@ -119,7 +116,7 @@ class TimerCell {
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
- private:
+private:
   TimerCore core_;
   Source<bool> fired_;
 };
@@ -132,11 +129,9 @@ class TimerCell {
 /// every boundary in `(frontier, now]`, so a jump past several boundaries counts
 /// them all.
 class IntervalCore {
- public:
+public:
   explicit IntervalCore(uint64_t period)
-      : period_(std::max<uint64_t>(period, 1)),
-        next_(std::max<uint64_t>(period, 1)),
-        count_(0) {}
+      : period_(std::max<uint64_t>(period, 1)), next_(std::max<uint64_t>(period, 1)), count_(0) {}
 
   uint64_t count() const { return count_; }
 
@@ -155,7 +150,7 @@ class IntervalCore {
   }
   bool operator!=(const IntervalCore& o) const { return !(*this == o); }
 
- private:
+private:
   /// Boundaries crossed on a single tick (0 when `now` is below the frontier).
   uint64_t fires_this_tick(uint64_t now) const {
     if (now < next_) return 0;
@@ -170,9 +165,8 @@ class IntervalCore {
 /// Reactive periodic interval: projects `IntervalCore`'s fire count onto a cell
 /// (invalidates only when `count` changes).
 class IntervalCell {
- public:
-  IntervalCell(Context& ctx, uint64_t period)
-      : core_(period), count_(ctx.source<uint64_t>(0)) {}
+public:
+  IntervalCell(Context& ctx, uint64_t period) : core_(period), count_(ctx.source<uint64_t>(0)) {}
 
   /// Advance to logical time `now`; returns whether a boundary fired. The count
   /// cell mirrors the core's total fire count.
@@ -189,7 +183,7 @@ class IntervalCell {
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
- private:
+private:
   IntervalCore core_;
   Source<uint64_t> count_;
 };
@@ -200,10 +194,8 @@ class IntervalCell {
 
 /// Count of `m ∈ 1..=n` with `m mod cycle == o` (`0 <= o < cycle`).
 inline uint64_t cron_count_upto(uint64_t n, uint64_t o, uint64_t cycle) {
-  if (o == 0)
-    return n / cycle;
-  if (o <= n)
-    return (n - o) / cycle + 1;
+  if (o == 0) return n / cycle;
+  if (o <= n) return (n - o) / cycle + 1;
   return 0;
 }
 
@@ -212,12 +204,13 @@ inline uint64_t cron_count_upto(uint64_t n, uint64_t o, uint64_t cycle) {
 /// shape. The match count in `(cursor, now]` is computed arithmetically, so a
 /// large `now` jump is `O(offsets)`.
 class CronCore {
- public:
+public:
   CronCore(uint64_t cycle, std::vector<uint64_t> offsets)
       : cycle_(std::max<uint64_t>(cycle, 1)), cursor_(0), count_(0) {
     // Reduce mod cycle, sort, dedup.
     offsets_.reserve(offsets.size());
-    for (uint64_t o : offsets) offsets_.push_back(o % cycle_);
+    for (uint64_t o : offsets)
+      offsets_.push_back(o % cycle_);
     std::sort(offsets_.begin(), offsets_.end());
     offsets_.erase(std::unique(offsets_.begin(), offsets_.end()), offsets_.end());
   }
@@ -252,12 +245,12 @@ class CronCore {
   }
 
   bool operator==(const CronCore& o) const {
-    return cycle_ == o.cycle_ && offsets_ == o.offsets_ &&
-           cursor_ == o.cursor_ && count_ == o.count_;
+    return cycle_ == o.cycle_ && offsets_ == o.offsets_ && cursor_ == o.cursor_ &&
+           count_ == o.count_;
   }
   bool operator!=(const CronCore& o) const { return !(*this == o); }
 
- private:
+private:
   uint64_t matches_in(uint64_t lo, uint64_t hi) const {
     uint64_t total = 0;
     for (uint64_t o : offsets_)
@@ -273,7 +266,7 @@ class CronCore {
 
 /// Reactive cron source: same reactive contract as `IntervalCell`.
 class CronCell {
- public:
+public:
   CronCell(Context& ctx, uint64_t cycle, std::vector<uint64_t> offsets)
       : core_(cycle, std::move(offsets)), count_(ctx.source<uint64_t>(0)) {}
 
@@ -289,7 +282,7 @@ class CronCell {
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
- private:
+private:
   CronCore core_;
   Source<uint64_t> count_;
 };
@@ -301,13 +294,10 @@ class CronCell {
 /// A value paired with a liveness state: `Live` until its deadline, then
 /// `Expired` — the value is preserved across the flip. Models Rust's
 /// `Deadlined<T>` enum.
-template <typename T>
-class Deadlined {
- public:
+template <typename T> class Deadlined {
+public:
   static Deadlined<T> live(T value) { return Deadlined<T>(std::move(value), false); }
-  static Deadlined<T> expired(T value) {
-    return Deadlined<T>(std::move(value), true);
-  }
+  static Deadlined<T> expired(T value) { return Deadlined<T>(std::move(value), true); }
 
   bool is_expired() const { return expired_; }
   const T& value() const { return value_; }
@@ -318,9 +308,8 @@ class Deadlined {
   }
   bool operator!=(const Deadlined<T>& o) const { return !(*this == o); }
 
- private:
-  Deadlined(T value, bool expired)
-      : value_(std::move(value)), expired_(expired) {}
+private:
+  Deadlined(T value, bool expired) : value_(std::move(value)), expired_(expired) {}
   T value_;
   bool expired_;
 };
@@ -328,7 +317,7 @@ class Deadlined {
 /// Deadline compute core (bytes-eligible): a `TimerCore` over the deadline. The
 /// value lives in the reactive cell.
 class DeadlineCore {
- public:
+public:
   explicit DeadlineCore(uint64_t deadline) : timer_(deadline) {}
 
   bool is_expired() const { return timer_.fired(); }
@@ -340,15 +329,14 @@ class DeadlineCore {
   bool operator==(const DeadlineCore& o) const { return timer_ == o.timer_; }
   bool operator!=(const DeadlineCore& o) const { return !(*this == o); }
 
- private:
+private:
   TimerCore timer_;
 };
 
 /// Reactive value + deadline: flips `Live(v) → Expired(v)` at the deadline,
 /// preserving the value; the `state` reader invalidates only on the expiry edge.
-template <typename T>
-class DeadlineCell {
- public:
+template <typename T> class DeadlineCell {
+public:
   DeadlineCell(Context& ctx, T value, uint64_t deadline)
       : core_(deadline), value_(std::move(value)), expired_(ctx.source(false)) {}
 
@@ -371,12 +359,12 @@ class DeadlineCell {
 
   std::optional<uint64_t> next_fire() const { return core_.next_fire(); }
 
- private:
+private:
   DeadlineCore core_;
   T value_;
   Source<bool> expired_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_TEMPORAL_HPP
+#endif // LAZILY_TEMPORAL_HPP

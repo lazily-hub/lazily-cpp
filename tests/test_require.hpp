@@ -16,13 +16,12 @@
 #include <cstdlib>
 #include <iostream>
 
-#define REQUIRE(cond, msg)                                              \
-  do {                                                                  \
-    if (!(cond)) {                                                      \
-      std::cout << "FAIL: " << (msg) << " @" << __FILE__ << ":"         \
-                << __LINE__ << std::endl;                               \
-      std::abort();                                                     \
-    }                                                                   \
+#define REQUIRE(cond, msg)                                                                         \
+  do {                                                                                             \
+    if (!(cond)) {                                                                                 \
+      std::cout << "FAIL: " << (msg) << " @" << __FILE__ << ":" << __LINE__ << std::endl;          \
+      std::abort();                                                                                \
+    }                                                                                              \
   } while (0)
 
-#endif  // LAZILY_TESTS_TEST_REQUIRE_HPP
+#endif // LAZILY_TESTS_TEST_REQUIRE_HPP

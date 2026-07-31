@@ -19,14 +19,13 @@ namespace {
 
 using lazily_test::Json;
 
-const Json &required(const Json &object, const std::string &key) {
-  const auto *value = object.find(key);
-  if (value == nullptr)
-    throw std::runtime_error("missing " + key);
+const Json& required(const Json& object, const std::string& key) {
+  const auto* value = object.find(key);
+  if (value == nullptr) throw std::runtime_error("missing " + key);
   return *value;
 }
 
-std::string quote(const std::string &value) {
+std::string quote(const std::string& value) {
   std::ostringstream out;
   out << '"';
   for (const unsigned char ch : value) {
@@ -65,56 +64,51 @@ std::string quote(const std::string &value) {
   return out.str();
 }
 
-std::string stamp_json(const lazily::WireStamp &stamp) {
+std::string stamp_json(const lazily::WireStamp& stamp) {
   return "{\"wall_time\":" + std::to_string(stamp.wall_time) +
          ",\"logical\":" + std::to_string(stamp.logical) +
          ",\"peer\":" + std::to_string(stamp.peer) + "}";
 }
 
-std::string state_json(const lazily::IpcValue &state) {
+std::string state_json(const lazily::IpcValue& state) {
   if (!std::holds_alternative<lazily::IpcValueInline>(state)) {
-    throw std::runtime_error(
-        "SharedBlob is outside this peer's semantic-suite profile");
+    throw std::runtime_error("SharedBlob is outside this peer's semantic-suite profile");
   }
   std::ostringstream out;
   out << "{\"Inline\":[";
-  const auto &bytes = std::get<lazily::IpcValueInline>(state).bytes;
+  const auto& bytes = std::get<lazily::IpcValueInline>(state).bytes;
   for (std::size_t index = 0; index < bytes.size(); ++index) {
-    if (index != 0)
-      out << ',';
+    if (index != 0) out << ',';
     out << static_cast<unsigned>(bytes[index]);
   }
   out << "]}";
   return out.str();
 }
 
-std::string op_json(const lazily::CrdtOp &op) {
+std::string op_json(const lazily::CrdtOp& op) {
   return "{\"node\":" + std::to_string(op.node) +
          ",\"key\":" + (op.key ? quote(op.key->to_wire()) : "null") +
-         ",\"stamp\":" + stamp_json(op.stamp) +
-         ",\"state\":" + state_json(op.state) + "}";
+         ",\"stamp\":" + stamp_json(op.stamp) + ",\"state\":" + state_json(op.state) + "}";
 }
 
-std::string sync_json(const lazily::CrdtSync &sync) {
+std::string sync_json(const lazily::CrdtSync& sync) {
   std::ostringstream out;
   out << "{\"CrdtSync\":{\"frontier\":[";
   for (std::size_t index = 0; index < sync.frontier.size(); ++index) {
-    if (index != 0)
-      out << ',';
-    const auto &entry = sync.frontier[index];
+    if (index != 0) out << ',';
+    const auto& entry = sync.frontier[index];
     out << '[' << entry.peer << ',' << stamp_json(entry.stamp) << ']';
   }
   out << "],\"ops\":[";
   for (std::size_t index = 0; index < sync.ops.size(); ++index) {
-    if (index != 0)
-      out << ',';
+    if (index != 0) out << ',';
     out << op_json(sync.ops[index]);
   }
   out << "]}}";
   return out.str();
 }
 
-lazily::WireStamp parse_stamp(const Json &value) {
+lazily::WireStamp parse_stamp(const Json& value) {
   return {
       required(value, "wall_time").as_int(),
       required(value, "logical").as_int(),
@@ -122,28 +116,25 @@ lazily::WireStamp parse_stamp(const Json &value) {
   };
 }
 
-lazily::IpcValue parse_state(const Json &value) {
-  const auto &bytes = required(value, "Inline");
-  if (!bytes.is_array())
-    throw std::runtime_error("state.Inline must be an array");
+lazily::IpcValue parse_state(const Json& value) {
+  const auto& bytes = required(value, "Inline");
+  if (!bytes.is_array()) throw std::runtime_error("state.Inline must be an array");
   std::vector<std::uint8_t> result;
   result.reserve(bytes.array.size());
-  for (const auto &byte : bytes.array) {
+  for (const auto& byte : bytes.array) {
     const auto number = byte->as_int();
-    if (number < 0 || number > 255)
-      throw std::runtime_error("Inline byte out of range");
+    if (number < 0 || number > 255) throw std::runtime_error("Inline byte out of range");
     result.push_back(static_cast<std::uint8_t>(number));
   }
   return lazily::IpcValueInline{std::move(result)};
 }
 
-lazily::CrdtOp parse_op(const Json &value) {
+lazily::CrdtOp parse_op(const Json& value) {
   std::optional<lazily::NodeKey> key;
-  const auto &key_json = required(value, "key");
+  const auto& key_json = required(value, "key");
   if (!key_json.is_null()) {
     key = lazily::NodeKey::create(key_json.as_str());
-    if (!key)
-      throw std::runtime_error("invalid NodeKey");
+    if (!key) throw std::runtime_error("invalid NodeKey");
   }
   return {
       required(value, "node").as_int(),
@@ -153,32 +144,29 @@ lazily::CrdtOp parse_op(const Json &value) {
   };
 }
 
-lazily::CrdtSync parse_sync(const Json &frame) {
-  const auto &value = required(frame, "CrdtSync");
-  const auto &frontier_json = required(value, "frontier");
-  const auto &ops_json = required(value, "ops");
+lazily::CrdtSync parse_sync(const Json& frame) {
+  const auto& value = required(frame, "CrdtSync");
+  const auto& frontier_json = required(value, "frontier");
+  const auto& ops_json = required(value, "ops");
   if (!frontier_json.is_array() || !ops_json.is_array()) {
     throw std::runtime_error("CrdtSync arrays are malformed");
   }
 
   lazily::CrdtSync sync;
-  for (const auto &entry : frontier_json.array) {
+  for (const auto& entry : frontier_json.array) {
     if (!entry->is_array() || entry->array.size() != 2) {
       throw std::runtime_error("frontier entry must be [peer, stamp]");
     }
-    sync.frontier.push_back(
-        {entry->array[0]->as_int(), parse_stamp(*entry->array[1])});
+    sync.frontier.push_back({entry->array[0]->as_int(), parse_stamp(*entry->array[1])});
   }
-  for (const auto &op : ops_json.array)
+  for (const auto& op : ops_json.array)
     sync.ops.push_back(parse_op(*op));
   return sync;
 }
 
-lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync &sync,
-                                   bool positional = false) {
+lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync& sync, bool positional = false) {
   const lazily::IpcMessage message = lazily::IpcMessageCrdtSync{sync};
-  const auto bytes =
-      positional ? lazily::encode_positional(message) : lazily::encode(message);
+  const auto bytes = positional ? lazily::encode_positional(message) : lazily::encode(message);
   auto decoded = lazily::decode(bytes);
   if (!std::holds_alternative<lazily::IpcMessageCrdtSync>(decoded)) {
     throw std::runtime_error("production codec changed CrdtSync variant");
@@ -186,21 +174,19 @@ lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync &sync,
   return std::get<lazily::IpcMessageCrdtSync>(std::move(decoded)).value;
 }
 
-std::uint64_t u64_field(const Json &value, const std::string &field) {
+std::uint64_t u64_field(const Json& value, const std::string& field) {
   return lazily_test::json_u64(required(value, field));
 }
 
-bool bool_field(const Json &value, const std::string &field) {
+bool bool_field(const Json& value, const std::string& field) {
   return required(value, field).as_bool();
 }
 
 std::string timer_error(lazily::TimerError error) {
-  return error == lazily::TimerError::deadline_overflow ? "deadline_overflow"
-                                                        : "clock_regression";
+  return error == lazily::TimerError::deadline_overflow ? "deadline_overflow" : "clock_regression";
 }
 
-std::string
-timeout_outcome(lazily::TimeoutObservation<std::string>::Outcome outcome) {
+std::string timeout_outcome(lazily::TimeoutObservation<std::string>::Outcome outcome) {
   using Outcome = lazily::TimeoutObservation<std::string>::Outcome;
   switch (outcome) {
   case Outcome::pending:
@@ -217,8 +203,7 @@ timeout_outcome(lazily::TimeoutObservation<std::string>::Outcome outcome) {
   return "unavailable";
 }
 
-std::string
-barrier_outcome(lazily::RevisionBarrierObservation::Outcome outcome) {
+std::string barrier_outcome(lazily::RevisionBarrierObservation::Outcome outcome) {
   using Outcome = lazily::RevisionBarrierObservation::Outcome;
   switch (outcome) {
   case Outcome::pending:
@@ -237,18 +222,16 @@ barrier_outcome(lazily::RevisionBarrierObservation::Outcome outcome) {
   return "unavailable";
 }
 
-lazily::TimeoutCancellation cancellation(const std::string &value) {
-  if (value == "cancelled")
-    return lazily::TimeoutCancellation::cancelled;
-  if (value == "unavailable")
-    return lazily::TimeoutCancellation::unavailable;
+lazily::TimeoutCancellation cancellation(const std::string& value) {
+  if (value == "cancelled") return lazily::TimeoutCancellation::cancelled;
+  if (value == "unavailable") return lazily::TimeoutCancellation::unavailable;
   return lazily::TimeoutCancellation::pending;
 }
 
 struct StdlibFeature {
   explicit StdlibFeature(std::string feature) : name(std::move(feature)) {}
 
-  std::string step(const Json &value) {
+  std::string step(const Json& value) {
     if (name == "stdlib_timer_v1")
       last = timer_step(value);
     else if (name == "stdlib_timeout_v1")
@@ -260,55 +243,42 @@ struct StdlibFeature {
     return last;
   }
 
-  std::string timer_step(const Json &step) {
+  std::string timer_step(const Json& step) {
     const auto op = required(step, "op").as_str();
     if (op == "start") {
-      auto started = lazily::Timer::start(u64_field(step, "now"),
-                                          u64_field(step, "duration"));
+      auto started = lazily::Timer::start(u64_field(step, "now"), u64_field(step, "duration"));
       timer = std::move(started.first);
       if (started.second)
-        return "{\"outcome\":\"unavailable\",\"reason\":" +
-               quote(timer_error(*started.second)) + "}";
-      deadline = lazily::checked_deadline(u64_field(step, "now"),
-                                          u64_field(step, "duration"))
-                     .value;
-      return "{\"outcome\":\"pending\",\"deadline\":" +
-             std::to_string(deadline) + "}";
+        return "{\"outcome\":\"unavailable\",\"reason\":" + quote(timer_error(*started.second)) +
+               "}";
+      deadline =
+          lazily::checked_deadline(u64_field(step, "now"), u64_field(step, "duration")).value;
+      return "{\"outcome\":\"pending\",\"deadline\":" + std::to_string(deadline) + "}";
     }
-    if (op != "observe")
-      throw std::runtime_error("unsupported timer feature step " + op);
-    if (!timer)
-      throw std::runtime_error("timer feature is not started");
+    if (op != "observe") throw std::runtime_error("unsupported timer feature step " + op);
+    if (!timer) throw std::runtime_error("timer feature is not started");
     const auto observation = timer->observe(u64_field(step, "now"));
     if (observation.outcome == lazily::TimerObservation::Outcome::fired)
-      return "{\"outcome\":\"fired\",\"fired_at\":" +
-             std::to_string(observation.fired_at) + "}";
+      return "{\"outcome\":\"fired\",\"fired_at\":" + std::to_string(observation.fired_at) + "}";
     if (observation.outcome == lazily::TimerObservation::Outcome::unavailable)
-      return "{\"outcome\":\"unavailable\",\"reason\":" +
-             quote(timer_error(*observation.error)) +
+      return "{\"outcome\":\"unavailable\",\"reason\":" + quote(timer_error(*observation.error)) +
              ",\"deadline\":" + std::to_string(observation.deadline) + "}";
-    return "{\"outcome\":\"pending\",\"deadline\":" +
-           std::to_string(observation.deadline) + "}";
+    return "{\"outcome\":\"pending\",\"deadline\":" + std::to_string(observation.deadline) + "}";
   }
 
-  std::string timeout_step(const Json &step) {
+  std::string timeout_step(const Json& step) {
     const auto op = required(step, "op").as_str();
     if (op == "start") {
-      auto started = lazily::Timeout<std::string>::start(
-          u64_field(step, "now"), u64_field(step, "duration"));
-      if (started.second)
-        throw std::runtime_error(timer_error(*started.second));
+      auto started =
+          lazily::Timeout<std::string>::start(u64_field(step, "now"), u64_field(step, "duration"));
+      if (started.second) throw std::runtime_error(timer_error(*started.second));
       timeout = std::move(started.first);
-      deadline = lazily::checked_deadline(u64_field(step, "now"),
-                                          u64_field(step, "duration"))
-                     .value;
-      return "{\"outcome\":\"pending\",\"deadline\":" +
-             std::to_string(deadline) + "}";
+      deadline =
+          lazily::checked_deadline(u64_field(step, "now"), u64_field(step, "duration")).value;
+      return "{\"outcome\":\"pending\",\"deadline\":" + std::to_string(deadline) + "}";
     }
-    if (op != "poll")
-      throw std::runtime_error("unsupported timeout feature step " + op);
-    if (!timeout)
-      throw std::runtime_error("timeout feature is not started");
+    if (op != "poll") throw std::runtime_error("unsupported timeout feature step " + op);
+    if (!timeout) throw std::runtime_error("timeout feature is not started");
     const auto operation = required(step, "operation").as_str();
     const auto cancellation_state = required(step, "cancellation").as_str();
     std::uint64_t operation_calls = 0;
@@ -328,68 +298,54 @@ struct StdlibFeature {
           ++cancellation_calls;
           return cancellation(cancellation_state);
         });
-    std::string out =
-        "{\"outcome\":" + quote(timeout_outcome(observation.outcome));
-    if (observation.outcome ==
-        lazily::TimeoutObservation<std::string>::Outcome::pending)
+    std::string out = "{\"outcome\":" + quote(timeout_outcome(observation.outcome));
+    if (observation.outcome == lazily::TimeoutObservation<std::string>::Outcome::pending)
       out += ",\"deadline\":" + std::to_string(observation.deadline);
-    if (observation.outcome ==
-        lazily::TimeoutObservation<std::string>::Outcome::completed)
+    if (observation.outcome == lazily::TimeoutObservation<std::string>::Outcome::completed)
       out += ",\"value\":" + quote(observation.value);
-    if (!observation.reason.empty())
-      out += ",\"reason\":" + quote(observation.reason);
+    if (!observation.reason.empty()) out += ",\"reason\":" + quote(observation.reason);
     out += ",\"operation_calls\":" + std::to_string(operation_calls) +
-           ",\"cancellation_calls\":" + std::to_string(cancellation_calls) +
-           "}";
+           ",\"cancellation_calls\":" + std::to_string(cancellation_calls) + "}";
     return out;
   }
 
-  std::string barrier_step(const Json &step) {
+  std::string barrier_step(const Json& step) {
     const auto op = required(step, "op").as_str();
     lazily::RevisionBarrierObservation observation;
     std::uint64_t cancellation_calls = 0;
     if (op == "start") {
-      const auto &deadline_value = required(step, "deadline");
+      const auto& deadline_value = required(step, "deadline");
       std::optional<std::uint64_t> parsed_deadline;
-      if (!deadline_value.is_null())
-        parsed_deadline = lazily_test::json_u64(deadline_value);
+      if (!deadline_value.is_null()) parsed_deadline = lazily_test::json_u64(deadline_value);
       barrier = std::make_unique<lazily::RevisionBarrier>(
-          u64_field(step, "revision"), u64_field(step, "required_revision"),
-          parsed_deadline);
+          u64_field(step, "revision"), u64_field(step, "required_revision"), parsed_deadline);
       observation = barrier->receipt("");
     } else {
-      if (!barrier)
-        throw std::runtime_error("barrier feature is not started");
+      if (!barrier) throw std::runtime_error("barrier feature is not started");
       if (op == "observe") {
-        observation = barrier->observe(
-            u64_field(step, "now"), bool_field(step, "predicate"), [&] {
-              ++cancellation_calls;
-              return cancellation(required(step, "cancellation").as_str());
-            });
+        observation = barrier->observe(u64_field(step, "now"), bool_field(step, "predicate"), [&] {
+          ++cancellation_calls;
+          return cancellation(required(step, "cancellation").as_str());
+        });
       } else if (op == "register_recheck") {
-        observation = barrier->register_recheck(
-            u64_field(step, "now"), u64_field(step, "observed_revision"),
-            bool_field(step, "predicate"));
+        observation =
+            barrier->register_recheck(u64_field(step, "now"), u64_field(step, "observed_revision"),
+                                      bool_field(step, "predicate"));
       } else if (op == "advance") {
-        observation = barrier->advance(u64_field(step, "revision"),
-                                       bool_field(step, "predicate"));
+        observation = barrier->advance(u64_field(step, "revision"), bool_field(step, "predicate"));
       } else if (op == "dispose") {
         observation = barrier->dispose();
       } else if (op == "receipt") {
         observation = barrier->receipt(required(step, "key").as_str());
       } else {
-        throw std::runtime_error("unsupported revision barrier feature step " +
-                                 op);
+        throw std::runtime_error("unsupported revision barrier feature step " + op);
       }
     }
-    std::string out =
-        "{\"outcome\":" + quote(barrier_outcome(observation.outcome)) +
-        ",\"revision\":" + std::to_string(observation.revision) +
-        ",\"generation\":" + std::to_string(observation.generation);
-    if (!observation.reason.empty())
-      out += ",\"reason\":" + quote(observation.reason);
-    if (op == "observe")
-      out += ",\"cancellation_calls\":" + std::to_string(cancellation_calls);
+    std::string out = "{\"outcome\":" + quote(barrier_outcome(observation.outcome)) +
+                      ",\"revision\":" + std::to_string(observation.revision) +
+                      ",\"generation\":" + std::to_string(observation.generation);
+    if (!observation.reason.empty()) out += ",\"reason\":" + quote(observation.reason);
+    if (op == "observe") out += ",\"cancellation_calls\":" + std::to_string(cancellation_calls);
     return out + "}";
   }
 
@@ -403,22 +359,15 @@ struct StdlibFeature {
 
 class Peer {
 public:
-  std::string handle(const Json &request) {
+  std::string handle(const Json& request) {
     const auto command = required(request, "cmd").as_str();
-    if (command == "hello")
-      return hello(request);
-    if (command == "local_set")
-      return local_set(request);
-    if (command == "deliver")
-      return deliver(request);
-    if (command == "snapshot")
-      return snapshot();
-    if (command == "feature_reset")
-      return feature_reset(request);
-    if (command == "feature_step")
-      return feature_step(request);
-    if (command == "feature_observe")
-      return feature_observe(request);
+    if (command == "hello") return hello(request);
+    if (command == "local_set") return local_set(request);
+    if (command == "deliver") return deliver(request);
+    if (command == "snapshot") return snapshot();
+    if (command == "feature_reset") return feature_reset(request);
+    if (command == "feature_step") return feature_step(request);
+    if (command == "feature_observe") return feature_observe(request);
     if (command == "bye") {
       stopping_ = true;
       return "{\"ok\":true}";
@@ -433,7 +382,7 @@ public:
   bool stopping() const { return stopping_; }
 
 private:
-  std::string hello(const Json &request) {
+  std::string hello(const Json& request) {
     if (required(request, "protocol_version").as_int() != 1) {
       throw std::runtime_error("unsupported protocol_version");
     }
@@ -450,17 +399,15 @@ private:
            "\"carve_outs\":[\"json\",\"shared_blob\",\"transport_links\"]}";
   }
 
-  std::string local_set(const Json &request) {
+  std::string local_set(const Json& request) {
     ensure_started();
     std::optional<lazily::NodeKey> key;
-    const auto &key_json = required(request, "key");
+    const auto& key_json = required(request, "key");
     if (!key_json.is_null()) {
       key = lazily::NodeKey::create(key_json.as_str());
-      if (!key)
-        throw std::runtime_error("invalid NodeKey");
+      if (!key) throw std::runtime_error("invalid NodeKey");
     }
-    const lazily::WireStamp stamp{required(request, "at").as_int(), ++logical_,
-                                  *peer_id_};
+    const lazily::WireStamp stamp{required(request, "at").as_int(), ++logical_, *peer_id_};
     const lazily::CrdtOp op{
         required(request, "node").as_int(),
         std::move(key),
@@ -472,15 +419,13 @@ private:
       throw std::runtime_error("production runtime rejected fresh local op");
     }
     local.frontier = runtime_->frontier_entries();
-    return "{\"ok\":true,\"frame\":" + sync_json(normalize_msgpack(local)) +
-           "}";
+    return "{\"ok\":true,\"frame\":" + sync_json(normalize_msgpack(local)) + "}";
   }
 
-  std::string deliver(const Json &request) {
+  std::string deliver(const Json& request) {
     ensure_started();
     const auto sync = normalize_msgpack(parse_sync(required(request, "frame")));
-    return "{\"ok\":true,\"applied\":" +
-           std::to_string(runtime_->ingest(sync)) + "}";
+    return "{\"ok\":true,\"applied\":" + std::to_string(runtime_->ingest(sync)) + "}";
   }
 
   std::string snapshot() const {
@@ -489,44 +434,39 @@ private:
     out << "{\"ok\":true,\"cells\":[";
     const auto cells = runtime_->converged();
     for (std::size_t index = 0; index < cells.size(); ++index) {
-      if (index != 0)
-        out << ',';
-      const auto &cell = cells[index];
-      out << "{\"node\":" << cell.node
-          << ",\"key\":" << (cell.key ? quote(*cell.key) : "null")
+      if (index != 0) out << ',';
+      const auto& cell = cells[index];
+      out << "{\"node\":" << cell.node << ",\"key\":" << (cell.key ? quote(*cell.key) : "null")
           << ",\"state\":" << state_json(cell.state) << '}';
     }
     out << "]}";
     return out.str();
   }
 
-  std::string feature_reset(const Json &request) {
+  std::string feature_reset(const Json& request) {
     const auto feature = required(request, "feature").as_str();
     if (feature != "stdlib_timer_v1" && feature != "stdlib_timeout_v1" &&
         feature != "stdlib_revision_barrier_v1")
-      return "{\"ok\":false,\"error\":" +
-             quote("unsupported feature " + feature) + ",\"unsupported\":true}";
+      return "{\"ok\":false,\"error\":" + quote("unsupported feature " + feature) +
+             ",\"unsupported\":true}";
     stdlib_[feature] = std::make_unique<StdlibFeature>(feature);
     return "{\"ok\":true,\"feature\":" + quote(feature) + "}";
   }
 
-  std::string feature_step(const Json &request) {
+  std::string feature_step(const Json& request) {
     const auto feature = required(request, "feature").as_str();
     const auto found = stdlib_.find(feature);
     if (found == stdlib_.end())
-      throw std::runtime_error("feature " + feature +
-                               " must be reset before stepping");
+      throw std::runtime_error("feature " + feature + " must be reset before stepping");
     const auto observation = found->second->step(required(request, "step"));
-    return "{\"ok\":true,\"feature\":" + quote(feature) +
-           ",\"observation\":" + observation + "}";
+    return "{\"ok\":true,\"feature\":" + quote(feature) + ",\"observation\":" + observation + "}";
   }
 
-  std::string feature_observe(const Json &request) {
+  std::string feature_observe(const Json& request) {
     const auto feature = required(request, "feature").as_str();
     const auto found = stdlib_.find(feature);
     if (found == stdlib_.end())
-      throw std::runtime_error("feature " + feature +
-                               " must be reset before observation");
+      throw std::runtime_error("feature " + feature + " must be reset before observation");
     if (found->second->last.empty())
       throw std::runtime_error("feature " + feature + " has no observation");
     return "{\"ok\":true,\"feature\":" + quote(feature) +
@@ -534,8 +474,7 @@ private:
   }
 
   void ensure_started() const {
-    if (!runtime_ || !peer_id_)
-      throw std::runtime_error("hello must run first");
+    if (!runtime_ || !peer_id_) throw std::runtime_error("hello must run first");
   }
 
   std::optional<lazily::PeerId> peer_id_;
@@ -555,8 +494,7 @@ void self_check() {
   const auto positional = normalize_msgpack(original, true);
   if (keyed.ops.size() != 1 || positional.ops.size() != 1 || keyed.ops[0].key ||
       positional.ops[0].key) {
-    throw std::runtime_error(
-        "MessagePack variants lost the canonical null key");
+    throw std::runtime_error("MessagePack variants lost the canonical null key");
   }
 
   lazily::CrdtPlaneRuntime runtime(1);
@@ -565,39 +503,35 @@ void self_check() {
   }
   const auto cells = runtime.converged();
   if (cells.size() != 1 ||
-      std::get<lazily::IpcValueInline>(cells[0].state).bytes !=
-          std::vector<std::uint8_t>{65}) {
+      std::get<lazily::IpcValueInline>(cells[0].state).bytes != std::vector<std::uint8_t>{65}) {
     throw std::runtime_error("CRDT snapshot did not converge");
   }
 
   Peer peer;
-  const auto hello = lazily_test::parse_json(
-      "{\"cmd\":\"hello\",\"peer\":1,\"protocol_version\":1}");
+  const auto hello =
+      lazily_test::parse_json("{\"cmd\":\"hello\",\"peer\":1,\"protocol_version\":1}");
   if (peer.handle(*hello).find("\"ok\":true") == std::string::npos)
     throw std::runtime_error("peer hello self-check failed");
-  const std::pair<const char *, const char *> feature_cases[] = {
+  const std::pair<const char*, const char*> feature_cases[] = {
       {"stdlib_timer_v1", "{\"op\":\"start\",\"now\":0,\"duration\":0}"},
       {"stdlib_timeout_v1", "{\"op\":\"start\",\"now\":0,\"duration\":1}"},
-      {"stdlib_revision_barrier_v1",
-       "{\"op\":\"start\",\"revision\":1,\"required_revision\":1,"
-       "\"deadline\":null}"},
+      {"stdlib_revision_barrier_v1", "{\"op\":\"start\",\"revision\":1,\"required_revision\":1,"
+                                     "\"deadline\":null}"},
   };
-  for (const auto &[feature, step] : feature_cases) {
-    const auto reset = lazily_test::parse_json(
-        "{\"cmd\":\"feature_reset\",\"feature\":" + quote(feature) + "}");
+  for (const auto& [feature, step] : feature_cases) {
+    const auto reset =
+        lazily_test::parse_json("{\"cmd\":\"feature_reset\",\"feature\":" + quote(feature) + "}");
     peer.handle(*reset);
     const auto request = lazily_test::parse_json(
-        "{\"cmd\":\"feature_step\",\"feature\":" + quote(feature) +
-        ",\"step\":" + step + "}");
+        "{\"cmd\":\"feature_step\",\"feature\":" + quote(feature) + ",\"step\":" + step + "}");
     if (peer.handle(*request).find("\"ok\":true") == std::string::npos)
-      throw std::runtime_error(std::string(feature) +
-                               " feature self-check failed");
+      throw std::runtime_error(std::string(feature) + " feature self-check failed");
   }
 }
 
 } // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   try {
     if (argc > 1 && std::string(argv[1]) == "--self-check") {
       self_check();
@@ -611,15 +545,13 @@ int main(int argc, char **argv) {
       try {
         const auto request = lazily_test::parse_json(line);
         std::cout << peer.handle(*request) << '\n' << std::flush;
-      } catch (const std::exception &error) {
-        std::cout << "{\"ok\":false,\"error\":" << quote(error.what()) << "}\n"
-                  << std::flush;
+      } catch (const std::exception& error) {
+        std::cout << "{\"ok\":false,\"error\":" << quote(error.what()) << "}\n" << std::flush;
       }
-      if (peer.stopping())
-        break;
+      if (peer.stopping()) break;
     }
     return 0;
-  } catch (const std::exception &error) {
+  } catch (const std::exception& error) {
     std::cerr << "lazily-cpp interop peer: " << error.what() << '\n';
     return 1;
   }

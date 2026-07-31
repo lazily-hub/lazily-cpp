@@ -1,10 +1,10 @@
 #ifndef LAZILY_CONTEXT_HPP
 #define LAZILY_CONTEXT_HPP
 
-#include <lazily/types.hpp>
+#include <lazily/rc_ptr.hpp>
 #include <lazily/small_fn.hpp>
 #include <lazily/small_vec.hpp>
-#include <lazily/rc_ptr.hpp>
+#include <lazily/types.hpp>
 
 #include <cassert>
 #include <cstdint>
@@ -22,18 +22,15 @@
 namespace lazily {
 
 // ── Forward declarations ──
-template <typename Traits = RcTraits>
-class ContextImpl;
+template <typename Traits = RcTraits> class ContextImpl;
 
-template <typename Traits = RcTraits>
-class TeardownScopeImpl;
+template <typename Traits = RcTraits> class TeardownScopeImpl;
 
 // The fortified per-recompute compute view (defined below, after ContextImpl).
 // It carries the recomputing node id AS A VALUE and is the sole tracking-read
 // surface passed to every compute/effect closure (#lzcellkernel, spec
 // cell-model.md §"Dependency tracking (the fortified compute view)").
-template <typename Traits = RcTraits>
-class ComputeImpl;
+template <typename Traits = RcTraits> class ComputeImpl;
 
 // ── ComputeOps — the compute-time operations subset (#lzcellkernel) ──
 //
@@ -44,12 +41,9 @@ class ComputeImpl;
 // node). C++17 has no `concept`, so the "concept" is a trait plus `enable_if`:
 // handle methods (`Source::get(cx)` etc.) are genericized over any `C` for which
 // `is_compute_ops_v<C>` holds, so they accept a `Context` or a `Compute` alike.
-template <typename C>
-struct is_compute_ops : std::false_type {};
-template <typename Traits>
-struct is_compute_ops<ContextImpl<Traits>> : std::true_type {};
-template <typename Traits>
-struct is_compute_ops<ComputeImpl<Traits>> : std::true_type {};
+template <typename C> struct is_compute_ops : std::false_type {};
+template <typename Traits> struct is_compute_ops<ContextImpl<Traits>> : std::true_type {};
+template <typename Traits> struct is_compute_ops<ComputeImpl<Traits>> : std::true_type {};
 template <typename C>
 inline constexpr bool is_compute_ops_v =
     is_compute_ops<std::remove_cv_t<std::remove_reference_t<C>>>::value;
@@ -58,14 +52,12 @@ inline constexpr bool is_compute_ops_v =
 // `Context`'s constructor surface (`source`/`computed`) can name the return
 // types; they are dependent on the member template's own `T`, so an incomplete
 // declaration is sufficient at this point.
-struct KeepLatest;  // defined in merge.hpp
+struct KeepLatest; // defined in merge.hpp
 // The default policy lives on THIS forward declaration (a default template
 // argument may be specified only once), so `Source<T>` resolves everywhere the
 // forward declaration is visible — cell.hpp's definition omits the default.
-template <typename T, typename M = KeepLatest>
-class Source;
-template <typename T>
-class Computed;
+template <typename T, typename M = KeepLatest> class Source;
+template <typename T> class Computed;
 
 /// Default Context — uses non-atomic RcPtr (≈ Rust Rc).
 using Context = ContextImpl<RcTraits>;
@@ -91,11 +83,10 @@ using TeardownScope = TeardownScopeImpl<RcTraits>;
 /// asymmetry the corpus pins: *reading* a disposed node throws, but *disposing*
 /// one again is a no-op, so teardown paths stay idempotent.
 class DisposedError : public std::runtime_error {
- public:
+public:
   DisposedError()
-      : std::runtime_error(
-            "lazily: read after dispose — the node behind this handle has been "
-            "torn down") {}
+      : std::runtime_error("lazily: read after dispose — the node behind this handle has been "
+                           "torn down") {}
 };
 
 using EdgeVec = SmallVec<SlotId, 2>;
@@ -182,7 +173,7 @@ using CleanupFn = SmallFn<void(), 32>;
 /// wide. The index is owned by the set, so it moves with it, dies with it, and
 /// can never be aliased onto a recycled id — unlike a side table keyed by owner.
 class EdgeSet {
- public:
+public:
   static constexpr size_t kPromote = LAZILY_EDGE_INDEX_PROMOTE;
   static constexpr size_t kDemote = LAZILY_EDGE_INDEX_DEMOTE;
   static_assert(kDemote <= kPromote, "demote must not exceed promote");
@@ -262,7 +253,10 @@ class EdgeSet {
     // define this in a shipping build; see the #lzspecedgeindex audit.
     size_t pos = kNpos;
     for (size_t i = 0; i < edges_.size(); ++i)
-      if (edges_[i] == id) { pos = i; break; }
+      if (edges_[i] == id) {
+        pos = i;
+        break;
+      }
     if (pos == kNpos) return false;
 #else
     const size_t pos = size_t(index_->slots[slot]) - 1;
@@ -282,22 +276,21 @@ class EdgeSet {
       const size_t moved_slot = probe(moved);
       // The tombstoned slot is skipped by probe(), so this finds the moved id's
       // own slot and nothing else.
-      if (moved_slot != kNpos)
-        index_->slots[moved_slot] = static_cast<uint32_t>(pos + 1);
+      if (moved_slot != kNpos) index_->slots[moved_slot] = static_cast<uint32_t>(pos + 1);
     }
     edges_.pop_back();
 
     if (edges_.size() <= kDemote)
-      index_.reset();  // hysteresis: well below kPromote, so a list oscillating
-                       // by one at the promote boundary never rebuilds.
+      index_.reset(); // hysteresis: well below kPromote, so a list oscillating
+                      // by one at the promote boundary never rebuilds.
     else if (index_->needs_rehash())
       rebuild_index();
     return true;
   }
 
- private:
+private:
   struct Index {
-    std::vector<uint32_t> slots;  // 0 = empty, kTomb = deleted, else pos + 1
+    std::vector<uint32_t> slots; // 0 = empty, kTomb = deleted, else pos + 1
     size_t live = 0;
     size_t tomb = 0;
     bool needs_rehash() const {
@@ -351,12 +344,14 @@ class EdgeSet {
 
   void rebuild_index() {
     size_t cap = 16;
-    while (cap < edges_.size() * 4) cap <<= 1;  // load factor <= 0.5 after growth
+    while (cap < edges_.size() * 4)
+      cap <<= 1; // load factor <= 0.5 after growth
     index_ = std::unique_ptr<Index>(new Index());
     index_->slots.assign(cap, 0);
     index_->live = edges_.size();
     index_->tomb = 0;
-    for (size_t i = 0; i < edges_.size(); ++i) place(edges_[i], i);
+    for (size_t i = 0; i < edges_.size(); ++i)
+      place(edges_[i], i);
   }
 
   EdgeVec edges_;
@@ -391,7 +386,7 @@ inline bool edge_remove(EdgeSet& edges, SlotId id) { return edges.remove(id); }
 /// Positions are absolute (base_ + offset) because pop_front shifts every
 /// index; base_ counts pops so stored positions survive them.
 class PendingQueue {
- public:
+public:
   bool empty() const noexcept { return q_.empty(); }
   size_t size() const noexcept { return q_.size(); }
 
@@ -429,8 +424,8 @@ class PendingQueue {
         }
         return;
       }
-      build_index();  // pay O(depth) once, then every erase in this teardown
-                      // is O(1) — that is what turns W^2/2 into W.
+      build_index(); // pay O(depth) once, then every erase in this teardown
+                     // is O(1) — that is what turns W^2/2 into W.
     }
     auto it = index_->find(id.value);
     if (it == index_->end()) return;
@@ -446,7 +441,7 @@ class PendingQueue {
     if (q_.size() <= kDemote) index_.reset();
   }
 
- private:
+private:
   // Deep enough that the index earns its allocation; a queue this shallow is
   // scanned faster than it is hashed. Hysteresis, as in EdgeSet, so a queue
   // oscillating at the boundary does not rebuild on every publish.
@@ -462,11 +457,12 @@ class PendingQueue {
     index_ = std::unique_ptr<std::unordered_map<uint64_t, uint64_t>>(
         new std::unordered_map<uint64_t, uint64_t>());
     index_->reserve(q_.size() * 2);
-    for (size_t i = 0; i < q_.size(); ++i) (*index_)[q_[i].value] = base_ + i;
+    for (size_t i = 0; i < q_.size(); ++i)
+      (*index_)[q_[i].value] = base_ + i;
   }
 
   std::deque<SlotId> q_;
-  uint64_t base_ = 0;  // absolute index of q_.front()
+  uint64_t base_ = 0; // absolute index of q_.front()
   // Allocated only while the queue is deep, so a shallow queue — the common
   // case — pays one pointer and no hashing.
   std::unique_ptr<std::unordered_map<uint64_t, uint64_t>> index_;
@@ -497,9 +493,8 @@ struct Effect {
 // non-atomic counting safe.
 // ═══════════════════════════════════════════════════════════════════════════
 
-template <typename Traits>
-class ContextImpl {
- public:
+template <typename Traits> class ContextImpl {
+public:
   using AnyValue = typename Traits::AnyValue;
   using Compute = ComputeImpl<Traits>;
   // The stored compute/effect closures receive the fortified `Compute` view
@@ -519,7 +514,7 @@ class ContextImpl {
   using EffectFn = SmallFn<CleanupFn(Compute&)>;
   using EffectFnPtr = RcPtr<RcBox<EffectFn>>;
 
- private:
+private:
   struct SlotNode {
     AnyValue value;
 #ifndef NDEBUG
@@ -540,12 +535,10 @@ class ContextImpl {
     SlotNode()
         :
 #ifndef NDEBUG
-        type_id(std::type_index(typeid(void))),
+          type_id(std::type_index(typeid(void))),
 #endif
-        dirty(false),
-        force_recompute(false),
-        in_progress(false),
-        eager(false) {}
+          dirty(false), force_recompute(false), in_progress(false), eager(false) {
+    }
   };
 
   struct CellNode {
@@ -559,7 +552,8 @@ class ContextImpl {
 #ifndef NDEBUG
         : type_id(std::type_index(typeid(void)))
 #endif
-    {}
+    {
+    }
   };
 
   struct EffectNode {
@@ -590,15 +584,14 @@ class ContextImpl {
   using ScheduledEffect = std::pair<SlotId, bool>;
   using EffectList = SmallVec<ScheduledEffect, 4>;
 
- public:
+public:
   ContextImpl() = default;
   ContextImpl(const ContextImpl&) = delete;
   ContextImpl& operator=(const ContextImpl&) = delete;
 
   // The fortified compute view reaches `register_dependency` and
   // `node_generation` to thread tracking by value (#lzcellkernel).
-  template <typename>
-  friend class ComputeImpl;
+  template <typename> friend class ComputeImpl;
 
   // -- Derived (Computed) constructors (`#lzcellkernel`) --
   //
@@ -607,8 +600,7 @@ class ContextImpl {
   // cell-kernel constructor surface below) is the guarded form. `slot` is kept
   // as lazily-rs's bound-free primitive and is deliberately NOT forced guarded.
   // (`memo` is DELETED — `computed` IS the guarded form.)
-  template <typename T, typename F>
-  Computed<T> slot(F&& compute) {
+  template <typename T, typename F> Computed<T> slot(F&& compute) {
     return slot_with_equals<T>(std::forward<F>(compute), nullptr);
   }
 
@@ -616,24 +608,21 @@ class ContextImpl {
   //
   // The public handle-typed `get`/`set`/`get_rc` (and the deprecated
   // `get_cell`/`set_cell`) all funnel through these.
-  template <typename T>
-  T read_cell(SlotId id) {
+  template <typename T> T read_cell(SlotId id) {
     auto* cell = get_cell_node(id);
     if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
     return *Traits::template cast<T>(cell->value);
   }
 
-  template <typename T>
-  std::shared_ptr<T> read_cell_rc(SlotId id) {
+  template <typename T> std::shared_ptr<T> read_cell_rc(SlotId id) {
     auto* cell = get_cell_node(id);
     if (!cell) throw DisposedError();
     assert(cell->type_id == std::type_index(typeid(T)));
     return std::make_shared<T>(*Traits::template cast<T>(cell->value));
   }
 
-  template <typename T>
-  std::shared_ptr<T> read_slot_rc(SlotId id) {
+  template <typename T> std::shared_ptr<T> read_slot_rc(SlotId id) {
     refresh_slot(id);
     auto* slot = get_slot_node(id);
     if (!slot) throw DisposedError();
@@ -642,8 +631,7 @@ class ContextImpl {
     return std::make_shared<T>(*Traits::template cast<T>(slot->value));
   }
 
-  template <typename T>
-  void write_cell(SlotId id, T new_value) {
+  template <typename T> void write_cell(SlotId id, T new_value) {
     bool changed;
     {
       auto* cell = get_cell_node(id);
@@ -661,8 +649,7 @@ class ContextImpl {
     } else {
       // Store-without-cascade: dirty-mark the dependent cone, then flush
       // effects ONLY when the cone actually contains an active Effect.
-      if (invalidate_cell_dependents_now(id))
-        flush_effects();
+      if (invalidate_cell_dependents_now(id)) flush_effects();
     }
   }
 
@@ -674,24 +661,17 @@ class ContextImpl {
   // `Source` overload of `set` exists, `ctx.set(computed, v)` is a plain
   // "no matching overload" compile error (write protection without a base
   // class, matching lazily-rs's `Write` trait bound).
-  template <typename T, typename M>
-  T get(const Source<T, M>& handle) {
+  template <typename T, typename M> T get(const Source<T, M>& handle) {
     return read_cell<T>(handle.id());
   }
-  template <typename T>
-  T get(const Computed<T>& handle) {
-    return get_slot<T>(handle.id());
-  }
-  template <typename T, typename M>
-  std::shared_ptr<T> get_rc(const Source<T, M>& handle) {
+  template <typename T> T get(const Computed<T>& handle) { return get_slot<T>(handle.id()); }
+  template <typename T, typename M> std::shared_ptr<T> get_rc(const Source<T, M>& handle) {
     return read_cell_rc<T>(handle.id());
   }
-  template <typename T>
-  std::shared_ptr<T> get_rc(const Computed<T>& handle) {
+  template <typename T> std::shared_ptr<T> get_rc(const Computed<T>& handle) {
     return read_slot_rc<T>(handle.id());
   }
-  template <typename T, typename M>
-  void set(const Source<T, M>& handle, T value) {
+  template <typename T, typename M> void set(const Source<T, M>& handle, T value) {
     write_cell<T>(handle.id(), std::move(value));
   }
 
@@ -703,8 +683,7 @@ class ContextImpl {
   }
   // `get_cell_rc` has no deprecation (no `get_rc` churn intended); retyped onto
   // the `Source` handle for the collapse.
-  template <typename T, typename M>
-  std::shared_ptr<T> get_cell_rc(const Source<T, M>& handle) {
+  template <typename T, typename M> std::shared_ptr<T> get_cell_rc(const Source<T, M>& handle) {
     return read_cell_rc<T>(handle.id());
   }
   template <typename T, typename M>
@@ -718,20 +697,17 @@ class ContextImpl {
   // Safe to call under a shared lock: they neither mutate node state nor copy
   // the ref-counted AnyValue handle. Used by ThreadSafeContext's shared read
   // fast path.
-  template <typename T>
-  std::optional<T> try_get_cached(const Computed<T>& handle) const {
+  template <typename T> std::optional<T> try_get_cached(const Computed<T>& handle) const {
     auto idx = node_index(handle.id());
     if (!idx || *idx >= nodes_.size()) return std::nullopt;
     auto& n = nodes_[*idx];
     if (std::holds_alternative<EmptyNode>(n)) return std::nullopt;
     const SlotNode* slot = std::get_if<SlotNode>(&n);
-    if (!slot || !slot->value || slot->dirty || slot->force_recompute)
-      return std::nullopt;
+    if (!slot || !slot->value || slot->dirty || slot->force_recompute) return std::nullopt;
     return *Traits::template cast<T>(slot->value);
   }
 
-  template <typename T, typename M>
-  std::optional<T> peek_cell(const Source<T, M>& handle) const {
+  template <typename T, typename M> std::optional<T> peek_cell(const Source<T, M>& handle) const {
     auto idx = node_index(handle.id());
     if (!idx || *idx >= nodes_.size()) return std::nullopt;
     auto& n = nodes_[*idx];
@@ -742,8 +718,7 @@ class ContextImpl {
   }
 
   // -- Batch API --
-  template <typename F>
-  auto batch(F&& run) {
+  template <typename F> auto batch(F&& run) {
     batch_depth_++;
     struct Guard {
       ContextImpl* ctx;
@@ -755,8 +730,7 @@ class ContextImpl {
   bool is_batching() { return batch_depth_ > 0; }
 
   // -- Effect API --
-  template <typename F>
-  Effect effect(F&& run) {
+  template <typename F> Effect effect(F&& run) {
     auto id = alloc_id();
     EffectNode node;
     static_assert(std::is_invocable_v<F&, Compute&>,
@@ -764,10 +738,9 @@ class ContextImpl {
                   "value-threaded Compute view — take (Compute&) or (auto&), "
                   "not (Context&). The ambient tracking bridge is deleted.");
     auto run_fn = EffectFn([f = std::forward<F>(run)](Compute& cv) -> CleanupFn {
-      return f(cv);  // fortified: effect tracks through its compute view
+      return f(cv); // fortified: effect tracks through its compute view
     });
-    node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
-                           typename EffectFnPtr::adopt_t{});
+    node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)), typename EffectFnPtr::adopt_t{});
     node.force_run = true;
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
@@ -775,8 +748,7 @@ class ContextImpl {
     return Effect(id);
   }
 
-  template <typename F>
-  Effect effect_void(F&& run) {
+  template <typename F> Effect effect_void(F&& run) {
     auto id = alloc_id();
     EffectNode node;
     static_assert(std::is_invocable_v<F&, Compute&>,
@@ -787,8 +759,7 @@ class ContextImpl {
       f(cv);
       return CleanupFn{};
     });
-    node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)),
-                           typename EffectFnPtr::adopt_t{});
+    node.run = EffectFnPtr(new RcBox<EffectFn>(std::move(run_fn)), typename EffectFnPtr::adopt_t{});
     node.force_run = true;
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
@@ -801,9 +772,7 @@ class ContextImpl {
     CleanupFn cleanup;
     {
       auto idx = node_index(handle.id);
-      if (!idx || *idx >= nodes_.size() ||
-          std::holds_alternative<EmptyNode>(nodes_[*idx]))
-        return;
+      if (!idx || *idx >= nodes_.size() || std::holds_alternative<EmptyNode>(nodes_[*idx])) return;
       auto& node = nodes_[*idx];
       // Read the kind from the arena BEFORE touching anything. A stale handle
       // whose id has since been recycled onto a node of another kind must be a
@@ -848,8 +817,7 @@ class ContextImpl {
   /// Callers must ensure nothing still reads the slot in a live compute:
   /// reading a disposed node throws `DisposedError`, and so does a surviving
   /// reader's next recompute if it still names one.
-  template <typename T>
-  void dispose_slot(const Computed<T>& handle) {
+  template <typename T> void dispose_slot(const Computed<T>& handle) {
     dispose_slot_id(handle.id());
   }
 
@@ -858,8 +826,7 @@ class ContextImpl {
   ///
   /// Cells are pure sources with no dependencies, so only downstream edges need
   /// detaching. Same contract as `dispose_slot` in every other respect.
-  template <typename T, typename M>
-  void dispose_cell(const Source<T, M>& handle) {
+  template <typename T, typename M> void dispose_cell(const Source<T, M>& handle) {
     dispose_cell_id(handle.id());
   }
 
@@ -903,18 +870,14 @@ class ContextImpl {
   /// shows total-ever-created here instead of live-subscriber count.
   ///
   /// Returns 0 for a disposed or unknown node.
-  template <typename T>
-  size_t dependent_count(const Computed<T>& handle) const {
+  template <typename T> size_t dependent_count(const Computed<T>& handle) const {
     return dependent_count_id(handle.id());
   }
-  template <typename T, typename M>
-  size_t dependent_count(const Source<T, M>& handle) const {
+  template <typename T, typename M> size_t dependent_count(const Source<T, M>& handle) const {
     return dependent_count_id(handle.id());
   }
   /// Always 0: effects are pure sinks, so nothing can read one.
-  size_t dependent_count(const Effect& handle) const {
-    return dependent_count_id(handle.id);
-  }
+  size_t dependent_count(const Effect& handle) const { return dependent_count_id(handle.id); }
 
   /// How many nodes this one currently depends on — the size of its forward
   /// edge set.
@@ -925,17 +888,13 @@ class ContextImpl {
   ///
   /// Returns 0 for a disposed or unknown node, and for source cells, which have
   /// no dependencies by construction.
-  template <typename T>
-  size_t dependency_count(const Computed<T>& handle) const {
+  template <typename T> size_t dependency_count(const Computed<T>& handle) const {
     return dependency_count_id(handle.id());
   }
-  template <typename T, typename M>
-  size_t dependency_count(const Source<T, M>& handle) const {
+  template <typename T, typename M> size_t dependency_count(const Source<T, M>& handle) const {
     return dependency_count_id(handle.id());
   }
-  size_t dependency_count(const Effect& handle) const {
-    return dependency_count_id(handle.id);
-  }
+  size_t dependency_count(const Effect& handle) const { return dependency_count_id(handle.id); }
 
   /// Open a teardown scope: nodes created through it are disposed when it ends.
   ///
@@ -953,8 +912,7 @@ class ContextImpl {
   // Because the puller is an ordinary scheduled effect, N invalidations in one
   // batch coalesce into ONE recompute (the `#lzsignaleager` per-write-puller
   // defect is structurally unwritable).
-  template <typename T, typename F>
-  Computed<T> signal(F&& compute) {
+  template <typename T, typename F> Computed<T> signal(F&& compute) {
     Computed<T> c = computed<T>(std::forward<F>(compute));
     c.eager(*this);
     return c;
@@ -968,16 +926,14 @@ class ContextImpl {
 
   /// Create a `Source<T>` (a plain keep-latest input cell) holding `value`. The
   /// default-policy form of `source`; use `source_with<M>` for a folding policy.
-  template <typename T>
-  Source<T, KeepLatest> source(T value) {
+  template <typename T> Source<T, KeepLatest> source(T value) {
     return Source<T, KeepLatest>(make_cell_node<T>(std::move(value)));
   }
 
   /// Create a `Source<T, M>` whose writes fold under policy `M`
   /// (`source_with<Sum>(v)` is the former `merge_cell<Sum>(v)`). `M` cannot be
   /// defaulted on a function template, so this is a distinct name from `source`.
-  template <typename M, typename T>
-  Source<T, M> source_with(T value) {
+  template <typename M, typename T> Source<T, M> source_with(T value) {
     return Source<T, M>(make_cell_node<T>(std::move(value)));
   }
 
@@ -992,8 +948,7 @@ class ContextImpl {
   /// default (§9.3, DECIDED 2026-07-21) — an equal recompute does not
   /// propagate — folding in the former `memo`; there is no unguarded mode.
   /// Lazy until `.eager()`.
-  template <typename T, typename F>
-  Computed<T> computed(F&& compute) {
+  template <typename T, typename F> Computed<T> computed(F&& compute) {
     EqualsFn eq = [](const void* a, const void* b) {
       return *static_cast<const T*>(a) == *static_cast<const T*>(b);
     };
@@ -1017,11 +972,9 @@ class ContextImpl {
   /// in the `ripple_by_` side table so a plain `computed`/`slot` pays nothing.
   template <typename T, typename F, typename C>
   Computed<T> computed_ripple_when(F&& compute, C&& changed) {
-    Computed<T> handle =
-        slot_with_equals<T>(std::forward<F>(compute), nullptr);
+    Computed<T> handle = slot_with_equals<T>(std::forward<F>(compute), nullptr);
     ripple_by_[handle.id().value] = SmallFn<bool(const void*, const void*)>(
-        [changed = std::forward<C>(changed)](const void* a,
-                                             const void* b) -> bool {
+        [changed = std::forward<C>(changed)](const void* a, const void* b) -> bool {
           // engine guard: true = equal = suppress; that is `!changed`.
           return !changed(*static_cast<const T*>(a), *static_cast<const T*>(b));
         });
@@ -1041,18 +994,16 @@ class ContextImpl {
 
   /// Ensure the computed cell named by `id` is eager. Idempotent — a second
   /// call is a no-op. Ignores ids that name no slot node.
-  template <typename T>
-  void make_eager(SlotId id) {
+  template <typename T> void make_eager(SlotId id) {
     {
       auto* slot = get_slot_node(id);
       if (!slot) return;       // not a computed cell (or disposed): ignore
-      if (slot->eager) return;  // bit alone makes the transition idempotent
+      if (slot->eager) return; // bit alone makes the transition idempotent
     }
     // Attach the puller. `effect_void` may reallocate `nodes_`, so set the bit
     // AFTER, re-fetching the node.
     auto slot_handle = Computed<T>(id);
-    Effect eff = effect_void(
-        [slot_handle](Compute& ctx) { ctx.template get_rc<T>(slot_handle); });
+    Effect eff = effect_void([slot_handle](Compute& ctx) { ctx.template get_rc<T>(slot_handle); });
     if (auto* slot = get_slot_node(id)) slot->eager = true;
     eager_by_[id.value] = eff.id.value;
   }
@@ -1075,8 +1026,7 @@ class ContextImpl {
   }
 
   // -- Clearing --
-  template <typename T>
-  bool is_set(const Computed<T>& handle) {
+  template <typename T> bool is_set(const Computed<T>& handle) {
     auto* slot = get_slot_node(handle.id());
     return slot && slot->value && !slot->dirty;
   }
@@ -1090,8 +1040,7 @@ class ContextImpl {
   }
 
   void flush_effects_after_invalidation() {
-    if (!is_batching())
-      flush_effects();
+    if (!is_batching()) flush_effects();
   }
 
   void clear_cell_dependents(SlotId id) {
@@ -1114,11 +1063,9 @@ class ContextImpl {
 
   /// Pre-allocate node capacity. Call before bulk-inserting cells/slots
   /// to avoid repeated vector reallocations.
-  void reserve(size_t capacity) {
-    nodes_.reserve(capacity);
-  }
+  void reserve(size_t capacity) { nodes_.reserve(capacity); }
 
- private:
+private:
   // Per #lzcppsoa: a flat vector of `Node` (variant with an Empty alternative
   // standing in for the old `std::optional<Node>` nullopt). Empty entries are
   // produced by `resize` (the variant's default-constructed index is Empty)
@@ -1212,17 +1159,15 @@ class ContextImpl {
     if (!node) return 0;
     if (const auto* s = std::get_if<SlotNode>(node)) return s->dependents.size();
     if (const auto* c = std::get_if<CellNode>(node)) return c->dependents.size();
-    return 0;  // effects are pure sinks
+    return 0; // effects are pure sinks
   }
 
   size_t dependency_count_id(SlotId id) const {
     const auto* node = get_node_const(id);
     if (!node) return 0;
-    if (const auto* s = std::get_if<SlotNode>(node))
-      return s->dependencies.size();
-    if (const auto* e = std::get_if<EffectNode>(node))
-      return e->dependencies.size();
-    return 0;  // cells are pure sources
+    if (const auto* s = std::get_if<SlotNode>(node)) return s->dependencies.size();
+    if (const auto* e = std::get_if<EffectNode>(node)) return e->dependencies.size();
+    return 0; // cells are pure sources
   }
 
   void dispose_slot_id(SlotId id) {
@@ -1254,15 +1199,17 @@ class ContextImpl {
     }
     if (puller) dispose_effect(Effect(*puller));
     // Detach both directions before the node goes away.
-    for (auto dep_id : deps) remove_dependent_edge(dep_id, id);
-    for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);
+    for (auto dep_id : deps)
+      remove_dependent_edge(dep_id, id);
+    for (auto dpt_id : dependents)
+      remove_dependency_edge(dpt_id, id);
     // Then dirty what survives. The roots are the saved copy, so the walk is
     // unaffected by the detach above; everything below the roots is untouched.
     invalidate_disposed_dependents(dependents);
     // Clear the node last: it owns the compute closure, and anything that
     // closure captured is destroyed here.
     auto idx = node_index(id);
-    bump_generation(id);  // a Compute stamped at the old generation stops tracking
+    bump_generation(id); // a Compute stamped at the old generation stops tracking
     nodes_[*idx] = EmptyNode{};
     free_ids_.push_back(id.value);
   }
@@ -1277,10 +1224,11 @@ class ContextImpl {
       dependents = std::move(cell->dependents);
     }
     // Cells are pure sources: only the downstream half exists to detach.
-    for (auto dpt_id : dependents) remove_dependency_edge(dpt_id, id);
+    for (auto dpt_id : dependents)
+      remove_dependency_edge(dpt_id, id);
     invalidate_disposed_dependents(dependents);
     auto idx = node_index(id);
-    bump_generation(id);  // a Compute stamped at the old generation stops tracking
+    bump_generation(id); // a Compute stamped at the old generation stops tracking
     nodes_[*idx] = EmptyNode{};
     free_ids_.push_back(id.value);
   }
@@ -1288,8 +1236,7 @@ class ContextImpl {
   void insert_node(SlotId id, Node node) {
     auto idx = node_index(id);
     assert(idx && "SlotId overflow");
-    if (nodes_.size() <= *idx)
-      nodes_.resize(*idx + 1);
+    if (nodes_.size() <= *idx) nodes_.resize(*idx + 1);
     nodes_[*idx] = std::move(node);
   }
 
@@ -1381,11 +1328,10 @@ class ContextImpl {
   void invalidate_disposed_dependents(const EdgeSet& dependents) {
     if (dependents.empty()) return;
     EffectList unscheduled = mark_frontier_locked(dependents);
-    (void)unscheduled;  // deliberately dropped — see (2) above.
+    (void)unscheduled; // deliberately dropped — see (2) above.
   }
 
-  template <typename T, typename F>
-  Computed<T> slot_with_equals(F&& compute, EqualsFn eq) {
+  template <typename T, typename F> Computed<T> slot_with_equals(F&& compute, EqualsFn eq) {
     auto id = alloc_id();
     SlotNode node;
 #ifndef NDEBUG
@@ -1398,12 +1344,11 @@ class ContextImpl {
                   "#lzcellkernel: a compute closure must read through the "
                   "value-threaded Compute view — take (Compute&) or (auto&), "
                   "not (Context&). The ambient tracking bridge is deleted.");
-    auto compute_fn =
-        ComputeFn([f = std::forward<F>(compute)](Compute& cv) -> AnyValue {
-          return Traits::template make<T>(f(cv));
-        });
-    node.compute = ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)),
-                                 typename ComputeFnPtr::adopt_t{});
+    auto compute_fn = ComputeFn([f = std::forward<F>(compute)](Compute& cv) -> AnyValue {
+      return Traits::template make<T>(f(cv));
+    });
+    node.compute =
+        ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)), typename ComputeFnPtr::adopt_t{});
     node.equals = eq;
     insert_node(id, Node(std::move(node)));
     return Computed<T>(id);
@@ -1411,8 +1356,7 @@ class ContextImpl {
 
   /// Create a source-cell node holding `value`; returns its id. Backs `source`
   /// / `source_with` (and the deprecated `cell`). (`#lzcellkernel`)
-  template <typename T>
-  SlotId make_cell_node(T value) {
+  template <typename T> SlotId make_cell_node(T value) {
     auto id = alloc_id();
     CellNode node;
     node.value = Traits::template make<T>(std::move(value));
@@ -1423,8 +1367,7 @@ class ContextImpl {
     return id;
   }
 
-  template <typename T>
-  T get_slot(SlotId id) {
+  template <typename T> T get_slot(SlotId id) {
     refresh_slot(id);
     auto* slot = get_slot_node(id);
     if (!slot) throw DisposedError();
@@ -1442,8 +1385,7 @@ class ContextImpl {
     // the hot path for cached slot reads.
     {
       auto* slot = get_slot_node(id);
-      if (slot && slot->value && !slot->dirty && !slot->force_recompute)
-        return false;
+      if (slot && slot->value && !slot->dirty && !slot->force_recompute) return false;
     }
 
     if (!enter_refresh(id)) return false;
@@ -1451,8 +1393,7 @@ class ContextImpl {
       ContextImpl* ctx;
       SlotId id;
       ~RefreshGuard() {
-        if (auto* slot = ctx->get_slot_node(id))
-          slot->in_progress = false;
+        if (auto* slot = ctx->get_slot_node(id)) slot->in_progress = false;
       }
     } guard{this, id};
 
@@ -1462,13 +1403,13 @@ class ContextImpl {
     {
       auto* slot = get_slot_node(id);
       if (!slot) return false;
-      for (SlotId dep : slot->dependencies) dependencies.push_back(dep);
+      for (SlotId dep : slot->dependencies)
+        dependencies.push_back(dep);
     }
 
     bool dependency_changed = false;
     for (auto dep_id : dependencies) {
-      if (is_slot_node(dep_id) && refresh_slot(dep_id))
-        dependency_changed = true;
+      if (is_slot_node(dep_id) && refresh_slot(dep_id)) dependency_changed = true;
     }
 
     bool needs_recompute;
@@ -1556,14 +1497,11 @@ class ContextImpl {
       }
     }
 
-    if (changed)
-      notify_slot_value_changed(id);
+    if (changed) notify_slot_value_changed(id);
     return changed;
   }
 
-  void notify_slot_value_changed(SlotId id) {
-    invalidate_dependents_now(id);
-  }
+  void notify_slot_value_changed(SlotId id) { invalidate_dependents_now(id); }
 
   // Iterative DFS dirty-marking. Roots get force=true; transitive descendants
   // get force=false (matching the former recursive semantics). Returns
@@ -1651,26 +1589,27 @@ class ContextImpl {
     if (roots->empty()) return false;
     EffectList effects = mark_frontier_locked(*roots);
     bool scheduled = !effects.empty();
-    for (auto& entry : effects) schedule_effect(entry.first, entry.second);
+    for (auto& entry : effects)
+      schedule_effect(entry.first, entry.second);
     return scheduled;
   }
 
-  bool invalidate_cell_dependents_now(SlotId id) {
-    return invalidate_dependents_now(id);
-  }
+  bool invalidate_cell_dependents_now(SlotId id) { return invalidate_dependents_now(id); }
 
   void clear_cell_dependents_now(SlotId id) {
     auto* cell = get_cell_node(id);
     if (!cell) return;
     EffectList effects = clear_frontier_locked(cell->dependents);
-    for (auto& entry : effects) schedule_effect(entry.first, entry.second);
+    for (auto& entry : effects)
+      schedule_effect(entry.first, entry.second);
   }
 
   void clear_slot_now(SlotId id) {
     EdgeSet roots;
     roots.insert(id);
     EffectList effects = clear_frontier_locked(roots);
-    for (auto& entry : effects) schedule_effect(entry.first, entry.second);
+    for (auto& entry : effects)
+      schedule_effect(entry.first, entry.second);
   }
 
   void schedule_effect(SlotId id, bool force) {
@@ -1679,8 +1618,7 @@ class ContextImpl {
     auto* eff = std::get_if<EffectNode>(node);
     if (!eff) return;
     if (force) eff->force_run = true;
-    if (id.value >= effect_scheduled_.size())
-      effect_scheduled_.resize(id.value + 1, false);
+    if (id.value >= effect_scheduled_.size()) effect_scheduled_.resize(id.value + 1, false);
     if (!effect_scheduled_[id.value]) {
       effect_scheduled_[id.value] = true;
       pending_effects_.push_back(id);
@@ -1698,8 +1636,7 @@ class ContextImpl {
     // scanned the whole remaining queue to find an id that is provably not in
     // it. With W pending effects that is O(W) per effect, O(W^2) per publish.
     // effect_scheduled_ already answers "is it queued" in O(1); ask it first.
-    if (id.value >= effect_scheduled_.size() || !effect_scheduled_[id.value])
-      return;
+    if (id.value >= effect_scheduled_.size() || !effect_scheduled_[id.value]) return;
     pending_effects_.erase(id);
     unschedule_effect(id);
   }
@@ -1769,8 +1706,7 @@ class ContextImpl {
     if (!effect) return false;
     if (effect->force_run) return true;
     for (auto dep_id : effect->dependencies) {
-      if (is_slot_node(dep_id) && refresh_slot(dep_id))
-        return true;
+      if (is_slot_node(dep_id) && refresh_slot(dep_id)) return true;
     }
     return false;
   }
@@ -1778,8 +1714,7 @@ class ContextImpl {
   void finish_batch() {
     assert(batch_depth_ > 0);
     batch_depth_--;
-    if (batch_depth_ == 0)
-      flush_batched_invalidations();
+    if (batch_depth_ == 0) flush_batched_invalidations();
   }
 
   void flush_batched_invalidations() {
@@ -1832,9 +1767,8 @@ class ContextImpl {
 //   misattribute to the node that inherited the id.
 // ═══════════════════════════════════════════════════════════════════════════
 
-template <typename Traits>
-class ComputeImpl {
- public:
+template <typename Traits> class ComputeImpl {
+public:
   using ContextType = ContextImpl<Traits>;
 
   // Constructed by the engine (`recompute_slot_now` / `run_effect`) only.
@@ -1860,85 +1794,62 @@ class ComputeImpl {
   SlotId node() const noexcept { return node_; }
 
   // ── Tracked reads (register an edge against `node_`) ──
-  template <typename T, typename M>
-  T get(const Source<T, M>& h) const {
+  template <typename T, typename M> T get(const Source<T, M>& h) const {
     track(h.id());
     return ctx_->get(h);
   }
-  template <typename T>
-  T get(const Computed<T>& h) const {
+  template <typename T> T get(const Computed<T>& h) const {
     track(h.id());
     return ctx_->get(h);
   }
-  template <typename T, typename M>
-  std::shared_ptr<T> get_rc(const Source<T, M>& h) const {
+  template <typename T, typename M> std::shared_ptr<T> get_rc(const Source<T, M>& h) const {
     track(h.id());
     return ctx_->get_rc(h);
   }
-  template <typename T>
-  std::shared_ptr<T> get_rc(const Computed<T>& h) const {
+  template <typename T> std::shared_ptr<T> get_rc(const Computed<T>& h) const {
     track(h.id());
     return ctx_->get_rc(h);
   }
-  template <typename T, typename M>
-  std::optional<T> peek_cell(const Source<T, M>& h) const {
+  template <typename T, typename M> std::optional<T> peek_cell(const Source<T, M>& h) const {
     return ctx_->peek_cell(h);
   }
 
   // ── Untracked compute-time ops (writes/constructors never track) ──
-  template <typename T, typename M>
-  void set(const Source<T, M>& h, T v) const {
+  template <typename T, typename M> void set(const Source<T, M>& h, T v) const {
     ctx_->set(h, std::move(v));
   }
-  template <typename T>
-  Source<T, KeepLatest> source(T v) const {
+  template <typename T> Source<T, KeepLatest> source(T v) const {
     return ctx_->template source<T>(std::move(v));
   }
-  template <typename M, typename T>
-  Source<T, M> source_with(T v) const {
+  template <typename M, typename T> Source<T, M> source_with(T v) const {
     return ctx_->template source_with<M>(std::move(v));
   }
-  template <typename T, typename F>
-  Computed<T> computed(F&& f) const {
+  template <typename T, typename F> Computed<T> computed(F&& f) const {
     return ctx_->template computed<T>(std::forward<F>(f));
   }
   template <typename T, typename F, typename C>
   Computed<T> computed_ripple_when(F&& f, C&& changed) const {
-    return ctx_->template computed_ripple_when<T>(std::forward<F>(f),
-                                                  std::forward<C>(changed));
+    return ctx_->template computed_ripple_when<T>(std::forward<F>(f), std::forward<C>(changed));
   }
-  template <typename T, typename F>
-  Computed<T> slot(F&& f) const {
+  template <typename T, typename F> Computed<T> slot(F&& f) const {
     return ctx_->template slot<T>(std::forward<F>(f));
   }
-  template <typename T, typename F>
-  Computed<T> signal(F&& f) const {
+  template <typename T, typename F> Computed<T> signal(F&& f) const {
     return ctx_->template signal<T>(std::forward<F>(f));
   }
-  template <typename F>
-  Effect effect(F&& f) const {
-    return ctx_->effect(std::forward<F>(f));
-  }
-  template <typename F>
-  Effect effect_void(F&& f) const {
+  template <typename F> Effect effect(F&& f) const { return ctx_->effect(std::forward<F>(f)); }
+  template <typename F> Effect effect_void(F&& f) const {
     return ctx_->effect_void(std::forward<F>(f));
   }
-  template <typename F>
-  auto batch(F&& f) const {
-    return ctx_->batch(std::forward<F>(f));
-  }
-  template <typename T>
-  void dispose_slot(const Computed<T>& h) const {
-    ctx_->dispose_slot(h);
-  }
-  template <typename T, typename M>
-  void dispose_cell(const Source<T, M>& h) const {
+  template <typename F> auto batch(F&& f) const { return ctx_->batch(std::forward<F>(f)); }
+  template <typename T> void dispose_slot(const Computed<T>& h) const { ctx_->dispose_slot(h); }
+  template <typename T, typename M> void dispose_cell(const Source<T, M>& h) const {
     ctx_->dispose_cell(h);
   }
   void dispose_id(SlotId id) const { ctx_->dispose_id(id); }
   void dispose_effect(const Effect& h) const { ctx_->dispose_effect(h); }
 
- private:
+private:
   /// Register a dependency edge `dep -> node_`, unless the recomputing node was
   /// disposed mid-recompute (its generation moved), in which case an edge would
   /// misattribute to whatever inherited the id.
@@ -1989,9 +1900,8 @@ class ComputeImpl {
 // bindings have.
 // ═══════════════════════════════════════════════════════════════════════════
 
-template <typename Traits>
-class TeardownScopeImpl {
- public:
+template <typename Traits> class TeardownScopeImpl {
+public:
   using ContextType = ContextImpl<Traits>;
 
   explicit TeardownScopeImpl(ContextType& ctx) : ctx_(&ctx) {}
@@ -2021,38 +1931,33 @@ class TeardownScopeImpl {
   // ── Node creation. Identical to the context's, plus ownership. ──
 
   /// Create a **guarded** `Computed<T>` (`#lzcellkernel`) owned by this scope.
-  template <typename T, typename F>
-  Computed<T> computed(F&& compute) {
+  template <typename T, typename F> Computed<T> computed(F&& compute) {
     auto handle = ctx_->template computed<T>(std::forward<F>(compute));
     owned_.push_back(handle.id());
     return handle;
   }
 
   /// Unguarded pass-through derived cell owned by this scope (`#lzcellkernel`).
-  template <typename T, typename F>
-  Computed<T> slot(F&& compute) {
+  template <typename T, typename F> Computed<T> slot(F&& compute) {
     auto handle = ctx_->template slot<T>(std::forward<F>(compute));
     owned_.push_back(handle.id());
     return handle;
   }
 
   /// Create a `Source<T>` owned by this scope (the canonical source cell).
-  template <typename T>
-  Source<T, KeepLatest> source(T value) {
+  template <typename T> Source<T, KeepLatest> source(T value) {
     auto handle = ctx_->template source<T>(std::move(value));
     owned_.push_back(handle.id());
     return handle;
   }
 
-  template <typename F>
-  Effect effect(F&& run) {
+  template <typename F> Effect effect(F&& run) {
     auto handle = ctx_->effect(std::forward<F>(run));
     owned_.push_back(handle.id);
     return handle;
   }
 
-  template <typename F>
-  Effect effect_void(F&& run) {
+  template <typename F> Effect effect_void(F&& run) {
     auto handle = ctx_->effect_void(std::forward<F>(run));
     owned_.push_back(handle.id);
     return handle;
@@ -2091,7 +1996,7 @@ class TeardownScopeImpl {
       ctx_->dispose_id(*it);
   }
 
- private:
+private:
   ContextType* ctx_;
   // Ids only — 8 bytes per node, no boxing and no kind tag. The kind is read
   // back from the arena at teardown, which is also what makes a scope safe
@@ -2099,8 +2004,7 @@ class TeardownScopeImpl {
   std::vector<SlotId> owned_;
 };
 
-template <typename Traits>
-inline TeardownScopeImpl<Traits> ContextImpl<Traits>::scope() {
+template <typename Traits> inline TeardownScopeImpl<Traits> ContextImpl<Traits>::scope() {
   return TeardownScopeImpl<Traits>(*this);
 }
 
@@ -2108,10 +2012,8 @@ inline TeardownScopeImpl<Traits> ContextImpl<Traits>::scope() {
 // Handle method implementations — use Context (= ContextImpl<RcTraits>)
 // ═══════════════════════════════════════════════════════════════════════════
 
-inline void Effect::dispose(Context& ctx) const {
-  ctx.dispose_effect(*this);
-}
+inline void Effect::dispose(Context& ctx) const { ctx.dispose_effect(*this); }
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_CONTEXT_HPP
+#endif // LAZILY_CONTEXT_HPP

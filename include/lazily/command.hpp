@@ -1,8 +1,8 @@
 #ifndef LAZILY_COMMAND_HPP
 #define LAZILY_COMMAND_HPP
 
-#include <lazily/ipc.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/ipc.hpp>
 #include <lazily/receipt.hpp>
 #include <lazily/types.hpp>
 
@@ -29,8 +29,14 @@ struct CommandPolicy {
 };
 
 enum class CommandStatus {
-  Submitted, Accepted, Running,
-  Applied, Rejected, Cancelled, Superseded, TimedOut
+  Submitted,
+  Accepted,
+  Running,
+  Applied,
+  Rejected,
+  Cancelled,
+  Superseded,
+  TimedOut
 };
 
 inline bool is_terminal_status(CommandStatus s) {
@@ -41,10 +47,14 @@ inline bool is_terminal_status(CommandStatus s) {
 
 inline int phase_rank(CommandStatus s) {
   switch (s) {
-    case CommandStatus::Submitted: return 0;
-    case CommandStatus::Accepted: return 1;
-    case CommandStatus::Running: return 2;
-    default: return 3;  // terminal
+  case CommandStatus::Submitted:
+    return 0;
+  case CommandStatus::Accepted:
+    return 1;
+  case CommandStatus::Running:
+    return 2;
+  default:
+    return 3; // terminal
   }
 }
 
@@ -74,7 +84,13 @@ struct CommandCancel {
 };
 
 enum class CommandEventKind {
-  Observed, Accepted, Started, Progress, Cancelled, Superseded, TimedOut
+  Observed,
+  Accepted,
+  Started,
+  Progress,
+  Cancelled,
+  Superseded,
+  TimedOut
 };
 
 struct CommandEvent {
@@ -104,30 +120,41 @@ struct CommandProjectionImage {
   std::vector<CommandProjectionEntry> commands;
 };
 
-struct CommandMessageSubmit { CommandSubmit value; };
-struct CommandMessageCancel { CommandCancel value; };
-struct CommandMessageEvents { CommandEvents value; };
-struct CommandMessageProjection { CommandProjectionImage value; };
+struct CommandMessageSubmit {
+  CommandSubmit value;
+};
+struct CommandMessageCancel {
+  CommandCancel value;
+};
+struct CommandMessageEvents {
+  CommandEvents value;
+};
+struct CommandMessageProjection {
+  CommandProjectionImage value;
+};
 
 using CommandMessage = std::variant<CommandMessageSubmit, CommandMessageCancel,
-                                      CommandMessageEvents, CommandMessageProjection>;
+                                    CommandMessageEvents, CommandMessageProjection>;
 
 struct CommandStatusRecorded {};
 struct CommandStatusDuplicate {};
 struct CommandStatusUnknown {};
-struct CommandStatusStaleGeneration { int64_t expected; int64_t actual; };
+struct CommandStatusStaleGeneration {
+  int64_t expected;
+  int64_t actual;
+};
 struct CommandStatusTerminalConflict {
   std::string command_id;
   CommandStatus existing;
   CommandStatus incoming;
 };
 
-using CommandApplyStatus = std::variant<CommandStatusRecorded, CommandStatusDuplicate,
-                                          CommandStatusUnknown, CommandStatusStaleGeneration,
-                                          CommandStatusTerminalConflict>;
+using CommandApplyStatus =
+    std::variant<CommandStatusRecorded, CommandStatusDuplicate, CommandStatusUnknown,
+                 CommandStatusStaleGeneration, CommandStatusTerminalConflict>;
 
 class CommandProjection {
- public:
+public:
   int64_t generation() const { return generation_; }
 
   CommandApplyStatus apply_message(const CommandMessage& msg) {
@@ -147,10 +174,10 @@ class CommandProjection {
     // The projection folds up to the max authority generation it has seen
     // (matches lazily-rs `submit`). #lzcellkernel
     generation_ = std::max<int64_t>(generation_, cmd.authority_generation);
-    entries_[cmd.command_id] = {
-      cmd.command_id, CommandStatus::Submitted, false, cmd.authority_generation,
-      std::nullopt, std::nullopt, std::nullopt
-    };
+    entries_[cmd.command_id] = {cmd.command_id, CommandStatus::Submitted,
+                                false,          cmd.authority_generation,
+                                std::nullopt,   std::nullopt,
+                                std::nullopt};
     return CommandStatusRecorded{};
   }
 
@@ -172,11 +199,17 @@ class CommandProjection {
     CommandApplyStatus last = CommandStatusRecorded{};
     for (auto& evt : events.events) {
       auto it = entries_.find(evt.command_id);
-      if (it == entries_.end()) { last = CommandStatusUnknown{}; continue; }
-      if (seen_event_ids_.count(evt.event_id)) { last = CommandStatusDuplicate{}; continue; }
+      if (it == entries_.end()) {
+        last = CommandStatusUnknown{};
+        continue;
+      }
+      if (seen_event_ids_.count(evt.event_id)) {
+        last = CommandStatusDuplicate{};
+        continue;
+      }
       if (evt.generation != it->second.generation) {
         last = CommandStatusStaleGeneration{it->second.generation, evt.generation};
-        continue;  // stale-generation event: ignore
+        continue; // stale-generation event: ignore
       }
       seen_event_ids_.insert(evt.event_id);
       it->second.last_event_id = evt.event_id;
@@ -238,13 +271,14 @@ class CommandProjection {
 
   CommandProjectionImage to_image() const {
     std::vector<CommandProjectionEntry> cmds;
-    for (auto& [_, e] : entries_) cmds.push_back(e);
+    for (auto& [_, e] : entries_)
+      cmds.push_back(e);
     std::sort(cmds.begin(), cmds.end(),
               [](const auto& a, const auto& b) { return a.command_id < b.command_id; });
     return {generation_, std::move(cmds)};
   }
 
- private:
+private:
   int64_t generation_ = 0;
   std::unordered_map<std::string, CommandProjectionEntry> entries_;
   std::unordered_set<std::string> seen_event_ids_;
@@ -253,16 +287,19 @@ class CommandProjection {
 
   static CommandStatus progress_status_of(CommandEventKind kind) {
     switch (kind) {
-      case CommandEventKind::Observed:
-      case CommandEventKind::Accepted: return CommandStatus::Accepted;
-      case CommandEventKind::Started:
-      case CommandEventKind::Progress: return CommandStatus::Running;
-      default: return CommandStatus::Submitted;  // UX-only kinds
+    case CommandEventKind::Observed:
+    case CommandEventKind::Accepted:
+      return CommandStatus::Accepted;
+    case CommandEventKind::Started:
+    case CommandEventKind::Progress:
+      return CommandStatus::Running;
+    default:
+      return CommandStatus::Submitted; // UX-only kinds
     }
   }
 
   static CommandStatus terminal_status_of(ReceiptOutcome outcome,
-                                            std::optional<std::string> reason) {
+                                          std::optional<std::string> reason) {
     if (outcome == ReceiptOutcome::Applied) return CommandStatus::Applied;
     if (outcome == ReceiptOutcome::Rejected) {
       if (reason) {
@@ -285,7 +322,7 @@ class CommandProjection {
 inline constexpr NodeId kFamilyNodeBase = static_cast<NodeId>(1) << 48;
 
 class CrdtPlaneRuntime {
- public:
+public:
   explicit CrdtPlaneRuntime(PeerId peer) : peer_(peer), hlc_(peer) {}
 
   PeerId peer() const { return peer_; }
@@ -305,10 +342,8 @@ class CrdtPlaneRuntime {
     int applied = 0;
     for (auto& op : ops) {
       // Dedup by (node, stamp)
-      auto dedup_key = std::to_string(op.node) + ":" +
-                        std::to_string(op.stamp.wall_time) + ":" +
-                        std::to_string(op.stamp.logical) + ":" +
-                        std::to_string(op.stamp.peer);
+      auto dedup_key = std::to_string(op.node) + ":" + std::to_string(op.stamp.wall_time) + ":" +
+                       std::to_string(op.stamp.logical) + ":" + std::to_string(op.stamp.peer);
       if (log_.count(dedup_key)) continue;
       log_.insert(dedup_key);
       ops_log_.push_back(op);
@@ -387,7 +422,8 @@ class CrdtPlaneRuntime {
 
   std::vector<NodeId> nodes() const {
     std::vector<NodeId> result;
-    for (auto& [n, _] : winning_) result.push_back(n);
+    for (auto& [n, _] : winning_)
+      result.push_back(n);
     std::sort(result.begin(), result.end());
     return result;
   }
@@ -461,9 +497,8 @@ class CrdtPlaneRuntime {
   // `value` at `now_micros`, returning the `CrdtOp` to broadcast (or
   // `std::nullopt` if the key is invalid). Materializes the entry (and bumps
   // membership) on first insert.
-  std::optional<CrdtOp> family_set_lww(const std::string& namespace_,
-                                       const std::string& key_suffix, bool value,
-                                       int64_t now_micros) {
+  std::optional<CrdtOp> family_set_lww(const std::string& namespace_, const std::string& key_suffix,
+                                       bool value, int64_t now_micros) {
     auto node_key = NodeKey::create(namespace_ + "/" + key_suffix);
     if (!node_key) return std::nullopt;
     std::string key_str = node_key->to_wire();
@@ -480,14 +515,12 @@ class CrdtPlaneRuntime {
     }
     HlcStamp stamp = hlc_.tick(now_micros);
     WireStamp wire = to_wire(stamp);
-    IpcValue state = IpcValueInline{
-        std::vector<uint8_t>{static_cast<uint8_t>(value ? 1 : 0)}};
+    IpcValue state = IpcValueInline{std::vector<uint8_t>{static_cast<uint8_t>(value ? 1 : 0)}};
     CrdtOp op{node, *node_key, wire, state};
     // Record locally (winner + op log + frontier), like a local edit; syncFrame
     // ships `ops()` so a peer can adopt the entry.
-    auto dedup_key = std::to_string(node) + ":" + std::to_string(wire.wall_time) +
-                     ":" + std::to_string(wire.logical) + ":" +
-                     std::to_string(wire.peer);
+    auto dedup_key = std::to_string(node) + ":" + std::to_string(wire.wall_time) + ":" +
+                     std::to_string(wire.logical) + ":" + std::to_string(wire.peer);
     if (!log_.count(dedup_key)) {
       log_.insert(dedup_key);
       ops_log_.push_back(op);
@@ -501,12 +534,10 @@ class CrdtPlaneRuntime {
     return op;
   }
 
- private:
-  bool record_family_member(const std::string& namespace_,
-                            const std::string& key) {
+private:
+  bool record_family_member(const std::string& namespace_, const std::string& key) {
     auto& members = family_members_[namespace_];
-    if (std::find(members.begin(), members.end(), key) != members.end())
-      return false;
+    if (std::find(members.begin(), members.end(), key) != members.end()) return false;
     members.push_back(key);
     return true;
   }
@@ -552,9 +583,11 @@ struct BenchmarkResult {
   }
 };
 
-inline BenchmarkResult benchmark(const std::string& name, std::function<void()> body, int iterations) {
+inline BenchmarkResult benchmark(const std::string& name, std::function<void()> body,
+                                 int iterations) {
   auto start = std::chrono::high_resolution_clock::now();
-  for (int i = 0; i < iterations; ++i) body();
+  for (int i = 0; i < iterations; ++i)
+    body();
   auto end = std::chrono::high_resolution_clock::now();
   auto micros = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   return {name, iterations, static_cast<int64_t>(micros)};
@@ -564,32 +597,41 @@ inline constexpr int kDefaultBenchmarkIterations = 10000;
 
 inline std::vector<BenchmarkResult> run_benchmark_suite(int iterations) {
   std::vector<BenchmarkResult> results;
-  results.push_back(benchmark("Cell read/write", [&]() {
-    Context ctx;
-    auto c = ctx.source(42);
-    ctx.set(c, 100);
-    (void)ctx.get(c);
-  }, iterations));
-  results.push_back(benchmark("Slot recompute", [&]() {
-    Context ctx;
-    auto a = ctx.source(1);
-    auto b = ctx.source(2);
-    auto s = ctx.computed<int>([&](Compute& c) {
-      return c.get(a) + c.get(b);
-    });
-    (void)ctx.get(s);
-  }, iterations));
-  results.push_back(benchmark("batch coalesce (10 cells)", [&]() {
-    Context ctx;
-    std::vector<Source<int>> cells;
-    for (int i = 0; i < 10; ++i) cells.push_back(ctx.source(i));
-    ctx.batch([&](Context& c) {
-      for (int i = 0; i < 10; ++i) c.set(cells[i], i + 100);
-    });
-  }, iterations));
+  results.push_back(benchmark(
+      "Cell read/write",
+      [&]() {
+        Context ctx;
+        auto c = ctx.source(42);
+        ctx.set(c, 100);
+        (void)ctx.get(c);
+      },
+      iterations));
+  results.push_back(benchmark(
+      "Slot recompute",
+      [&]() {
+        Context ctx;
+        auto a = ctx.source(1);
+        auto b = ctx.source(2);
+        auto s = ctx.computed<int>([&](Compute& c) { return c.get(a) + c.get(b); });
+        (void)ctx.get(s);
+      },
+      iterations));
+  results.push_back(benchmark(
+      "batch coalesce (10 cells)",
+      [&]() {
+        Context ctx;
+        std::vector<Source<int>> cells;
+        for (int i = 0; i < 10; ++i)
+          cells.push_back(ctx.source(i));
+        ctx.batch([&](Context& c) {
+          for (int i = 0; i < 10; ++i)
+            c.set(cells[i], i + 100);
+        });
+      },
+      iterations));
   return results;
 }
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_COMMAND_HPP
+#endif // LAZILY_COMMAND_HPP

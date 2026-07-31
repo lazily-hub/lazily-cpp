@@ -18,8 +18,8 @@
 #include <set>
 #include <utility>
 
-#include <lazily/context.hpp>
 #include <lazily/cell.hpp>
+#include <lazily/context.hpp>
 
 namespace lazily {
 
@@ -28,15 +28,12 @@ namespace lazily {
 // ===========================================================================
 
 /// Single-writer lease authority with a monotone fencing token.
-template <typename P>
-class LeaseCore {
- public:
+template <typename P> class LeaseCore {
+public:
   LeaseCore() : holder_(std::nullopt), expiry_(0), fence_(0) {}
 
   /// Whether the lease is currently held (and not expired at `now`).
-  bool is_held(uint64_t now) const {
-    return holder_.has_value() && !is_expired(now);
-  }
+  bool is_held(uint64_t now) const { return holder_.has_value() && !is_expired(now); }
 
   /// The live holder at `now`.
   std::optional<P> holder(uint64_t now) const {
@@ -57,7 +54,7 @@ class LeaseCore {
       return fence_;
     }
     if (holder_ == peer) {
-      expiry_ = now + ttl;  // renew keeps fence
+      expiry_ = now + ttl; // renew keeps fence
       return fence_;
     }
     return std::nullopt;
@@ -86,10 +83,8 @@ class LeaseCore {
     return false;
   }
 
- private:
-  bool is_expired(uint64_t now) const {
-    return holder_.has_value() && now >= expiry_;
-  }
+private:
+  bool is_expired(uint64_t now) const { return holder_.has_value() && now >= expiry_; }
 
   std::optional<P> holder_;
   uint64_t expiry_;
@@ -98,14 +93,11 @@ class LeaseCore {
 
 /// Reactive lease: projects the holder onto a cell (invalidates on holder
 /// change).
-template <typename P>
-class LeaseCell {
- public:
-  explicit LeaseCell(Context& ctx)
-      : core_(), holder_(ctx.source(std::optional<P>(std::nullopt))) {}
+template <typename P> class LeaseCell {
+public:
+  explicit LeaseCell(Context& ctx) : core_(), holder_(ctx.source(std::optional<P>(std::nullopt))) {}
 
-  std::optional<uint64_t> acquire(Context& ctx, P peer, uint64_t now,
-                                  uint64_t ttl) {
+  std::optional<uint64_t> acquire(Context& ctx, P peer, uint64_t now, uint64_t ttl) {
     auto r = core_.acquire(std::move(peer), now, ttl);
     refresh(ctx, now);
     return r;
@@ -133,10 +125,8 @@ class LeaseCell {
   uint64_t fence() const { return core_.fence(); }
   Source<std::optional<P>> holder_cell() const { return holder_; }
 
- private:
-  void refresh(Context& ctx, uint64_t now) {
-    ctx.set(holder_, core_.holder(now));
-  }
+private:
+  void refresh(Context& ctx, uint64_t now) { ctx.set(holder_, core_.holder(now)); }
 
   LeaseCore<P> core_;
   Source<std::optional<P>> holder_;
@@ -154,13 +144,10 @@ enum class LeaderRole {
 };
 
 /// Reactive leadership over a lease from node `me`'s perspective.
-template <typename P>
-class LeaderCell {
- public:
+template <typename P> class LeaderCell {
+public:
   LeaderCell(Context& ctx, P me)
-      : core_(),
-        me_(std::move(me)),
-        current_leader_(ctx.source(std::optional<P>(std::nullopt))) {}
+      : core_(), me_(std::move(me)), current_leader_(ctx.source(std::optional<P>(std::nullopt))) {}
 
   /// Try to acquire leadership for `me`.
   LeaderRole campaign(Context& ctx, uint64_t now, uint64_t ttl) {
@@ -182,9 +169,7 @@ class LeaderCell {
     return role(now);
   }
 
-  std::optional<P> current_leader(uint64_t now) const {
-    return core_.holder(now);
-  }
+  std::optional<P> current_leader(uint64_t now) const { return core_.holder(now); }
 
   LeaderRole role(uint64_t now) const {
     auto h = core_.holder(now);
@@ -192,14 +177,10 @@ class LeaderCell {
     return (*h == me_) ? LeaderRole::Leader : LeaderRole::Follower;
   }
 
-  Source<std::optional<P>> current_leader_cell() const {
-    return current_leader_;
-  }
+  Source<std::optional<P>> current_leader_cell() const { return current_leader_; }
 
- private:
-  void refresh(Context& ctx, uint64_t now) {
-    ctx.set(current_leader_, core_.holder(now));
-  }
+private:
+  void refresh(Context& ctx, uint64_t now) { ctx.set(current_leader_, core_.holder(now)); }
 
   LeaseCore<P> core_;
   P me_;
@@ -211,14 +192,12 @@ class LeaderCell {
 // ===========================================================================
 
 /// Reactive distributed mutex over a lease + fencing token.
-template <typename P>
-class LockCell {
- public:
+template <typename P> class LockCell {
+public:
   explicit LockCell(Context& ctx) : core_(), is_locked_(ctx.source(false)) {}
 
   /// Acquire the lock, returning a fencing token, or `std::nullopt` if held.
-  std::optional<uint64_t> acquire(Context& ctx, P peer, uint64_t now,
-                                  uint64_t ttl) {
+  std::optional<uint64_t> acquire(Context& ctx, P peer, uint64_t now, uint64_t ttl) {
     auto r = core_.acquire(std::move(peer), now, ttl);
     refresh(ctx, now);
     return r;
@@ -242,10 +221,8 @@ class LockCell {
   uint64_t fence() const { return core_.fence(); }
   Source<bool> is_locked_cell() const { return is_locked_; }
 
- private:
-  void refresh(Context& ctx, uint64_t now) {
-    ctx.set(is_locked_, core_.is_held(now));
-  }
+private:
+  void refresh(Context& ctx, uint64_t now) { ctx.set(is_locked_, core_.is_held(now)); }
 
   LeaseCore<P> core_;
   Source<bool> is_locked_;
@@ -257,9 +234,8 @@ class LockCell {
 
 /// Bounded permit pool compute core.
 class SemaphoreCore {
- public:
-  explicit SemaphoreCore(uint64_t capacity)
-      : capacity_(capacity), acquired_(0) {}
+public:
+  explicit SemaphoreCore(uint64_t capacity) : capacity_(capacity), acquired_(0) {}
 
   uint64_t available() const { return capacity_ - acquired_; }
 
@@ -275,14 +251,14 @@ class SemaphoreCore {
     if (acquired_ > 0) acquired_ -= 1;
   }
 
- private:
+private:
   uint64_t capacity_;
   uint64_t acquired_;
 };
 
 /// Reactive semaphore: projects `permits_available` onto a cell.
 class SemaphoreCell {
- public:
+public:
   SemaphoreCell(Context& ctx, uint64_t capacity)
       : core_(capacity), available_(ctx.source<uint64_t>(capacity)) {}
 
@@ -300,7 +276,7 @@ class SemaphoreCell {
   uint64_t permits_available(Context& ctx) const { return available_.get(ctx); }
   Source<uint64_t> permits_available_cell() const { return available_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(available_, core_.available()); }
 
   SemaphoreCore core_;
@@ -312,9 +288,8 @@ class SemaphoreCell {
 // ===========================================================================
 
 /// Wait-for-N gate compute core over distinct arriving peers.
-template <typename P>
-class BarrierCore {
- public:
+template <typename P> class BarrierCore {
+public:
   explicit BarrierCore(uint64_t required) : required_(required) {}
 
   /// Register a distinct arrival; returns whether the gate is open afterward.
@@ -327,16 +302,15 @@ class BarrierCore {
 
   bool is_open() const { return count() >= required_; }
 
- private:
+private:
   uint64_t required_;
   std::set<P> arrived_;
 };
 
 /// Reactive wait-for-N gate. `quorum` is a barrier with
 /// `required = total / 2 + 1`.
-template <typename P>
-class BarrierCell {
- public:
+template <typename P> class BarrierCell {
+public:
   BarrierCell(Context& ctx, uint64_t required)
       : core_(required), is_open_(ctx.source(core_.is_open())) {}
 
@@ -356,13 +330,13 @@ class BarrierCell {
   bool is_open(Context& ctx) const { return is_open_.get(ctx); }
   Source<bool> is_open_cell() const { return is_open_; }
 
- private:
+private:
   void refresh(Context& ctx) { ctx.set(is_open_, core_.is_open()); }
 
   BarrierCore<P> core_;
   Source<bool> is_open_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_COORDINATION_HPP
+#endif // LAZILY_COORDINATION_HPP

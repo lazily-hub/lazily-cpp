@@ -26,15 +26,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 static const char* kNamespace = "live";
@@ -54,12 +54,11 @@ struct Set {
 
 // Ship the origin's whole op log + frontier and ingest into the target, then run
 // every fixture assertion for a scenario.
-static void run_scenario(PeerId origin_peer, PeerId target_peer,
-                         const std::vector<Set>& sets, bool reingest,
-                         const std::vector<std::string>& want_suffixes,
+static void run_scenario(PeerId origin_peer, PeerId target_peer, const std::vector<Set>& sets,
+                         bool reingest, const std::vector<std::string>& want_suffixes,
                          const std::vector<std::pair<std::string, bool>>& want_values,
-                         int want_present_count, int want_count_true,
-                         int want_reingest_applied, bool want_epoch_bumped) {
+                         int want_present_count, int want_count_true, int want_reingest_applied,
+                         bool want_epoch_bumped) {
   CrdtPlaneRuntime origin(origin_peer);
   origin.register_family_lww(kNamespace);
 
@@ -91,8 +90,7 @@ static void run_scenario(PeerId origin_peer, PeerId target_peer,
   assert(got_suffixes == want_sorted);
 
   // Present count.
-  assert(static_cast<int>(target.family_keys(kNamespace).size()) ==
-         want_present_count);
+  assert(static_cast<int>(target.family_keys(kNamespace).size()) == want_present_count);
 
   // Adopted values converge.
   for (const auto& kv : want_values) {

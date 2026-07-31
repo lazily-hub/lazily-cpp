@@ -27,15 +27,15 @@ using lazily_test::Json;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 static LeafKind leaf_kind(const std::string& s) {
@@ -48,8 +48,7 @@ static LeafKind leaf_kind(const std::string& s) {
 }
 
 static TreeNodeSeed node_seed(const Json* spec) {
-  if (const Json* el = spec->find("element"))
-    return TreeNodeSeedElement{el->str};
+  if (const Json* el = spec->find("element")) return TreeNodeSeedElement{el->str};
   const Json* leaf = spec->find("leaf");
   REQUIRE(leaf != nullptr, "node spec has neither element nor leaf");
   return TreeNodeSeedLeaf{leaf_kind(leaf->find("kind")->str), leaf->find("text")->str};
@@ -78,8 +77,7 @@ struct World {
     OpId prev_store;
     for (const auto& child : children->array) {
       const std::string label = child->find("label")->str;
-      OpId created =
-          replicas.at("a").create_node(parent, prev, node_seed(child.get()));
+      OpId created = replicas.at("a").create_node(parent, prev, node_seed(child.get()));
       ids[label] = created;
       build_children(child.get(), ids.at(label));
       prev_store = created;
@@ -150,12 +148,13 @@ static void assert_expect(World& w, const Json* expect, const std::string& scen)
   // (the scenario counter is independent of whether any expectation ran).
   // Reject unknown keys the way the step dispatcher above already does.
   for (const auto& kv : expect->object)
-    REQUIRE(kv.first == "render" || kv.first == "render_on" ||
-                kv.first == "live_nodes" || kv.first == "converged",
+    REQUIRE(kv.first == "render" || kv.first == "render_on" || kv.first == "live_nodes" ||
+                kv.first == "converged",
             ("unrecognised lossless-tree expect key — it would be silently "
-             "ignored: " + scen).c_str());
-  REQUIRE(!expect->object.empty(),
-          ("a lossless-tree scenario asserts nothing: " + scen).c_str());
+             "ignored: " +
+             scen)
+                .c_str());
+  REQUIRE(!expect->object.empty(), ("a lossless-tree scenario asserts nothing: " + scen).c_str());
   if (const Json* text = expect->find("render"))
     REQUIRE(w.replicas.at("a").render() == text->str, ("render on a: " + scen).c_str());
   if (const Json* per = expect->find("render_on"))
@@ -187,14 +186,15 @@ static void run_fixture(const std::string& name, int& fixture_scenarios) {
     const Json* seed = scenario->find("seed");
     REQUIRE(seed != nullptr, "scenario missing seed");
     const std::string label =
-        name + "[" + (scenario->find("name") ? scenario->find("name")->str
-                                              : std::to_string(i)) + "]";
+        name + "[" + (scenario->find("name") ? scenario->find("name")->str : std::to_string(i)) +
+        "]";
     World w;
     w.replicas.insert_or_assign(
         "a", LosslessTreeCrdt(static_cast<PeerId>(seed->find("peer")->as_int())));
     w.build_children(seed->find("tree"), kTreeRoot);
     if (const Json* steps = scenario->find("steps"))
-      for (const auto& step : steps->array) apply_step(w, step.get());
+      for (const auto& step : steps->array)
+        apply_step(w, step.get());
     assert_expect(w, scenario->find("expect"), label);
     ++fixture_scenarios;
   }
@@ -214,13 +214,14 @@ TEST(conformance_lossless_tree_all) {
       "invalid_source_roundtrip.json",
       "concurrent_conflict_preserves_text.json",
   };
-  for (const char* f : fixtures) run_fixture(f, g_scenarios);
+  for (const char* f : fixtures)
+    run_fixture(f, g_scenarios);
   REQUIRE(g_scenarios >= 9, "expected at least one scenario per fixture");
 }
 
 int main() {
   REQUIRE_FIXTURES_LOADED(9);
-  std::cout << "lazily-cpp lossless-tree conformance: " << test_passed << "/"
-            << test_count << " passed (" << g_scenarios << " scenarios)" << std::endl;
+  std::cout << "lazily-cpp lossless-tree conformance: " << test_passed << "/" << test_count
+            << " passed (" << g_scenarios << " scenarios)" << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

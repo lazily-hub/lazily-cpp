@@ -47,8 +47,7 @@ struct RecursiveLockPolicy {
   // Exclusive guard. (token/me unused — recursion is native.)
   struct write_guard {
     std::lock_guard<mutex_type> g;
-    write_guard(mutex_type& m, std::atomic<uint64_t>& /*token*/, uint64_t /*me*/)
-        : g(m) {}
+    write_guard(mutex_type& m, std::atomic<uint64_t>& /*token*/, uint64_t /*me*/) : g(m) {}
   };
 };
 
@@ -64,8 +63,7 @@ struct RwLockPolicy {
   struct write_guard {
     std::unique_lock<mutex_type> g;
     std::atomic<uint64_t>* token;
-    write_guard(mutex_type& m, std::atomic<uint64_t>& t, uint64_t me)
-        : g(m), token(&t) {
+    write_guard(mutex_type& m, std::atomic<uint64_t>& t, uint64_t me) : g(m), token(&t) {
       t.store(me, std::memory_order_release);
     }
     ~write_guard() { token->store(0, std::memory_order_release); }
@@ -102,16 +100,15 @@ class ScalableRwLock {
 
   std::unique_ptr<RSlot[]> readers_;
   std::atomic<bool> writer_waiting_{false};
-  std::mutex writer_mx_;  // serialize writers
+  std::mutex writer_mx_; // serialize writers
 
   static int my_slot() {
     static std::atomic<int> next{0};
-    thread_local int s =
-        next.fetch_add(1, std::memory_order_relaxed) % kPool;
+    thread_local int s = next.fetch_add(1, std::memory_order_relaxed) % kPool;
     return s;
   }
 
- public:
+public:
   ScalableRwLock() : readers_(new RSlot[kPool]()) {}
 
   // Reader side.
@@ -122,16 +119,14 @@ class ScalableRwLock {
       // active is visible before we observe the writer flag.
       if (!writer_waiting_.load(std::memory_order_seq_cst)) {
         std::atomic_thread_fence(std::memory_order_acquire);
-        return;  // in CS; writer cannot start (it would see our active slot)
+        return; // in CS; writer cannot start (it would see our active slot)
       }
       readers_[s].active.store(0, std::memory_order_seq_cst);
       while (writer_waiting_.load(std::memory_order_acquire))
         std::this_thread::yield();
     }
   }
-  void unlock_shared() {
-    readers_[my_slot()].active.store(0, std::memory_order_seq_cst);
-  }
+  void unlock_shared() { readers_[my_slot()].active.store(0, std::memory_order_seq_cst); }
 
   // Writer side.
   void lock() {
@@ -160,22 +155,19 @@ struct ScalableRwLockPolicy {
   struct write_guard {
     std::unique_lock<mutex_type> g;
     std::atomic<uint64_t>* token;
-    write_guard(mutex_type& m, std::atomic<uint64_t>& t, uint64_t me)
-        : g(m), token(&t) {
+    write_guard(mutex_type& m, std::atomic<uint64_t>& t, uint64_t me) : g(m), token(&t) {
       t.store(me, std::memory_order_release);
     }
     ~write_guard() { token->store(0, std::memory_order_release); }
   };
 };
 
-template <typename Policy = RecursiveLockPolicy>
-class BasicThreadSafeContext {
- public:
+template <typename Policy = RecursiveLockPolicy> class BasicThreadSafeContext {
+public:
   BasicThreadSafeContext() : ctx_() {}
 
   /// Exclusive write access. Re-entrant for the owning writer thread.
-  template <typename F>
-  auto write(F&& fn) -> decltype(fn(std::declval<Context&>())) {
+  template <typename F> auto write(F&& fn) -> decltype(fn(std::declval<Context&>())) {
     if (am_writer()) return fn(ctx_);
     typename Policy::write_guard g(mutex_, writer_token_, my_token());
     return fn(ctx_);
@@ -183,8 +175,7 @@ class BasicThreadSafeContext {
 
   /// Read access. Shared for RwLockPolicy, exclusive for RecursiveLockPolicy.
   /// Re-entrant writers bypass.
-  template <typename F>
-  auto read(F&& fn) -> decltype(fn(std::declval<Context&>())) {
+  template <typename F> auto read(F&& fn) -> decltype(fn(std::declval<Context&>())) {
     if (am_writer()) return fn(ctx_);
     typename Policy::read_guard g(mutex_);
     return fn(ctx_);
@@ -197,16 +188,16 @@ class BasicThreadSafeContext {
   // Mirrors the collapsed core surface (`#lzcellkernel`): `source`/`computed`/
   // `slot` constructors, unified `get`/`set`, deprecated `cell`/`get_cell`/
   // `set_cell` aliases; `memo` is deleted.
-  template <typename T>
-  Source<T> source(T value) {
+  template <typename T> Source<T> source(T value) {
     return write([&](Context& c) { return c.source(std::move(value)); });
   }
   template <typename T>
   [[deprecated("use ThreadSafeContext::source (#lzcellkernel)")]]
-  Source<T> cell(T value) { return source<T>(std::move(value)); }
+  Source<T> cell(T value) {
+    return source<T>(std::move(value));
+  }
 
-  template <typename T, typename M>
-  void set(const Source<T, M>& handle, T value) {
+  template <typename T, typename M> void set(const Source<T, M>& handle, T value) {
     write([&](Context& c) { c.set(handle, std::move(value)); });
   }
   template <typename T, typename M>
@@ -214,34 +205,25 @@ class BasicThreadSafeContext {
   void set_cell(const Source<T, M>& handle, T value) {
     set(handle, std::move(value));
   }
-  template <typename F>
-  auto batch(F&& fn) {
+  template <typename F> auto batch(F&& fn) {
     return write([&](Context& c) { return c.batch(std::forward<F>(fn)); });
   }
 
-  template <typename T, typename F>
-  Computed<T> slot(F&& compute) {
-    return write(
-        [&](Context& c) { return c.template slot<T>(std::forward<F>(compute)); });
+  template <typename T, typename F> Computed<T> slot(F&& compute) {
+    return write([&](Context& c) { return c.template slot<T>(std::forward<F>(compute)); });
   }
-  template <typename T, typename F>
-  Computed<T> computed(F&& compute) {
-    return write(
-        [&](Context& c) { return c.template computed<T>(std::forward<F>(compute)); });
+  template <typename T, typename F> Computed<T> computed(F&& compute) {
+    return write([&](Context& c) { return c.template computed<T>(std::forward<F>(compute)); });
   }
   // Eager-computed convenience — returns the eager `Computed<T>` (the `Signal`
   // kind is retired, `#lzcellkernel`). De-eager with `.lazy`, read with `.get`.
-  template <typename T, typename F>
-  Computed<T> signal(F&& compute) {
-    return write(
-        [&](Context& c) { return c.template signal<T>(std::forward<F>(compute)); });
+  template <typename T, typename F> Computed<T> signal(F&& compute) {
+    return write([&](Context& c) { return c.template signal<T>(std::forward<F>(compute)); });
   }
-  template <typename F>
-  Effect effect(F&& run) {
+  template <typename F> Effect effect(F&& run) {
     return write([&](Context& c) { return c.effect(std::forward<F>(run)); });
   }
-  template <typename F>
-  Effect effect_void(F&& run) {
+  template <typename F> Effect effect_void(F&& run) {
     return write([&](Context& c) { return c.effect_void(std::forward<F>(run)); });
   }
   void dispose_effect(const Effect& handle) {
@@ -249,8 +231,7 @@ class BasicThreadSafeContext {
   }
 
   // -- Read API --
-  template <typename T, typename M>
-  T get(const Source<T, M>& handle) {
+  template <typename T, typename M> T get(const Source<T, M>& handle) {
     if (am_writer()) return ctx_.get(handle);
     if constexpr (Policy::kSharedReads) {
       typename Policy::read_guard g(mutex_);
@@ -264,10 +245,11 @@ class BasicThreadSafeContext {
   }
   template <typename T, typename M>
   [[deprecated("use ThreadSafeContext::get (#lzcellkernel)")]]
-  T get_cell(const Source<T, M>& handle) { return get(handle); }
+  T get_cell(const Source<T, M>& handle) {
+    return get(handle);
+  }
 
-  template <typename T>
-  T get(const Computed<T>& handle) {
+  template <typename T> T get(const Computed<T>& handle) {
     if (am_writer()) return ctx_.get(handle);
     if constexpr (Policy::kSharedReads) {
       {
@@ -283,8 +265,7 @@ class BasicThreadSafeContext {
     }
   }
 
-  template <typename T, typename M>
-  std::shared_ptr<T> get_cell_rc(const Source<T, M>& handle) {
+  template <typename T, typename M> std::shared_ptr<T> get_cell_rc(const Source<T, M>& handle) {
     if (am_writer()) return ctx_.get_cell_rc(handle);
     if constexpr (Policy::kSharedReads) {
       typename Policy::read_guard g(mutex_);
@@ -297,8 +278,7 @@ class BasicThreadSafeContext {
     }
   }
 
-  template <typename T>
-  std::shared_ptr<T> get_rc(const Computed<T>& handle) {
+  template <typename T> std::shared_ptr<T> get_rc(const Computed<T>& handle) {
     if (am_writer()) return ctx_.get_rc(handle);
     if constexpr (Policy::kSharedReads) {
       {
@@ -314,8 +294,7 @@ class BasicThreadSafeContext {
     }
   }
 
-  template <typename T>
-  bool is_set(const Computed<T>& handle) {
+  template <typename T> bool is_set(const Computed<T>& handle) {
     return read([&](Context& c) { return c.is_set(handle); });
   }
   bool is_batching() {
@@ -325,7 +304,7 @@ class BasicThreadSafeContext {
     return read([&](Context& c) { return c.is_effect_active(handle); });
   }
 
- private:
+private:
   Context ctx_;
   typename Policy::mutex_type mutex_;
   // Token of the thread holding the exclusive write lock (0 = none). Meaningful
@@ -337,13 +316,10 @@ class BasicThreadSafeContext {
 
   static uint64_t my_token() {
     static std::atomic<uint64_t> counter{0};
-    thread_local uint64_t tok =
-        counter.fetch_add(1, std::memory_order_relaxed) + 1;
+    thread_local uint64_t tok = counter.fetch_add(1, std::memory_order_relaxed) + 1;
     return tok;
   }
-  bool am_writer() const {
-    return writer_token_.load(std::memory_order_acquire) == my_token();
-  }
+  bool am_writer() const { return writer_token_.load(std::memory_order_acquire) == my_token(); }
 };
 
 /// Default thread-safe context — recursive_mutex (no single-thread overhead,
@@ -380,6 +356,6 @@ struct BatchWrite {
       : node_id(std::move(id)), value(std::move(v)), type_id(t) {}
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_THREAD_SAFE_HPP
+#endif // LAZILY_THREAD_SAFE_HPP

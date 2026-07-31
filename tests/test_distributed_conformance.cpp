@@ -87,7 +87,7 @@ static IpcValue ipc_value_of(const Json* node) {
     return IpcValueSharedBlob{blob};
   }
   REQUIRE(false, "unknown IpcValue variant tag in fixture");
-  return IpcValueInline{};  // unreachable
+  return IpcValueInline{}; // unreachable
 }
 
 static WireStamp stamp_of(const Json* node) {
@@ -129,33 +129,30 @@ static CrdtOp op_of(const Json* node) {
 
 // Keys a scenario's `expect` block may carry.
 static bool is_known_expect_key(const std::string& key) {
-  return key == "resolution" || key == "applied_count" ||
-         key == "redeliver_applied_count" || key == "order_independent" ||
-         key == "converged";
+  return key == "resolution" || key == "applied_count" || key == "redeliver_applied_count" ||
+         key == "order_independent" || key == "converged";
 }
 
 static bool is_known_scenario_key(const std::string& key) {
-  return key == "name" || key == "description" || key == "ops" ||
-         key == "expect" || key == "redeliver" || key == "reverse_order_equivalent";
+  return key == "name" || key == "description" || key == "ops" || key == "expect" ||
+         key == "redeliver" || key == "reverse_order_equivalent";
 }
 
-static void assert_converged(const std::string& scenario,
-                             const CrdtPlaneRuntime& runtime,
+static void assert_converged(const std::string& scenario, const CrdtPlaneRuntime& runtime,
                              const Json* converged) {
   REQUIRE(converged != nullptr && converged->is_array() && !converged->array.empty(),
           "a scenario's expect block has no converged entries");
   for (const auto& entry : converged->array) {
     const Json* node_id = entry->find("node");
     const Json* state = entry->find("state");
-    REQUIRE(node_id != nullptr && state != nullptr,
-            "a converged entry needs a node and a state");
+    REQUIRE(node_id != nullptr && state != nullptr, "a converged entry needs a node and a state");
     const auto node = static_cast<NodeId>(node_id->as_int());
     const auto got = runtime.value(node);
     ++g_checks;
     REQUIRE(got.has_value(), "a converged node has no value in the runtime");
     if (!ipc_value_equal(*got, ipc_value_of(state))) {
-      std::cout << "FAIL: " << scenario << ": converged state mismatch for node "
-                << node << std::endl;
+      std::cout << "FAIL: " << scenario << ": converged state mismatch for node " << node
+                << std::endl;
       std::abort();
     }
   }
@@ -167,19 +164,17 @@ int main() {
   REQUIRE(fixture->is_object(), "fixture root is not an object");
 
   const Json* model = fixture->find("model");
-  REQUIRE(model != nullptr && model->str == "CrdtPlane",
-          "fixture is not a CrdtPlane corpus");
+  REQUIRE(model != nullptr && model->str == "CrdtPlane", "fixture is not a CrdtPlane corpus");
 
   const Json* scenarios = fixture->find("scenarios");
   REQUIRE(scenarios != nullptr && scenarios->is_array() && !scenarios->array.empty(),
           "fixture has no scenarios to replay");
 
-  for (std::size_t scenario_index = 0; scenario_index < scenarios->array.size();
-       ++scenario_index) {
+  for (std::size_t scenario_index = 0; scenario_index < scenarios->array.size(); ++scenario_index) {
     const auto& scenario_node = scenarios->array[scenario_index];
     REQUIRE(scenario_node->is_object(), "a scenario is not an object");
-    lazily_test::record_scenario_at(std::string(kArea) + "/" + kFixture,
-                                    *scenario_node, scenario_index);
+    lazily_test::record_scenario_at(std::string(kArea) + "/" + kFixture, *scenario_node,
+                                    scenario_index);
     for (const auto& kv : scenario_node->object)
       REQUIRE(is_known_scenario_key(kv.first),
               "unrecognised distributed scenario key in fixture — it would be "
@@ -194,7 +189,8 @@ int main() {
     REQUIRE(ops_node != nullptr && ops_node->is_array() && !ops_node->array.empty(),
             "a scenario has no ops");
     std::vector<CrdtOp> ops;
-    for (const auto& op_node : ops_node->array) ops.push_back(op_of(op_node.get()));
+    for (const auto& op_node : ops_node->array)
+      ops.push_back(op_of(op_node.get()));
 
     const Json* expect = scenario_node->find("expect");
     REQUIRE(expect != nullptr && expect->is_object(), "a scenario has no expect block");
@@ -219,8 +215,8 @@ int main() {
     ++g_scenarios;
     ++g_checks;
     if (applied != static_cast<int>(want_applied->as_int())) {
-      std::cout << "FAIL: " << name << ": applied_count expected "
-                << want_applied->as_int() << ", got " << applied << std::endl;
+      std::cout << "FAIL: " << name << ": applied_count expected " << want_applied->as_int()
+                << ", got " << applied << std::endl;
       std::abort();
     }
     assert_converged(name, runtime, expect->find("converged"));
@@ -232,8 +228,8 @@ int main() {
     const int re_applied = runtime.ingest(frame);
     ++g_checks;
     if (re_applied != 0) {
-      std::cout << "FAIL: " << name << ": re-delivery applied " << re_applied
-                << " ops, expected 0" << std::endl;
+      std::cout << "FAIL: " << name << ": re-delivery applied " << re_applied << " ops, expected 0"
+                << std::endl;
       std::abort();
     }
     if (const Json* want_re = expect->find("redeliver_applied_count")) {
@@ -262,9 +258,8 @@ int main() {
           "the anti-entropy replay did too little work to be meaningful — the "
           "corpus is empty, truncated, or short-circuited");
 
-  std::cout << "distributed conformance: " << g_scenarios << " scenarios, "
-            << g_ops_ingested << " ops ingested, " << g_checks << " assertions"
-            << std::endl;
+  std::cout << "distributed conformance: " << g_scenarios << " scenarios, " << g_ops_ingested
+            << " ops ingested, " << g_checks << " assertions" << std::endl;
 
   REQUIRE_FIXTURES_LOADED(1);
   return 0;

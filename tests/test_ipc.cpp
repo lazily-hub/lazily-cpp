@@ -10,15 +10,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // -- NodeKey --
@@ -59,7 +59,7 @@ TEST(test_shm_blob_read_view) {
   assert(v && v->size() == 4 && (*v)[2] == 3);
 
   ShmBlobRef bad = ref;
-  bad.checksum = -1;  // corrupt checksum
+  bad.checksum = -1; // corrupt checksum
   assert(arena.read_view(bad) == nullptr);
 
   arena.advance_epoch();
@@ -182,7 +182,7 @@ TEST(test_state_projection_flush) {
   mirror.resolve(1, IpcValueInline{{0x41}});
 
   auto delta = mirror.flush();
-  assert(delta.ops.size() == 2);  // 1 Invalidate + 1 SlotValue
+  assert(delta.ops.size() == 2); // 1 Invalidate + 1 SlotValue
   assert(std::holds_alternative<DeltaOpInvalidate>(delta.ops[0]));
   assert(std::holds_alternative<DeltaOpSlotValue>(delta.ops[1]));
 }
@@ -232,8 +232,8 @@ TEST(test_ffi_cabi_channel) {
   assert(handle != 0);
 
   std::string msg = R"({"Delta":{"base_epoch":0,"epoch":1,"ops":[]}})";
-  int status = lazily_ffi_channel_send_json(handle,
-    reinterpret_cast<const uint8_t*>(msg.data()), msg.size());
+  int status = lazily_ffi_channel_send_json(handle, reinterpret_cast<const uint8_t*>(msg.data()),
+                                            msg.size());
   assert(status == 0);
 
   size_t len = 0;
@@ -252,22 +252,22 @@ TEST(test_ffi_cabi_channel) {
 
 TEST(test_ffi_cabi_validate) {
   std::string valid = R"({"Snapshot":{}})";
-  int status = lazily_ffi_ipc_message_validate_json(
-    reinterpret_cast<const uint8_t*>(valid.data()), valid.size());
+  int status = lazily_ffi_ipc_message_validate_json(reinterpret_cast<const uint8_t*>(valid.data()),
+                                                    valid.size());
   assert(status == 0);
 }
 
 TEST(test_ffi_cabi_kind) {
   std::string msg = R"({"CrdtSync":{}})";
   int kind = 0;
-  int status = lazily_ffi_ipc_message_kind_json(
-    reinterpret_cast<const uint8_t*>(msg.data()), msg.size(), &kind);
+  int status = lazily_ffi_ipc_message_kind_json(reinterpret_cast<const uint8_t*>(msg.data()),
+                                                msg.size(), &kind);
   assert(status == 0);
   assert(kind == static_cast<int>(LazilyFfiMessageKind::CrdtSync));
 }
 
 int main() {
-  std::cout << "lazily-cpp IPC+FFI tests: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp IPC+FFI tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

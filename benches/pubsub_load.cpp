@@ -69,7 +69,7 @@ size_t available_bytes() {
   return avail;
 }
 
-constexpr size_t kMemoryFloor = size_t(8) << 30;  // keep 8 GiB free
+constexpr size_t kMemoryFloor = size_t(8) << 30; // keep 8 GiB free
 
 double ns_per(double total_ns, size_t n) { return total_ns / double(n); }
 
@@ -97,32 +97,28 @@ void run_rung_narrow(size_t width, int notify_reps, Rung& out) {
 
   std::vector<Source<int>> topics;
   topics.reserve(cells);
-  for (size_t c = 0; c < cells; ++c) topics.push_back(ctx->cell(0));
+  for (size_t c = 0; c < cells; ++c)
+    topics.push_back(ctx->cell(0));
 
   const auto t0 = SteadyClock::now();
   for (size_t i = 0; i < width; ++i) {
     auto topic = topics[i % cells];
-    ctx->effect_void([topic, i, observed](Compute& c) {
-      (*observed)[i] = c.get(topic);
-    });
+    ctx->effect_void([topic, i, observed](Compute& c) { (*observed)[i] = c.get(topic); });
   }
   const auto t1 = SteadyClock::now();
-  out.narrow_build_ns_per_sub = ns_per(
-      double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0)
-                 .count()),
-      width);
+  out.narrow_build_ns_per_sub =
+      ns_per(double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()), width);
 
   std::vector<double> reps;
   int value = 0;
   for (int rep = 0; rep < notify_reps; ++rep) {
     ++value;
     const auto p0 = SteadyClock::now();
-    for (size_t c = 0; c < cells; ++c) ctx->set_cell(topics[c], value);
+    for (size_t c = 0; c < cells; ++c)
+      ctx->set_cell(topics[c], value);
     const auto p1 = SteadyClock::now();
     reps.push_back(ns_per(
-        double(std::chrono::duration_cast<std::chrono::nanoseconds>(p1 - p0)
-                   .count()),
-        width));
+        double(std::chrono::duration_cast<std::chrono::nanoseconds>(p1 - p0).count()), width));
   }
   std::sort(reps.begin(), reps.end());
   out.narrow_notify_ns_per_sub = reps[reps.size() / 2];
@@ -157,21 +153,16 @@ Rung run_rung(size_t width, int notify_reps) {
 
   const auto build_start = SteadyClock::now();
   for (size_t i = 0; i < width; ++i) {
-    ctx->effect_void([topic, i, observed](Compute& c) {
-      (*observed)[i] = c.get(topic);
-    });
+    ctx->effect_void([topic, i, observed](Compute& c) { (*observed)[i] = c.get(topic); });
   }
   const auto build_end = SteadyClock::now();
   r.build_ns_per_sub = ns_per(
-      double(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                 build_end - build_start)
-                 .count()),
+      double(std::chrono::duration_cast<std::chrono::nanoseconds>(build_end - build_start).count()),
       width);
 
   const size_t rss_after_build = rss_bytes();
   r.bytes_per_sub =
-      double(rss_after_build > rss_before ? rss_after_build - rss_before : 0) /
-      double(width);
+      double(rss_after_build > rss_before ? rss_after_build - rss_before : 0) / double(width);
 
   // ── notify ──
   // Each publish re-runs every effect, which tears down and re-registers every
@@ -185,20 +176,18 @@ Rung run_rung(size_t width, int notify_reps) {
     ctx->set_cell(topic, value);
     const auto t1 = SteadyClock::now();
     reps.push_back(ns_per(
-        double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0)
-                   .count()),
-        width));
+        double(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()), width));
   }
   std::sort(reps.begin(), reps.end());
-  r.notify_ns_per_sub = reps[reps.size() / 2];  // median
+  r.notify_ns_per_sub = reps[reps.size() / 2]; // median
 
   // ── correctness: every survivor observes the final publish ──
   size_t missed = 0;
   for (size_t i = 0; i < width; ++i)
     if ((*observed)[i] != value) ++missed;
   if (missed != 0) {
-    std::printf("FAIL width=%zu: %zu/%zu subscribers missed the final publish\n",
-                width, missed, width);
+    std::printf("FAIL width=%zu: %zu/%zu subscribers missed the final publish\n", width, missed,
+                width);
     std::exit(1);
   }
 
@@ -250,8 +239,7 @@ int check_ladder(const std::vector<Rung>& rungs) {
                 r.narrow_build_ns_per_sub);
     if (!ok) ++failures;
   }
-  if (!control_seen)
-    std::printf("SKIP wide/narrow control (no rung ran the control)\n");
+  if (!control_seen) std::printf("SKIP wide/narrow control (no rung ran the control)\n");
 
   // 2. bytes/sub flat within ~20% across the ladder. The index is allowed to
   //    exist, but it must not change the per-subscriber memory shape.
@@ -324,7 +312,7 @@ int check_ladder(const std::vector<Rung>& rungs) {
   return failures;
 }
 
-}  // namespace
+} // namespace
 
 int main(int argc, char** argv) {
   size_t ceiling = 1048576;
@@ -332,9 +320,8 @@ int main(int argc, char** argv) {
 
   // The cluster around the promote threshold is what exposes demotion thrash;
   // keep it even when the ceiling is low.
-  std::vector<size_t> ladder = {32,   64,   96,   97,  128,     129,
-                                160,  256,  1024,    4096,    65536,
-                                1048576, 10485760, 104857600};
+  std::vector<size_t> ladder = {32,  64,   96,   97,    128,     129,      160,
+                                256, 1024, 4096, 65536, 1048576, 10485760, 104857600};
 
   // LAZILY_LADDER=64,96,128,... overrides the rungs — used to sweep the
   // promote-threshold crossover at fine resolution.
@@ -351,11 +338,10 @@ int main(int argc, char** argv) {
 
   std::printf("lazily-cpp pub/sub width ladder (#lzspecedgeindex)\n");
   std::printf("promote=%zu demote=%zu ceiling=%zu available=%.1f GiB\n\n",
-              size_t(LAZILY_EDGE_INDEX_PROMOTE),
-              size_t(LAZILY_EDGE_INDEX_DEMOTE), ceiling,
+              size_t(LAZILY_EDGE_INDEX_PROMOTE), size_t(LAZILY_EDGE_INDEX_DEMOTE), ceiling,
               double(available_bytes()) / double(size_t(1) << 30));
-  std::printf("%10s %13s %13s %11s %13s %13s\n", "width", "build ns/sub",
-              "notify ns/sub", "bytes/sub", "narrow build", "narrow notify");
+  std::printf("%10s %13s %13s %11s %13s %13s\n", "width", "build ns/sub", "notify ns/sub",
+              "bytes/sub", "narrow build", "narrow notify");
 
   std::vector<Rung> rungs;
   double last_bytes_per_sub = 0;
@@ -371,12 +357,11 @@ int main(int argc, char** argv) {
       const double projected = 2.0 * last_bytes_per_sub * double(width);
       const size_t avail = available_bytes();
       if (projected + double(kMemoryFloor) > double(avail)) {
-        std::printf(
-            "\nREFUSE width=%zu: projected %.1f GiB from the last rung's "
-            "%.1f B/sub, only %.1f GiB available (floor %.1f GiB).\n",
-            width, projected / double(size_t(1) << 30), last_bytes_per_sub,
-            double(avail) / double(size_t(1) << 30),
-            double(kMemoryFloor) / double(size_t(1) << 30));
+        std::printf("\nREFUSE width=%zu: projected %.1f GiB from the last rung's "
+                    "%.1f B/sub, only %.1f GiB available (floor %.1f GiB).\n",
+                    width, projected / double(size_t(1) << 30), last_bytes_per_sub,
+                    double(avail) / double(size_t(1) << 30),
+                    double(kMemoryFloor) / double(size_t(1) << 30));
         break;
       }
     }
@@ -390,16 +375,15 @@ int main(int argc, char** argv) {
     last_bytes_per_sub = r.bytes_per_sub;
     rungs.push_back(r);
 
-    std::printf("%10zu %13.1f %13.1f %11.1f %13.1f %13.1f\n", r.width,
-                r.build_ns_per_sub, r.notify_ns_per_sub, r.bytes_per_sub,
-                r.narrow_build_ns_per_sub, r.narrow_notify_ns_per_sub);
+    std::printf("%10zu %13.1f %13.1f %11.1f %13.1f %13.1f\n", r.width, r.build_ns_per_sub,
+                r.notify_ns_per_sub, r.bytes_per_sub, r.narrow_build_ns_per_sub,
+                r.narrow_notify_ns_per_sub);
     std::fflush(stdout);
   }
 
   std::printf("\n");
   const int failures = check_ladder(rungs);
-  std::printf("\n%s (%d assertion failure%s)\n", failures ? "LADDER FAILED"
-                                                          : "LADDER OK",
-              failures, failures == 1 ? "" : "s");
+  std::printf("\n%s (%d assertion failure%s)\n", failures ? "LADDER FAILED" : "LADDER OK", failures,
+              failures == 1 ? "" : "s");
   return failures ? 1 : 0;
 }

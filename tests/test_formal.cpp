@@ -26,7 +26,7 @@ namespace {
 constexpr int kSkip = 77;
 
 // A real lazily-formal checkout ships these two markers.
-bool is_formal_dir(const fs::path &dir) {
+bool is_formal_dir(const fs::path& dir) {
   std::error_code ec;
   return fs::is_regular_file(dir / "lakefile.lean", ec) &&
          fs::is_directory(dir / "LazilyFormal", ec);
@@ -37,13 +37,13 @@ bool is_formal_dir(const fs::path &dir) {
 // LAZILY_FORMAL_DIR compile definition.
 std::string resolve_formal_dir() {
   std::vector<fs::path> candidates;
-  if (const char *env = std::getenv("LAZILY_FORMAL_PATH"); env && *env) {
+  if (const char* env = std::getenv("LAZILY_FORMAL_PATH"); env && *env) {
     candidates.emplace_back(env);
   }
 #ifdef LAZILY_FORMAL_DIR
   candidates.emplace_back(LAZILY_FORMAL_DIR);
 #endif
-  for (const auto &c : candidates) {
+  for (const auto& c : candidates) {
     if (is_formal_dir(c)) {
       std::error_code ec;
       auto canon = fs::weakly_canonical(c, ec);

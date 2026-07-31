@@ -74,40 +74,32 @@ template <typename T> struct WorkQueueCellInner {
 /// put a consensus-backed leader or adapter in front of it.
 template <typename OwnerContext, typename T> class BasicWorkQueueCell {
 public:
-  BasicWorkQueueCell(OwnerContext &ctx, uint64_t visibility_timeout,
-                     uint64_t max_deliveries)
-      : inner_(std::make_shared<WorkQueueCellInner<T>>()),
-        visibility_timeout_(visibility_timeout),
+  BasicWorkQueueCell(OwnerContext& ctx, uint64_t visibility_timeout, uint64_t max_deliveries)
+      : inner_(std::make_shared<WorkQueueCellInner<T>>()), visibility_timeout_(visibility_timeout),
         max_deliveries_(max_deliveries) {
-    if (visibility_timeout == 0)
-      throw std::invalid_argument("visibility_timeout must be positive");
-    if (max_deliveries == 0)
-      throw std::invalid_argument("max_deliveries must be at least one");
+    if (visibility_timeout == 0) throw std::invalid_argument("visibility_timeout must be positive");
+    if (max_deliveries == 0) throw std::invalid_argument("max_deliveries must be at least one");
     const auto inner = inner_;
-    auto &graph = queue_detail::graph(ctx);
-    inner_->readers.pending_len =
-        graph.template computed<size_t>([inner](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->mutex);
-          return inner->pending.size();
-        });
-    inner_->readers.is_empty =
-        graph.template computed<bool>([inner](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->mutex);
-          return inner->pending.empty();
-        });
-    inner_->readers.in_flight_len =
-        graph.template computed<size_t>([inner](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->mutex);
-          return inner->in_flight.size();
-        });
-    inner_->readers.dead_letter_len =
-        graph.template computed<size_t>([inner](Compute &) {
-          std::lock_guard<std::mutex> lock(inner->mutex);
-          return inner->dead_letters.size();
-        });
+    auto& graph = queue_detail::graph(ctx);
+    inner_->readers.pending_len = graph.template computed<size_t>([inner](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->mutex);
+      return inner->pending.size();
+    });
+    inner_->readers.is_empty = graph.template computed<bool>([inner](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->mutex);
+      return inner->pending.empty();
+    });
+    inner_->readers.in_flight_len = graph.template computed<size_t>([inner](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->mutex);
+      return inner->in_flight.size();
+    });
+    inner_->readers.dead_letter_len = graph.template computed<size_t>([inner](Compute&) {
+      std::lock_guard<std::mutex> lock(inner->mutex);
+      return inner->dead_letters.size();
+    });
   }
 
-  uint64_t push(OwnerContext &ctx, T value) {
+  uint64_t push(OwnerContext& ctx, T value) {
     Counts before;
     Counts after;
     uint64_t item_id;
@@ -124,15 +116,13 @@ public:
     return item_id;
   }
 
-  std::optional<WorkQueueDelivery<T>> claim(OwnerContext &ctx,
-                                            std::string worker, uint64_t now) {
+  std::optional<WorkQueueDelivery<T>> claim(OwnerContext& ctx, std::string worker, uint64_t now) {
     Counts before;
     Counts after;
     WorkQueueDelivery<T> delivery;
     {
       std::lock_guard<std::mutex> lock(inner_->mutex);
-      if (inner_->pending.empty())
-        return std::nullopt;
+      if (inner_->pending.empty()) return std::nullopt;
       if (inner_->next_delivery_id == std::numeric_limits<uint64_t>::max())
         throw std::overflow_error("work queue delivery ids exhausted");
       if (now > std::numeric_limits<uint64_t>::max() - visibility_timeout_)
@@ -140,10 +130,9 @@ public:
       before = counts_locked();
       WorkQueueItem<T> item = std::move(inner_->pending.front());
       inner_->pending.pop_front();
-      delivery = WorkQueueDelivery<T>{
-          inner_->next_delivery_id++, item.item_id,
-          std::move(item.value),      std::move(worker),
-          item.attempts + 1,          now + visibility_timeout_};
+      delivery = WorkQueueDelivery<T>{inner_->next_delivery_id++, item.item_id,
+                                      std::move(item.value),      std::move(worker),
+                                      item.attempts + 1,          now + visibility_timeout_};
       inner_->in_flight.emplace(delivery.delivery_id, delivery);
       after = counts_locked();
     }
@@ -151,14 +140,13 @@ public:
     return delivery;
   }
 
-  bool ack(OwnerContext &ctx, const std::string &worker, uint64_t delivery_id) {
+  bool ack(OwnerContext& ctx, const std::string& worker, uint64_t delivery_id) {
     Counts before;
     Counts after;
     {
       std::lock_guard<std::mutex> lock(inner_->mutex);
       const auto found = inner_->in_flight.find(delivery_id);
-      if (found == inner_->in_flight.end() || found->second.worker != worker)
-        return false;
+      if (found == inner_->in_flight.end() || found->second.worker != worker) return false;
       before = counts_locked();
       inner_->in_flight.erase(found);
       after = counts_locked();
@@ -167,15 +155,13 @@ public:
     return true;
   }
 
-  bool nack(OwnerContext &ctx, const std::string &worker,
-            uint64_t delivery_id) {
+  bool nack(OwnerContext& ctx, const std::string& worker, uint64_t delivery_id) {
     Counts before;
     Counts after;
     {
       std::lock_guard<std::mutex> lock(inner_->mutex);
       const auto found = inner_->in_flight.find(delivery_id);
-      if (found == inner_->in_flight.end() || found->second.worker != worker)
-        return false;
+      if (found == inner_->in_flight.end() || found->second.worker != worker) return false;
       before = counts_locked();
       WorkQueueDelivery<T> delivery = std::move(found->second);
       inner_->in_flight.erase(found);
@@ -186,18 +172,16 @@ public:
     return true;
   }
 
-  size_t reap_expired(OwnerContext &ctx, uint64_t now) {
+  size_t reap_expired(OwnerContext& ctx, uint64_t now) {
     std::vector<uint64_t> expired;
     Counts before;
     Counts after;
     {
       std::lock_guard<std::mutex> lock(inner_->mutex);
-      for (const auto &entry : inner_->in_flight) {
-        if (entry.second.deadline < now)
-          expired.push_back(entry.first);
+      for (const auto& entry : inner_->in_flight) {
+        if (entry.second.deadline < now) expired.push_back(entry.first);
       }
-      if (expired.empty())
-        return 0;
+      if (expired.empty()) return 0;
       std::sort(expired.begin(), expired.end());
       before = counts_locked();
       for (uint64_t delivery_id : expired) {
@@ -212,19 +196,19 @@ public:
     return expired.size();
   }
 
-  template <typename Cx> size_t pending_len(Cx &ctx) const {
+  template <typename Cx> size_t pending_len(Cx& ctx) const {
     return queue_detail::read(ctx, inner_->readers.pending_len);
   }
 
-  template <typename Cx> bool is_empty(Cx &ctx) const {
+  template <typename Cx> bool is_empty(Cx& ctx) const {
     return queue_detail::read(ctx, inner_->readers.is_empty);
   }
 
-  template <typename Cx> size_t in_flight_len(Cx &ctx) const {
+  template <typename Cx> size_t in_flight_len(Cx& ctx) const {
     return queue_detail::read(ctx, inner_->readers.in_flight_len);
   }
 
-  template <typename Cx> size_t dead_letter_len(Cx &ctx) const {
+  template <typename Cx> size_t dead_letter_len(Cx& ctx) const {
     return queue_detail::read(ctx, inner_->readers.dead_letter_len);
   }
 
@@ -239,12 +223,11 @@ public:
     std::lock_guard<std::mutex> lock(inner_->mutex);
     std::vector<WorkQueueDelivery<T>> result;
     result.reserve(inner_->in_flight.size());
-    for (const auto &entry : inner_->in_flight)
+    for (const auto& entry : inner_->in_flight)
       result.push_back(entry.second);
-    std::sort(result.begin(), result.end(),
-              [](const auto &left, const auto &right) {
-                return left.delivery_id < right.delivery_id;
-              });
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+      return left.delivery_id < right.delivery_id;
+    });
     return result;
   }
 
@@ -261,12 +244,11 @@ private:
   };
 
   Counts counts_locked() const {
-    return {inner_->pending.size(), inner_->in_flight.size(),
-            inner_->dead_letters.size()};
+    return {inner_->pending.size(), inner_->in_flight.size(), inner_->dead_letters.size()};
   }
 
-  void invalidate(OwnerContext &ctx, Counts before, Counts after) {
-    queue_detail::batch(ctx, [&](Context &graph) {
+  void invalidate(OwnerContext& ctx, Counts before, Counts after) {
+    queue_detail::batch(ctx, [&](Context& graph) {
       if (before.pending != after.pending) {
         inner_->readers.pending_len.clear(graph);
       }
@@ -282,15 +264,12 @@ private:
     });
   }
 
-  void fail_locked(WorkQueueDelivery<T> delivery,
-                   WorkQueueDeadLetterReason reason) {
+  void fail_locked(WorkQueueDelivery<T> delivery, WorkQueueDeadLetterReason reason) {
     if (delivery.attempt >= max_deliveries_) {
-      inner_->dead_letters.push_back({delivery.item_id,
-                                      std::move(delivery.value),
-                                      delivery.attempt, reason});
+      inner_->dead_letters.push_back(
+          {delivery.item_id, std::move(delivery.value), delivery.attempt, reason});
     } else {
-      inner_->pending.push_back(
-          {delivery.item_id, std::move(delivery.value), delivery.attempt});
+      inner_->pending.push_back({delivery.item_id, std::move(delivery.value), delivery.attempt});
     }
   }
 
@@ -299,34 +278,29 @@ private:
   uint64_t max_deliveries_;
 };
 
-template <typename T>
-class WorkQueueCell : public BasicWorkQueueCell<Context, T> {
+template <typename T> class WorkQueueCell : public BasicWorkQueueCell<Context, T> {
   using Base = BasicWorkQueueCell<Context, T>;
 
 public:
-  WorkQueueCell(Context &ctx, uint64_t visibility_timeout,
-                uint64_t max_deliveries)
+  WorkQueueCell(Context& ctx, uint64_t visibility_timeout, uint64_t max_deliveries)
       : Base(ctx, visibility_timeout, max_deliveries) {}
 };
 
 template <typename T>
-class ThreadSafeWorkQueueCell
-    : public BasicWorkQueueCell<ThreadSafeContext, T> {
+class ThreadSafeWorkQueueCell : public BasicWorkQueueCell<ThreadSafeContext, T> {
   using Base = BasicWorkQueueCell<ThreadSafeContext, T>;
 
 public:
-  ThreadSafeWorkQueueCell(ThreadSafeContext &ctx, uint64_t visibility_timeout,
+  ThreadSafeWorkQueueCell(ThreadSafeContext& ctx, uint64_t visibility_timeout,
                           uint64_t max_deliveries)
       : Base(ctx, visibility_timeout, max_deliveries) {}
 };
 
-template <typename T>
-class AsyncWorkQueueCell : public BasicWorkQueueCell<AsyncContext, T> {
+template <typename T> class AsyncWorkQueueCell : public BasicWorkQueueCell<AsyncContext, T> {
   using Base = BasicWorkQueueCell<AsyncContext, T>;
 
 public:
-  AsyncWorkQueueCell(AsyncContext &ctx, uint64_t visibility_timeout,
-                     uint64_t max_deliveries)
+  AsyncWorkQueueCell(AsyncContext& ctx, uint64_t visibility_timeout, uint64_t max_deliveries)
       : Base(ctx, visibility_timeout, max_deliveries) {}
 };
 

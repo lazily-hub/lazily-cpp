@@ -1,5 +1,6 @@
 #include <lazily/lazily.hpp>
 
+#include "test_spec_fixture.hpp"
 #include <cassert>
 #include <chrono>
 #include <filesystem>
@@ -8,13 +9,10 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
-static IpcMessage frame(Epoch epoch) {
-  return IpcMessageDelta{Delta{epoch - 1, epoch, {}}};
-}
+static IpcMessage frame(Epoch epoch) { return IpcMessageDelta{Delta{epoch - 1, epoch, {}}}; }
 
 static std::string fixture_text() {
   return lazily_test::spec_fixture_text("reliable-sync", "outbox_store_protocol.json");
@@ -24,9 +22,8 @@ struct TempJournal {
   std::filesystem::path directory;
   std::filesystem::path file;
 
-  explicit TempJournal(const std::string &suffix) {
-    const auto nonce =
-        std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  explicit TempJournal(const std::string& suffix) {
+    const auto nonce = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     directory = std::filesystem::temp_directory_path() /
                 ("lazily-cpp-outbox-" + std::to_string(nonce) + "-" + suffix);
     std::filesystem::create_directories(directory);
@@ -46,19 +43,14 @@ struct TempJournal {
 // scripts/check-conformance-coverage.sh. Converting this runner to a real
 // replay is tracked separately as the transcribed-runners item.
 int main() {
-  static_assert(is_outbox_store_v<InMemoryStore>,
-                "in-memory byte store contract");
+  static_assert(is_outbox_store_v<InMemoryStore>, "in-memory byte store contract");
   static_assert(is_outbox_store_v<FileOutboxStore>, "file byte store contract");
   const auto fixture = fixture_text();
   assert(fixture.find("\"model\": \"OutboxStore\"") != std::string::npos);
-  assert(fixture.find("unordered puts replay in ascending epoch order") !=
-         std::string::npos);
-  assert(fixture.find("ack cursor is monotone and prune-safe") !=
-         std::string::npos);
-  assert(fixture.find("restart reloads cursor and unacked suffix") !=
-         std::string::npos);
-  assert(fixture.find("stale handle cannot regress serialized cursor") !=
-         std::string::npos);
+  assert(fixture.find("unordered puts replay in ascending epoch order") != std::string::npos);
+  assert(fixture.find("ack cursor is monotone and prune-safe") != std::string::npos);
+  assert(fixture.find("restart reloads cursor and unacked suffix") != std::string::npos);
+  assert(fixture.find("stale handle cannot regress serialized cursor") != std::string::npos);
 
   InMemoryOutbox outbox;
   outbox.append(3, frame(3));
@@ -67,8 +59,7 @@ int main() {
   assert((outbox.retained_epochs() == std::vector<Epoch>{1, 2, 3}));
   const auto ordered = outbox.replay_from(0);
   assert(ordered.size() == 3);
-  assert(ordered[0].first == 1 && ordered[1].first == 2 &&
-         ordered[2].first == 3);
+  assert(ordered[0].first == 1 && ordered[1].first == 2 && ordered[2].first == 3);
 
   InMemoryOutbox monotone;
   for (Epoch epoch = 1; epoch <= 4; ++epoch)
@@ -102,8 +93,7 @@ int main() {
     assert(reopened.acked_through() == 10);
     assert((reopened.retained_epochs() == std::vector<Epoch>{11, 12}));
     const auto replay = reopened.replay_from(0);
-    assert(replay.size() == 2 && replay[0].first == 11 &&
-           replay[1].first == 12);
+    assert(replay.size() == 2 && replay[0].first == 11 && replay[1].first == 12);
   }
 
   // Regression: two handles opened before either acknowledgement must serialize

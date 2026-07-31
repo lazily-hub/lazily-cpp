@@ -22,15 +22,15 @@ using namespace lazily;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                                        \
-  static void name();                                     \
-  struct name##_runner {                                  \
-    name##_runner() {                                     \
-      ++test_count;                                       \
-      name();                                             \
-      ++test_passed;                                      \
-    }                                                     \
-  } name##_instance;                                      \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // ── Compile-time write protection (§3/§4) ──────────────────────────────────
@@ -39,33 +39,26 @@ static int test_passed = 0;
 // `Source` has `set`; a `Computed` does not, so `computed.set(...)` is a
 // compile error — no shared base, no runtime gate.
 
-template <typename C, typename = void>
-struct has_set : std::false_type {};
+template <typename C, typename = void> struct has_set : std::false_type {};
 template <typename C>
-struct has_set<C, std::void_t<decltype(std::declval<C&>().set(
-                      std::declval<Context&>(), 0LL))>> : std::true_type {};
+struct has_set<C, std::void_t<decltype(std::declval<C&>().set(std::declval<Context&>(), 0LL))>>
+    : std::true_type {};
 
-template <typename C, typename = void>
-struct has_merge : std::false_type {};
+template <typename C, typename = void> struct has_merge : std::false_type {};
 template <typename C>
-struct has_merge<C, std::void_t<decltype(std::declval<C&>().merge(
-                        std::declval<Context&>(), 0LL))>> : std::true_type {};
+struct has_merge<C, std::void_t<decltype(std::declval<C&>().merge(std::declval<Context&>(), 0LL))>>
+    : std::true_type {};
 
-static_assert(has_set<Source<long long>>::value,
-              "a Source must be settable");
-static_assert(has_merge<Source<long long>>::value,
-              "a Source must be mergeable");
-static_assert(has_set<Source<long long, Sum>>::value,
-              "a folding Source must be settable");
+static_assert(has_set<Source<long long>>::value, "a Source must be settable");
+static_assert(has_merge<Source<long long>>::value, "a Source must be mergeable");
+static_assert(has_set<Source<long long, Sum>>::value, "a folding Source must be settable");
 static_assert(!has_set<Computed<long long>>::value,
               "a Computed must NOT be settable — computed.set(...) must be a "
               "compile error");
-static_assert(!has_merge<Computed<long long>>::value,
-              "a Computed must NOT be mergeable");
+static_assert(!has_merge<Computed<long long>>::value, "a Computed must NOT be mergeable");
 
 // The default policy of `Source` is `KeepLatest` (`Source ≡ Source<KeepLatest>`).
-static_assert(std::is_same<Source<long long>,
-                           Source<long long, KeepLatest>>::value,
+static_assert(std::is_same<Source<long long>, Source<long long, KeepLatest>>::value,
               "Source<T> == Source<T, KeepLatest>");
 
 // ── Runtime behaviour ──────────────────────────────────────────────────────
@@ -82,11 +75,10 @@ TEST(test_formula_reads_upstream_guarded) {
   Context ctx;
   Source<long long> n = ctx.source<long long>(2);
   int computes = 0;
-  Computed<long long> doubled =
-      ctx.computed<long long>([n, &computes](Compute& c) {
-        ++computes;
-        return n.get(c) * 2;
-      });
+  Computed<long long> doubled = ctx.computed<long long>([n, &computes](Compute& c) {
+    ++computes;
+    return n.get(c) * 2;
+  });
   REQUIRE(doubled.get(ctx) == 4, "formula computes from upstream");
   REQUIRE(computes == 1, "one compute so far");
   doubled.get(ctx);
@@ -94,7 +86,7 @@ TEST(test_formula_reads_upstream_guarded) {
 
   // Guarded by default (§9.3): setting the source to a value that leaves the
   // formula's result unchanged must NOT propagate a recompute past the guard.
-  n.set(ctx, 2);  // same value: no source change, no invalidation
+  n.set(ctx, 2); // same value: no source change, no invalidation
   REQUIRE(doubled.get(ctx) == 4, "value unchanged");
   REQUIRE(computes == 1, "no recompute for a no-op write");
 
@@ -137,8 +129,7 @@ TEST(test_drive_is_eager_and_idempotent) {
 
   // Eager: a source change re-materializes the formula WITHOUT a read.
   n.set(ctx, 2);
-  REQUIRE(computes > after_drive,
-          "a driven formula recomputes on invalidation without being read");
+  REQUIRE(computes > after_drive, "a driven formula recomputes on invalidation without being read");
   REQUIRE(f.get(ctx) == 102, "and holds the fresh value");
 
   // Undrive reverts to lazy; the value stays readable.
@@ -175,8 +166,7 @@ TEST(test_dispose_driven_formula_tears_down_puller) {
   // never inherits the driver.
   Context ctx;
   Source<long long> n = ctx.source<long long>(1);
-  Computed<long long> f =
-      ctx.computed<long long>([n](Compute& c) { return n.get(c); });
+  Computed<long long> f = ctx.computed<long long>([n](Compute& c) { return n.get(c); });
   f.eager(ctx);
   REQUIRE(f.is_eager(ctx), "driven before dispose");
   f.dispose(ctx);
@@ -193,7 +183,7 @@ TEST(test_dispose_driven_formula_tears_down_puller) {
 }
 
 int main() {
-  std::cout << "lazily-cpp cell-kernel tests: " << test_passed << "/"
-            << test_count << " passed" << std::endl;
+  std::cout << "lazily-cpp cell-kernel tests: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }

@@ -110,8 +110,7 @@ inline std::string resolve_scenario_id(const Json& scenario, std::size_t index,
   if (scenario.is_object()) {
     for (const char* key : {"id", "name"}) {
       const Json* value = scenario.find(key);
-      if (value != nullptr && value->type == Json::Type::String &&
-          !value->str.empty())
+      if (value != nullptr && value->type == Json::Type::String && !value->str.empty())
         return value->str;
     }
   }
@@ -126,7 +125,7 @@ struct ScenarioLedger {
   std::set<std::pair<std::string, std::string>> declared;
   std::set<std::pair<std::string, std::string>> replayed;
   std::set<std::pair<std::string, std::string>> positional;
-  std::set<std::string> scanned;  // fixtures already enumerated
+  std::set<std::string> scanned; // fixtures already enumerated
 };
 
 inline ScenarioLedger& scenario_ledger() {
@@ -138,11 +137,8 @@ inline ScenarioLedger& scenario_ledger() {
 // so declaration is automatic: opening a scenario-bearing fixture is itself the
 // claim that its scenarios will be replayed, and a runner that reads the bytes
 // and replays nothing is exactly the failure this rung exists to catch.
-inline void declare_fixture_scenarios(const std::string& fixture_id,
-                                      const std::string& text) {
-  if (fixture_id.size() < 5 ||
-      fixture_id.compare(fixture_id.size() - 5, 5, ".json") != 0)
-    return;
+inline void declare_fixture_scenarios(const std::string& fixture_id, const std::string& text) {
+  if (fixture_id.size() < 5 || fixture_id.compare(fixture_id.size() - 5, 5, ".json") != 0) return;
   auto& ledger = scenario_ledger();
   if (!ledger.scanned.insert(fixture_id).second) return;
   const JsonPtr root = parse_json(text);
@@ -151,8 +147,7 @@ inline void declare_fixture_scenarios(const std::string& fixture_id,
   if (scenarios == nullptr || !scenarios->is_array()) return;
   for (std::size_t i = 0; i < scenarios->array.size(); ++i) {
     bool positional = false;
-    const std::string id =
-        resolve_scenario_id(*scenarios->array[i], i, &positional);
+    const std::string id = resolve_scenario_id(*scenarios->array[i], i, &positional);
     ledger.declared.emplace(fixture_id, id);
     if (positional) ledger.positional.emplace(fixture_id, id);
   }
@@ -161,16 +156,15 @@ inline void declare_fixture_scenarios(const std::string& fixture_id,
 // Record that this run REPLAYED `scenario_id` of `fixture_id`. Call it as the
 // first statement of the replay loop body — after any `continue` that skips a
 // scenario, never before it, or a skip records itself as covered.
-inline void record_scenario(const std::string& fixture_id,
-                            const std::string& scenario_id) {
+inline void record_scenario(const std::string& fixture_id, const std::string& scenario_id) {
   scenario_ledger().replayed.emplace(fixture_id, scenario_id);
 }
 
 // The common form: resolve the id from the scenario node and record it, so a
 // runner never spells an id by hand and cannot drift from the resolution order
 // above. Returns the id, which doubles as the label for failure messages.
-inline std::string record_scenario_at(const std::string& fixture_id,
-                                      const Json& scenario, std::size_t index) {
+inline std::string record_scenario_at(const std::string& fixture_id, const Json& scenario,
+                                      std::size_t index) {
   std::string id = resolve_scenario_id(scenario, index);
   record_scenario(fixture_id, id);
   return id;
@@ -182,7 +176,8 @@ struct ManifestFlusher {
     if (out == nullptr || *out == '\0') return;
     std::ofstream manifest(out, std::ios::app);
     if (!manifest) return;
-    for (const auto& id : loaded_fixtures()) manifest << id << "\n";
+    for (const auto& id : loaded_fixtures())
+      manifest << id << "\n";
     // Scenario records are tab-delimited and tag-prefixed so the coverage
     // script can separate them from the bare fixture ids above; a scenario id
     // may contain spaces (28 of the 31 fixtures name theirs in prose) but
@@ -193,15 +188,14 @@ struct ManifestFlusher {
     for (const auto& entry : ledger.replayed)
       manifest << "@replayed\t" << entry.first << "\t" << entry.second << "\n";
     for (const auto& entry : ledger.positional)
-      manifest << "@positional\t" << entry.first << "\t" << entry.second
-               << "\n";
+      manifest << "@positional\t" << entry.first << "\t" << entry.second << "\n";
   }
 };
 
 inline void ensure_manifest_flusher() {
-  loaded_fixtures();               // constructed first => destroyed last
-  scenario_ledger();               // ditto, so the flusher outlives neither
-  static ManifestFlusher flusher;  // destroyed before both
+  loaded_fixtures();              // constructed first => destroyed last
+  scenario_ledger();              // ditto, so the flusher outlives neither
+  static ManifestFlusher flusher; // destroyed before both
   (void)flusher;
 }
 
@@ -228,41 +222,37 @@ inline void require_spec_checkout_or_skip(const std::string& area) {
 }
 
 // Read a canonical fixture's raw text, recording that it was actually opened.
-inline std::string spec_fixture_text(const std::string& area,
-                                     const std::string& name) {
+inline std::string spec_fixture_text(const std::string& area, const std::string& name) {
   require_spec_checkout_or_skip(area);
   const auto path = spec_conformance_dir() / area / name;
   std::ifstream input(path);
-  REQUIRE(input,
-          "canonical conformance fixture missing from the lazily-spec sibling "
-          "— a conformance test must not pass without its fixture");
+  REQUIRE(input, "canonical conformance fixture missing from the lazily-spec sibling "
+                 "— a conformance test must not pass without its fixture");
   ensure_manifest_flusher();
   const std::string fixture_id = area.empty() ? name : area + "/" + name;
   loaded_fixtures().insert(fixture_id);
-  std::string text{std::istreambuf_iterator<char>(input),
-                   std::istreambuf_iterator<char>()};
+  std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
   declare_fixture_scenarios(fixture_id, text);
   return text;
 }
 
-}  // namespace lazily_test
+} // namespace lazily_test
 
 // Positive assertion that fixtures actually ran. An absence guard proves the
 // corpus is present; it cannot prove this binary read any of it. Assert the
 // exact distinct-fixture count so deleting or short-circuiting a fixture read
 // turns the suite red instead of quietly shrinking its coverage.
-#define REQUIRE_FIXTURES_LOADED(expected)                                     \
-  do {                                                                        \
-    const std::size_t actual_ = lazily_test::loaded_fixtures().size();        \
-    if (actual_ != static_cast<std::size_t>(expected)) {                      \
-      std::cout << "FAIL: expected " << (expected)                            \
-                << " distinct canonical fixtures to be read, but "            \
-                << actual_                                                    \
-                << " were — the suite is not exercising the spec corpus it "  \
-                   "claims to"                                                \
-                << std::endl;                                                 \
-      return 1;                                                               \
-    }                                                                         \
+#define REQUIRE_FIXTURES_LOADED(expected)                                                          \
+  do {                                                                                             \
+    const std::size_t actual_ = lazily_test::loaded_fixtures().size();                             \
+    if (actual_ != static_cast<std::size_t>(expected)) {                                           \
+      std::cout << "FAIL: expected " << (expected)                                                 \
+                << " distinct canonical fixtures to be read, but " << actual_                      \
+                << " were — the suite is not exercising the spec corpus it "                     \
+                   "claims to"                                                                     \
+                << std::endl;                                                                      \
+      return 1;                                                                                    \
+    }                                                                                              \
   } while (0)
 
-#endif  // LAZILY_TESTS_TEST_SPEC_FIXTURE_HPP
+#endif // LAZILY_TESTS_TEST_SPEC_FIXTURE_HPP

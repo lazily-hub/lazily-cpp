@@ -12,43 +12,41 @@
 #include <lazily/lazily.hpp>
 #include <lazily/presence.hpp>
 
+#include "test_assertion_keys.hpp"
+#include "test_json.hpp"
+#include "test_spec_fixture.hpp"
 #include <cassert>
 #include <map>
 #include <optional>
 #include <string>
-#include "test_assertion_keys.hpp"
-#include "test_json.hpp"
-#include "test_spec_fixture.hpp"
 
 using namespace lazily;
 
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 using PresenceMap = std::map<uint64_t, std::string>;
 
 static lazily_test::JsonPtr fixture(const std::string& name) {
-  return lazily_test::parse_json(
-      lazily_test::spec_fixture_text("presence", name));
+  return lazily_test::parse_json(lazily_test::spec_fixture_text("presence", name));
 }
 
 static PresenceMap json_presence_map(const lazily_test::Json& value) {
   assert(value.is_object());
   PresenceMap result;
   for (const auto& entry : value.object) {
-    result.emplace(std::stoull(entry.first),
-                   lazily_test::json_string(*entry.second));
+    result.emplace(std::stoull(entry.first), lazily_test::json_string(*entry.second));
   }
   return result;
 }
@@ -57,29 +55,25 @@ static PresenceMap json_presence_map(const lazily_test::Json& value) {
 TEST(test_presence) {
   const auto fx = fixture("presence.json");
   Context ctx;
-  const uint64_t ttl = lazily_test::json_u64(lazily_test::json_member(
-      lazily_test::json_member(*fx, "config"), "ttl"));
+  const uint64_t ttl = lazily_test::json_u64(
+      lazily_test::json_member(lazily_test::json_member(*fx, "config"), "ttl"));
   PresenceCell<uint64_t, std::string> cell(ctx, ttl);
   auto pc = cell.present_cell();
-  auto observed =
-      ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
-  (void)ctx.get(observed);  // prime the observer cache
+  auto observed = ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
+  (void)ctx.get(observed); // prime the observer cache
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "heartbeat") {
-      cell.heartbeat(
-          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
-          lazily_test::json_string(lazily_test::json_member(op, "value")), now);
+      cell.heartbeat(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
+                     lazily_test::json_string(lazily_test::json_member(op, "value")), now);
     } else if (type == "evict") {
-      cell.evict(
-          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now);
+      cell.evict(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now);
     } else {
       assert(type == "tick");
       cell.tick(ctx, now);
@@ -90,8 +84,7 @@ TEST(test_presence) {
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "present")) ==
-             !was;
+      return lazily_test::json_bool(lazily_test::json_member(want, "present")) == !was;
     });
   }
 }
@@ -100,26 +93,23 @@ TEST(test_presence) {
 TEST(test_awareness) {
   const auto fx = fixture("awareness.json");
   Context ctx;
-  const uint64_t ttl = lazily_test::json_u64(lazily_test::json_member(
-      lazily_test::json_member(*fx, "config"), "ttl"));
+  const uint64_t ttl = lazily_test::json_u64(
+      lazily_test::json_member(lazily_test::json_member(*fx, "config"), "ttl"));
   AwarenessCell<uint64_t, std::string> cell(ctx, ttl);
   auto pc = cell.present_cell();
-  auto observed =
-      ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
+  auto observed = ctx.computed<PresenceMap>([pc](Compute& c) { return c.get(pc); });
   (void)ctx.get(observed);
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "set") {
-      cell.set(
-          ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
-          lazily_test::json_string(lazily_test::json_member(op, "value")), now);
+      cell.set(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
+               lazily_test::json_string(lazily_test::json_member(op, "value")), now);
     } else {
       assert(type == "tick");
       cell.tick(ctx, now);
@@ -128,13 +118,12 @@ TEST(test_awareness) {
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "present")) ==
-             !was;
+      return lazily_test::json_bool(lazily_test::json_member(want, "present")) == !was;
     });
   }
 
   // last-writer-per-peer visible via non-reactive get
-  assert(cell.get(1, 6) == std::nullopt);  // expired by now 7 already ticked
+  assert(cell.get(1, 6) == std::nullopt); // expired by now 7 already ticked
 }
 
 // -- EphemeralCell: single value auto-expiry; value invalidation --
@@ -143,33 +132,28 @@ TEST(test_ephemeral) {
   Context ctx;
   EphemeralCell<std::string> cell(ctx);
   auto vc = cell.value_cell();
-  auto observed = ctx.computed<std::optional<std::string>>(
-      [vc](Compute& c) { return c.get(vc); });
+  auto observed = ctx.computed<std::optional<std::string>>([vc](Compute& c) { return c.get(vc); });
   (void)ctx.get(observed);
 
-  for (const auto& step_ptr :
-       lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
+  for (const auto& step_ptr : lazily_test::json_array(lazily_test::json_member(*fx, "steps"))) {
     const auto& item = *step_ptr;
     const auto& op = lazily_test::json_member(item, "op");
-    lazily_test::AssertionKeys expected(
-        std::string(__func__) + " expected", lazily_test::json_member(item, "expected"));
+    lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
+                                        lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "set") {
-      cell.set(
-          ctx, lazily_test::json_string(lazily_test::json_member(op, "value")),
-          now, lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
+      cell.set(ctx, lazily_test::json_string(lazily_test::json_member(op, "value")), now,
+               lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
     } else {
       assert(type == "tick");
       cell.tick(ctx, now);
     }
-    expected.assert_key("value", cell.value(ctx),
-                        lazily_test::json_optional_string);
+    expected.assert_key("value", cell.value(ctx), lazily_test::json_optional_string);
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
     expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "value")) ==
-             !was;
+      return lazily_test::json_bool(lazily_test::json_member(want, "value")) == !was;
     });
   }
 }
@@ -184,7 +168,7 @@ TEST(test_cores) {
   e.tick(5);
   assert(e.value() == std::nullopt);
   e.set("b", 6, 5);
-  e.set("c", 10, 5);  // overwrite before expiry
+  e.set("c", 10, 5); // overwrite before expiry
   assert(e.value() == std::optional<std::string>("c"));
 
   // EphemeralMapCore presence evict + TTL.
@@ -193,7 +177,7 @@ TEST(test_cores) {
   m.set(2, "online", 1, 5);
   m.evict(2);
   assert(m.present(2).size() == 1);
-  m.tick(6);  // peer 1 expires at 5
+  m.tick(6); // peer 1 expires at 5
   assert(m.present(6).empty());
 
   // Awareness last-writer.
@@ -203,9 +187,11 @@ TEST(test_cores) {
   assert(a.get(1, 2) == std::optional<std::string>("cursor-a2"));
 
   // Durable sink statically rejects ephemeral values (compile-time).
-  durable_persist(42);  // int is durable-compatible
+  durable_persist(42); // int is durable-compatible
   static_assert(is_ephemeral_v<EphemeralCore<int>>, "core is ephemeral");
 }
 
 int main() {
-  REQUIRE_FIXTURES_LOADED(3); return test_count == test_passed ? 0 : 1; }
+  REQUIRE_FIXTURES_LOADED(3);
+  return test_count == test_passed ? 0 : 1;
+}

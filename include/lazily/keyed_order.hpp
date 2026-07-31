@@ -67,9 +67,8 @@ inline bool move_applied(MapMove m) { return m != MapMove::Missing; }
 // Whether the order actually changed, i.e. whether to bump the order signal.
 inline bool move_changed(MapMove m) { return m == MapMove::Reordered; }
 
-template <typename K, typename H>
-class KeyedOrder {
- public:
+template <typename K, typename H> class KeyedOrder {
+public:
   KeyedOrder() = default;
 
   // -- reads (no graph involvement) ---------------------------------------
@@ -145,8 +144,7 @@ class KeyedOrder {
     auto anchor_idx = position(anchor);
     auto from = position(key);
     if (!anchor_idx || !from) return MapMove::Missing;
-    const std::size_t target =
-        (*from < *anchor_idx) ? *anchor_idx - 1 : *anchor_idx;
+    const std::size_t target = (*from < *anchor_idx) ? *anchor_idx - 1 : *anchor_idx;
     return move_to(key, target);
   }
 
@@ -155,12 +153,11 @@ class KeyedOrder {
     auto anchor_idx = position(anchor);
     auto from = position(key);
     if (!anchor_idx || !from) return MapMove::Missing;
-    const std::size_t target =
-        (*from <= *anchor_idx) ? *anchor_idx : *anchor_idx + 1;
+    const std::size_t target = (*from <= *anchor_idx) ? *anchor_idx : *anchor_idx + 1;
     return move_to(key, target);
   }
 
- private:
+private:
   // Move the element at `from` to `to` without reallocating and without an
   // intermediate state where the key is absent from `order_`. A rotate cannot
   // fail, so `entries_` and `order_` can never desync here.
@@ -182,6 +179,6 @@ class KeyedOrder {
   std::vector<K> order_;
 };
 
-}  // namespace lazily
+} // namespace lazily
 
-#endif  // LAZILY_KEYED_ORDER_HPP
+#endif // LAZILY_KEYED_ORDER_HPP

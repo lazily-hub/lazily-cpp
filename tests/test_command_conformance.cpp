@@ -19,9 +19,9 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
-#include <variant>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "test_json.hpp"
@@ -33,28 +33,36 @@ using lazily_test::Json;
 static int test_count = 0;
 static int test_passed = 0;
 
-#define TEST(name)                 \
-  static void name();              \
-  struct name##_runner {           \
-    name##_runner() {              \
-      ++test_count;                \
-      name();                      \
-      ++test_passed;               \
-    }                              \
-  } name##_instance;               \
+#define TEST(name)                                                                                 \
+  static void name();                                                                              \
+  struct name##_runner {                                                                           \
+    name##_runner() {                                                                              \
+      ++test_count;                                                                                \
+      name();                                                                                      \
+      ++test_passed;                                                                               \
+    }                                                                                              \
+  } name##_instance;                                                                               \
   static void name()
 
 // ── enum <-> string ────────────────────────────────────────────────────────
 static const char* status_str(CommandStatus s) {
   switch (s) {
-    case CommandStatus::Submitted: return "submitted";
-    case CommandStatus::Accepted: return "accepted";
-    case CommandStatus::Running: return "running";
-    case CommandStatus::Applied: return "applied";
-    case CommandStatus::Rejected: return "rejected";
-    case CommandStatus::Cancelled: return "cancelled";
-    case CommandStatus::Superseded: return "superseded";
-    case CommandStatus::TimedOut: return "timed_out";
+  case CommandStatus::Submitted:
+    return "submitted";
+  case CommandStatus::Accepted:
+    return "accepted";
+  case CommandStatus::Running:
+    return "running";
+  case CommandStatus::Applied:
+    return "applied";
+  case CommandStatus::Rejected:
+    return "rejected";
+  case CommandStatus::Cancelled:
+    return "cancelled";
+  case CommandStatus::Superseded:
+    return "superseded";
+  case CommandStatus::TimedOut:
+    return "timed_out";
   }
   return "?";
 }
@@ -121,9 +129,10 @@ static CommandSubmit decode_submit(const Json* j) {
   c.policy.cancel_on_preempt = pol->find("cancel_on_preempt")->as_bool();
   c.payload_type = j->find("payload_type")->str;
   c.payload_hash = j->find("payload_hash")->str;
-  c.payload = IpcValueInline{};  // projection ignores payload bytes
+  c.payload = IpcValueInline{}; // projection ignores payload bytes
   if (const Json* rf = j->find("required_features"))
-    for (const auto& f : rf->array) c.required_features.push_back(f->str);
+    for (const auto& f : rf->array)
+      c.required_features.push_back(f->str);
   return c;
 }
 static CommandCancel decode_cancel(const Json* j) {
@@ -143,8 +152,7 @@ static CommandCancel decode_cancel(const Json* j) {
 static long long req_int(const Json* j, const char* key) {
   const Json* node = j->find(key);
   REQUIRE(node != nullptr && node->type == Json::Type::Number,
-          (std::string("fixture is missing required numeric field `") + key +
-           "`").c_str());
+          (std::string("fixture is missing required numeric field `") + key + "`").c_str());
   return node->as_int();
 }
 
@@ -193,12 +201,9 @@ static CausalReceipt decode_receipt(const Json* j) {
 }
 
 static CommandMessage decode_message(const Json* wire) {
-  if (const Json* s = wire->find("CommandSubmit"))
-    return CommandMessageSubmit{decode_submit(s)};
-  if (const Json* c = wire->find("CommandCancel"))
-    return CommandMessageCancel{decode_cancel(c)};
-  if (const Json* e = wire->find("CommandEvents"))
-    return CommandMessageEvents{decode_events(e)};
+  if (const Json* s = wire->find("CommandSubmit")) return CommandMessageSubmit{decode_submit(s)};
+  if (const Json* c = wire->find("CommandCancel")) return CommandMessageCancel{decode_cancel(c)};
+  if (const Json* e = wire->find("CommandEvents")) return CommandMessageEvents{decode_events(e)};
   if (const Json* p = wire->find("CommandProjection"))
     return CommandMessageProjection{decode_projection_image(p)};
   REQUIRE(false, "unknown message-passing wire tag");
@@ -207,8 +212,7 @@ static CommandMessage decode_message(const Json* wire) {
 
 // Fold one frame. Returns the message apply-status for `message-passing` frames;
 // `std::nullopt` for `receipts` frames (cpp observe_receipt is void).
-static std::optional<CommandApplyStatus> fold_frame(CommandProjection& p,
-                                                     const Json* frame) {
+static std::optional<CommandApplyStatus> fold_frame(CommandProjection& p, const Json* frame) {
   const std::string& schema = frame->find("schema")->str;
   const Json* wire = frame->find("wire");
   if (schema == "message-passing") return p.apply_message(decode_message(wire));
@@ -224,20 +228,21 @@ static std::optional<CommandApplyStatus> fold_frame(CommandProjection& p,
 }
 
 // ── assertions ───────────────────────────────────────────────────────────────
-static void assert_image_eq(const CommandProjectionImage& got,
-                            const CommandProjectionImage& want, const std::string& msg) {
+static void assert_image_eq(const CommandProjectionImage& got, const CommandProjectionImage& want,
+                            const std::string& msg) {
   REQUIRE(got.generation == want.generation, ("projection generation: " + msg).c_str());
   REQUIRE(got.commands.size() == want.commands.size(),
           ("projection command count: " + msg).c_str());
   std::map<std::string, const CommandProjectionEntry*> by_id;
-  for (const auto& e : got.commands) by_id[e.command_id] = &e;
+  for (const auto& e : got.commands)
+    by_id[e.command_id] = &e;
   for (const auto& w : want.commands) {
     auto it = by_id.find(w.command_id);
     REQUIRE(it != by_id.end(), ("missing command " + w.command_id + ": " + msg).c_str());
     const CommandProjectionEntry& g = *it->second;
-    REQUIRE(g.status == w.status,
-            ("status " + w.command_id + " (" + status_str(g.status) + " != " +
-             status_str(w.status) + "): " + msg).c_str());
+    REQUIRE(g.status == w.status, ("status " + w.command_id + " (" + status_str(g.status) +
+                                   " != " + status_str(w.status) + "): " + msg)
+                                      .c_str());
     REQUIRE(g.terminal == w.terminal, ("terminal " + w.command_id + ": " + msg).c_str());
     REQUIRE(g.generation == w.generation, ("generation " + w.command_id + ": " + msg).c_str());
     REQUIRE(g.reason == w.reason, ("reason " + w.command_id + ": " + msg).c_str());
@@ -273,22 +278,27 @@ static void load(const std::string& name, lazily_test::JsonPtr& out) {
 }
 
 TEST(editor_route_submit_is_nonterminal) {
-  lazily_test::JsonPtr fx; load("editor_route_submit.json", fx);
+  lazily_test::JsonPtr fx;
+  load("editor_route_submit.json", fx);
   CommandProjection p;
-  for (const auto& fr : frames_of(fx.get())->array) fold_frame(p, fr.get());
+  for (const auto& fr : frames_of(fx.get())->array)
+    fold_frame(p, fr.get());
   assert_projection(p, fx->find("expect"), "editor_route_submit");
   REQUIRE(!p.terminal_for("cmd-run-1").has_value(), "cmd-run-1 must be non-terminal");
 }
 
 TEST(sync_tmux_layout_submit_shared_blob) {
-  lazily_test::JsonPtr fx; load("sync_tmux_layout_submit.json", fx);
+  lazily_test::JsonPtr fx;
+  load("sync_tmux_layout_submit.json", fx);
   CommandProjection p;
-  for (const auto& fr : frames_of(fx.get())->array) fold_frame(p, fr.get());
+  for (const auto& fr : frames_of(fx.get())->array)
+    fold_frame(p, fr.get());
   assert_projection(p, fx->find("expect"), "sync_tmux_layout_submit");
 }
 
 TEST(accepted_then_applied_receipt_terminal_only_at_receipt) {
-  lazily_test::JsonPtr fx; load("accepted_then_applied_receipt.json", fx);
+  lazily_test::JsonPtr fx;
+  load("accepted_then_applied_receipt.json", fx);
   const Json* frames = frames_of(fx.get());
   const size_t terminal_at =
       static_cast<size_t>(fx->find("expect")->find("terminal_after_frame_index")->as_int());
@@ -305,7 +315,8 @@ TEST(accepted_then_applied_receipt_terminal_only_at_receipt) {
 }
 
 TEST(stale_generation_events_and_receipts_ignored) {
-  lazily_test::JsonPtr fx; load("stale_generation_ignored.json", fx);
+  lazily_test::JsonPtr fx;
+  load("stale_generation_ignored.json", fx);
   const Json* frames = frames_of(fx.get());
   std::vector<size_t> ignored;
   for (const auto& v : fx->find("expect")->find("ignored_frame_indices")->array)
@@ -325,11 +336,13 @@ TEST(stale_generation_events_and_receipts_ignored) {
 }
 
 TEST(terminal_conflict_fails_closed) {
-  lazily_test::JsonPtr fx; load("terminal_conflict_fail_closed.json", fx);
+  lazily_test::JsonPtr fx;
+  load("terminal_conflict_fail_closed.json", fx);
   const Json* frames = frames_of(fx.get());
   const std::string cmd = fx->find("expect")->find("conflict_command_id")->str;
   CommandProjection p;
-  for (const auto& fr : frames->array) fold_frame(p, fr.get());
+  for (const auto& fr : frames->array)
+    fold_frame(p, fr.get());
   REQUIRE(p.has_conflict(cmd), "terminal conflict must be flagged");
   // The applied outcome is preserved (no winner selection).
   assert_image_eq(p.to_image(),
@@ -338,29 +351,34 @@ TEST(terminal_conflict_fails_closed) {
 }
 
 TEST(cancel_preempts_nonterminal_scenarios) {
-  lazily_test::JsonPtr fx; load("cancel_preempts_nonterminal.json", fx);
+  lazily_test::JsonPtr fx;
+  load("cancel_preempts_nonterminal.json", fx);
   const Json* scenarios = fx->find("scenarios");
   REQUIRE(scenarios != nullptr, "cancel fixture missing scenarios");
   for (std::size_t i = 0; i < scenarios->array.size(); ++i) {
     const auto& scenario = scenarios->array[i];
-    lazily_test::record_scenario_at(
-        "message-passing/cancel_preempts_nonterminal.json", *scenario, i);
+    lazily_test::record_scenario_at("message-passing/cancel_preempts_nonterminal.json", *scenario,
+                                    i);
     CommandProjection p;
-    for (const auto& fr : scenario->find("frames")->array) fold_frame(p, fr.get());
+    for (const auto& fr : scenario->find("frames")->array)
+      fold_frame(p, fr.get());
     assert_projection(p, scenario->find("expect"),
                       "cancel_preempts[" + scenario->find("name")->str + "]");
   }
 }
 
 TEST(reconnect_command_projection_resyncs) {
-  lazily_test::JsonPtr fx; load("reconnect_command_projection.json", fx);
+  lazily_test::JsonPtr fx;
+  load("reconnect_command_projection.json", fx);
   CommandProjection p;
-  for (const auto& fr : frames_of(fx.get())->array) fold_frame(p, fr.get());
+  for (const auto& fr : frames_of(fx.get())->array)
+    fold_frame(p, fr.get());
   assert_projection(p, fx->find("expect"), "reconnect_command_projection");
 }
 
 TEST(rpc_call_waits_for_terminal) {
-  lazily_test::JsonPtr fx; load("rpc_call_waits_for_terminal.json", fx);
+  lazily_test::JsonPtr fx;
+  load("rpc_call_waits_for_terminal.json", fx);
   const Json* frames = frames_of(fx.get());
   const Json* rpc = fx->find("expect")->find("rpc");
   const std::string cmd = rpc->find("command_id")->str;
@@ -388,7 +406,7 @@ TEST(rpc_call_waits_for_terminal) {
 
 int main() {
   REQUIRE_FIXTURES_LOADED(8);
-  std::cout << "lazily-cpp command conformance: " << test_passed << "/" << test_count
-            << " passed" << std::endl;
+  std::cout << "lazily-cpp command conformance: " << test_passed << "/" << test_count << " passed"
+            << std::endl;
   return test_passed == test_count ? 0 : 1;
 }
