@@ -60,14 +60,15 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-# The current suite replays 113 distinct fixtures. Six collections fixtures
+# The current suite replays 114 distinct fixtures. Six collections fixtures
 # (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
 # moved out of KNOWN_UNCOVERED in #lazilycppcollections, the seven ingress
 # schedules landed with the transport-agnostic ingress family, and
-# codec/frame_roundtrip_json.json joined it with the json reference codec
-# (#lzcppjsoncodec); keep the floor aligned so deleting a runner cannot hide
-# behind older aggregate growth.
-MIN_FIXTURES="${MIN_FIXTURES:-113}"
+# codec/frame_roundtrip_json.json plus distributed/crdt_sync_frames.json joined
+# them with the json reference codec (#lzcppjsoncodec, #lazilycppexcuses); keep
+# the floor aligned so deleting a runner cannot hide behind older aggregate
+# growth.
+MIN_FIXTURES="${MIN_FIXTURES:-114}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -137,10 +138,6 @@ KNOWN_UNCOVERED=(
   # tags, and also ships a positional array form that protocol.md excludes
   # outright. It is a good private codec and not the `msgpack` codec token.
   "codec/frame_roundtrip_msgpack.json"
-  # distributed — CrdtSync wire-serde frames. The cause this entry was written
-  # for is gone: json_codec.hpp decodes the IpcMessage envelope as of
-  # #lzcppjsoncodec, so what is missing is only the runner, not the encoder.
-  "distributed/crdt_sync_frames.json"
   # materialization — mirrored by hand in test_reactive_family.cpp and its
   # async / thread-safe siblings; only entry_kind_orthogonal_to_mode.json is
   # replayed from the canonical bytes.

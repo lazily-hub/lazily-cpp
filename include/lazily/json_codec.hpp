@@ -396,18 +396,26 @@ inline CrdtOp json_to_crdt_op(const JsonValue& value) {
 
 inline JsonValue json_from_crdt_sync(const CrdtSync& sync) {
   JsonValue out = JsonValue::empty_object();
+  // Frontier suppression (protocol.md, `#lzspecfrontiersuppress`): an empty
+  // frontier is OMITTED from the wire, and an omitted frontier means "unchanged
+  // since the last frame the receiver accepted" — not "the sender knows
+  // nothing". Writing `"frontier": []` instead would be a different statement,
+  // so the empty case must not be serialized.
+  //
   // The frontier is a map on the wire encoded as pair ARRAYS (`[[peer, stamp]]`)
   // — serde's representation for `Vec<(u64, WireStamp)>`, which is what the
   // canonical fixtures carry.
-  JsonArray frontier;
-  frontier.reserve(sync.frontier.size());
-  for (const auto& entry : sync.frontier) {
-    JsonArray pair;
-    pair.push_back(JsonValue::of_int(entry.peer));
-    pair.push_back(json_from_wire_stamp(entry.stamp));
-    frontier.push_back(JsonValue::of_array(std::move(pair)));
+  if (!sync.frontier.empty()) {
+    JsonArray frontier;
+    frontier.reserve(sync.frontier.size());
+    for (const auto& entry : sync.frontier) {
+      JsonArray pair;
+      pair.push_back(JsonValue::of_int(entry.peer));
+      pair.push_back(json_from_wire_stamp(entry.stamp));
+      frontier.push_back(JsonValue::of_array(std::move(pair)));
+    }
+    out.set("frontier", JsonValue::of_array(std::move(frontier)));
   }
-  out.set("frontier", JsonValue::of_array(std::move(frontier)));
   JsonArray ops;
   ops.reserve(sync.ops.size());
   for (const auto& op : sync.ops)
@@ -419,11 +427,19 @@ inline JsonValue json_from_crdt_sync(const CrdtSync& sync) {
 inline CrdtSync json_to_crdt_sync(const JsonValue& value) {
   if (!value.is_object()) json_codec_fail("CrdtSync must be an object");
   CrdtSync sync{};
-  for (const auto& entry : json_required_array(value, "frontier").array) {
-    if (!entry.is_array() || entry.array.size() != 2)
-      json_codec_fail("frontier entry must be a [peer, stamp] pair");
-    sync.frontier.push_back(
-        StampFrontierEntry{entry.array[0].as_int(), json_to_wire_stamp(entry.array[1])});
+  // Optional, per frontier suppression above: an absent `frontier` decodes as
+  // empty so a suppressed frame round-trips, and so a decoder that predates the
+  // relaxation is not required to see the field.
+  if (const JsonValue* frontier = value.find("frontier")) {
+    if (!frontier->is_null()) {
+      if (!frontier->is_array()) json_codec_fail("field `frontier` must be an array");
+      for (const auto& entry : frontier->array) {
+        if (!entry.is_array() || entry.array.size() != 2)
+          json_codec_fail("frontier entry must be a [peer, stamp] pair");
+        sync.frontier.push_back(
+            StampFrontierEntry{entry.array[0].as_int(), json_to_wire_stamp(entry.array[1])});
+      }
+    }
   }
   for (const auto& op : json_required_array(value, "ops").array)
     sync.ops.push_back(json_to_crdt_op(op));

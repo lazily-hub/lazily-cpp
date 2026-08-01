@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -45,6 +46,7 @@ using lazily_test::parse_json;
 
 static const char* kArea = "distributed";
 static const char* kFixture = "anti_entropy_converge.json";
+static const char* kFramesFixture = "crdt_sync_frames.json";
 
 static size_t g_scenarios = 0;
 static size_t g_ops_ingested = 0;
@@ -158,7 +160,112 @@ static void assert_converged(const std::string& scenario, const CrdtPlaneRuntime
   }
 }
 
+// `crdt_sync_frames.json` is a WIRE fixture, not a plane-behaviour one: each
+// frame carries a `CrdtSync` payload plus assertions about its shape, and it
+// pins the CODEC boundary rather than convergence. It was excused in
+// scripts/check-conformance-coverage.sh for one concrete reason — lazily-cpp had
+// no JSON codec for the IpcMessage envelope, so there was nothing to replay
+// `wire` through. `#lzcppjsoncodec` removed that reason; this removes the
+// excuse.
+//
+// The frames are decoded through `json_to_ipc_message` and then RE-ENCODED, so
+// this asserts the codec rather than the fixture against itself. Two gaps
+// surfaced immediately and are fixed in include/lazily/json_codec.hpp: the
+// decoder REQUIRED `frontier`, which made the suppressed frame undecodable, and
+// the encoder always wrote it, which turned "unchanged since the last accepted
+// frame" into "the sender advertises nothing" on the way out. Neither was
+// visible in codec/frame_roundtrip_json.json, whose CrdtSync frame always
+// carries a frontier.
+static void replay_crdt_sync_frames() {
+  const std::string text = lazily_test::spec_fixture_text(kArea, kFramesFixture);
+  const JsonPtr fixture = parse_json(text);
+  REQUIRE(fixture->is_object(), "crdt_sync_frames fixture root is not an object");
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*fixture, "protocol_version")) == 1,
+          "crdt_sync_frames protocol_version");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*fixture, "kind")) == "CrdtSyncFrames",
+          "crdt_sync_frames kind");
+
+  const Json* frames = fixture->find("frames");
+  REQUIRE(frames != nullptr && frames->is_array() && !frames->array.empty(),
+          "a replay of zero frames is not a replay");
+
+  // The library's own parser reads the same bytes; that view is what the codec
+  // consumes, and being able to read the canonical corpus is part of what a
+  // reference codec has to prove.
+  const JsonValue library = json_parse(text);
+  const JsonValue* library_frames = library.find("frames");
+  REQUIRE(library_frames != nullptr && library_frames->is_array(),
+          "lazily::json_parse should read the fixture's frames");
+  REQUIRE(library_frames->array.size() == frames->array.size(),
+          "both parses should see the same frame count");
+
+  std::size_t checked = 0;
+  for (std::size_t i = 0; i < frames->array.size(); ++i) {
+    const Json& frame = *frames->array[i];
+    const std::string label = lazily_test::json_string(lazily_test::json_member(frame, "label"));
+
+    const JsonValue* wire = library_frames->array[i].find("wire");
+    REQUIRE(wire != nullptr, "each frame carries a `wire` envelope");
+    const IpcMessage message = json_to_ipc_message(*wire);
+    const auto* envelope = std::get_if<IpcMessageCrdtSync>(&message);
+    REQUIRE(envelope != nullptr, "each frame is an externally-tagged CrdtSync envelope");
+    const CrdtSync& sync = envelope->value;
+
+    // Re-encode and decode again: the assertions below then describe what the
+    // CODEC produced, not what the fixture said. A codec that drops ops or
+    // frontier entries on the way out satisfies a decode-only check.
+    const std::string encoded = encode_json(message);
+    const IpcMessage round = decode_json(encoded);
+    REQUIRE(round == message, "a CrdtSync frame must survive a json round trip");
+    const CrdtSync& round_sync = std::get<IpcMessageCrdtSync>(round).value;
+
+    lazily_test::AssertionKeys expect(std::string(kArea) + "/" + kFramesFixture + " frames[" +
+                                          label + "].assertions",
+                                      lazily_test::json_member(frame, "assertions"));
+    // Every key is optional per frame, so each comparison binds to the key's
+    // presence rather than to a bare read (`#lzconsumednotasserted`).
+    if (expect.assert_key_if_present("frontier_len",
+                                     static_cast<int64_t>(round_sync.frontier.size())))
+      ++checked;
+    if (expect.assert_key_if_present("op_count", static_cast<int64_t>(round_sync.ops.size())))
+      ++checked;
+    if (expect.assert_key_with_if_present("frontier_omitted", [&](const Json& want) {
+          const JsonValue& body = wire->object.front().second;
+          if (lazily_test::json_bool(want) != (body.find("frontier") == nullptr)) return false;
+          // An omitted frontier decodes as empty rather than as a placeholder,
+          // and — the half a decode-only runner cannot see — re-encoding must
+          // keep it omitted. Writing `"frontier": []` back out would turn
+          // "unchanged since the last accepted frame" into a positive claim
+          // that the sender advertises nothing.
+          if (!round_sync.frontier.empty()) return false;
+          const JsonValue reencoded = json_parse(encoded);
+          return reencoded.object.front().second.find("frontier") == nullptr;
+        }))
+      ++checked;
+    if (expect.assert_key_with_if_present("has_keyed_op", [&](const Json& want) {
+          const bool keyed = std::any_of(round_sync.ops.begin(), round_sync.ops.end(),
+                                         [](const CrdtOp& op) { return op.key.has_value(); });
+          return keyed == lazily_test::json_bool(want);
+        }))
+      ++checked;
+    if (expect.assert_key_with_if_present("has_keyless_op", [&](const Json& want) {
+          const bool keyless = std::any_of(round_sync.ops.begin(), round_sync.ops.end(),
+                                           [](const CrdtOp& op) { return !op.key.has_value(); });
+          return keyless == lazily_test::json_bool(want);
+        }))
+      ++checked;
+    expect.finish();
+    ++g_scenarios;
+  }
+
+  REQUIRE(checked >= 4, "too little asserted across the crdt sync frames");
+  g_checks += checked;
+  std::cout << "crdt sync frames: " << frames->array.size() << " frames, " << checked
+            << " assertions" << std::endl;
+}
+
 int main() {
+  replay_crdt_sync_frames();
   const std::string text = lazily_test::spec_fixture_text(kArea, kFixture);
   const JsonPtr fixture = parse_json(text);
   REQUIRE(fixture->is_object(), "fixture root is not an object");
@@ -261,6 +368,6 @@ int main() {
   std::cout << "distributed conformance: " << g_scenarios << " scenarios, " << g_ops_ingested
             << " ops ingested, " << g_checks << " assertions" << std::endl;
 
-  REQUIRE_FIXTURES_LOADED(1);
+  REQUIRE_FIXTURES_LOADED(2);
   return 0;
 }
