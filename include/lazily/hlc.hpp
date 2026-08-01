@@ -84,6 +84,11 @@ struct WireStamp {
   int64_t wall_time;
   int64_t logical;
   PeerId peer;
+
+  bool operator==(const WireStamp& o) const {
+    return wall_time == o.wall_time && logical == o.logical && peer == o.peer;
+  }
+  bool operator!=(const WireStamp& o) const { return !(*this == o); }
 };
 
 inline WireStamp to_wire(const HlcStamp& s) { return {s.wall_time, s.logical, s.peer}; }

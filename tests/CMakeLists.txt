@@ -109,6 +109,14 @@ add_executable(test_distributed_conformance test_distributed_conformance.cpp)
 target_link_libraries(test_distributed_conformance PRIVATE lazily)
 add_test(NAME DistributedConformance COMMAND test_distributed_conformance)
 
+# Replays ../lazily-spec/conformance/codec/frame_roundtrip_json.json THROUGH the
+# json reference codec (#lzcppjsoncodec). Every other conformance binary replays
+# fixture CONTENT; this one replays a codec, which is why it is the only rung
+# that could have caught lazily-cpp shipping codec.hpp while speaking no JSON.
+add_executable(test_codec_conformance test_codec_conformance.cpp)
+target_link_libraries(test_codec_conformance PRIVATE lazily)
+add_test(NAME CodecConformance COMMAND test_codec_conformance)
+
 add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
 add_test(NAME crdt COMMAND test_crdt)
@@ -312,7 +320,8 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_reactive_graph_conformance
   test_statechart_conformance
   test_receipts_conformance
-  test_distributed_conformance)
+  test_distributed_conformance
+  test_codec_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
   target_compile_definitions(${_target} PRIVATE
@@ -346,6 +355,7 @@ set_tests_properties(
   StatechartConformance
   ReceiptsConformance
   DistributedConformance
+  CodecConformance
   PROPERTIES SKIP_RETURN_CODE 77)
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake

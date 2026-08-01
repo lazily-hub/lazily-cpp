@@ -290,6 +290,115 @@ inline IpcMessage ipc_outbox_ack(Epoch through_epoch) {
   return IpcMessageOutboxAck{OutboxAck{through_epoch}};
 }
 
+// -- Wire-value equality --
+//
+// Structural equality over the whole IpcMessage tree (`#lzcppjsoncodec`). The
+// codec conformance obligation is `decode(encode(decode(wire))) == decode(wire)`
+// on the DECODED VALUES: comparing encoded bytes instead would let a codec that
+// consistently drops a field pass, because the dropped field is absent from
+// both sides. Only value equality can see the loss, since the left side came
+// from the codec and the right side came from the fixture.
+//
+// Declared as members so `std::variant`'s own `operator==` picks them up for
+// NodeState / IpcValue / DeltaOp / IpcMessage, and `std::optional<NodeKey>`
+// compares through NodeKey.
+//
+// `ipc_value_equal` above predates this and deliberately ignores `backend`
+// (it answers "same bytes?" for merge paths); wire equality does not, because a
+// descriptor that resolves against a different backend is a different frame.
+
+inline bool operator==(const NodeKey& a, const NodeKey& b) { return a.path() == b.path(); }
+inline bool operator!=(const NodeKey& a, const NodeKey& b) { return !(a == b); }
+
+inline bool operator==(const ShmBlobRef& a, const ShmBlobRef& b) {
+  return a.offset == b.offset && a.len == b.len && a.generation == b.generation &&
+         a.epoch == b.epoch && a.checksum == b.checksum && a.backend == b.backend;
+}
+inline bool operator!=(const ShmBlobRef& a, const ShmBlobRef& b) { return !(a == b); }
+
+inline bool operator==(const NodeStatePayload& a, const NodeStatePayload& b) {
+  return a.bytes == b.bytes;
+}
+inline bool operator==(const NodeStateSharedBlob& a, const NodeStateSharedBlob& b) {
+  return a.blob == b.blob;
+}
+inline bool operator==(const NodeStateOpaque&, const NodeStateOpaque&) { return true; }
+
+inline bool operator==(const IpcValueInline& a, const IpcValueInline& b) {
+  return a.bytes == b.bytes;
+}
+inline bool operator==(const IpcValueSharedBlob& a, const IpcValueSharedBlob& b) {
+  return a.blob == b.blob;
+}
+
+inline bool operator==(const NodeSnapshot& a, const NodeSnapshot& b) {
+  return a.node == b.node && a.type_tag == b.type_tag && a.state == b.state && a.key == b.key;
+}
+inline bool operator==(const EdgeSnapshot& a, const EdgeSnapshot& b) {
+  return a.dependent == b.dependent && a.dependency == b.dependency;
+}
+inline bool operator==(const Snapshot& a, const Snapshot& b) {
+  return a.epoch == b.epoch && a.nodes == b.nodes && a.edges == b.edges && a.roots == b.roots;
+}
+
+inline bool operator==(const DeltaOpCellSet& a, const DeltaOpCellSet& b) {
+  return a.node == b.node && a.payload == b.payload;
+}
+inline bool operator==(const DeltaOpSlotValue& a, const DeltaOpSlotValue& b) {
+  return a.node == b.node && a.payload == b.payload;
+}
+inline bool operator==(const DeltaOpInvalidate& a, const DeltaOpInvalidate& b) {
+  return a.node == b.node;
+}
+inline bool operator==(const DeltaOpNodeAdd& a, const DeltaOpNodeAdd& b) {
+  return a.node == b.node && a.type_tag == b.type_tag && a.state == b.state && a.key == b.key;
+}
+inline bool operator==(const DeltaOpNodeRemove& a, const DeltaOpNodeRemove& b) {
+  return a.node == b.node;
+}
+inline bool operator==(const DeltaOpEdgeAdd& a, const DeltaOpEdgeAdd& b) {
+  return a.dependent == b.dependent && a.dependency == b.dependency;
+}
+inline bool operator==(const DeltaOpEdgeRemove& a, const DeltaOpEdgeRemove& b) {
+  return a.dependent == b.dependent && a.dependency == b.dependency;
+}
+inline bool operator==(const Delta& a, const Delta& b) {
+  return a.base_epoch == b.base_epoch && a.epoch == b.epoch && a.ops == b.ops;
+}
+
+inline bool operator==(const StampFrontierEntry& a, const StampFrontierEntry& b) {
+  return a.peer == b.peer && a.stamp == b.stamp;
+}
+inline bool operator==(const CrdtOp& a, const CrdtOp& b) {
+  return a.node == b.node && a.key == b.key && a.stamp == b.stamp && a.state == b.state;
+}
+inline bool operator==(const CrdtSync& a, const CrdtSync& b) {
+  return a.frontier == b.frontier && a.ops == b.ops;
+}
+
+inline bool operator==(const ResyncRequest& a, const ResyncRequest& b) {
+  return a.from_epoch == b.from_epoch;
+}
+inline bool operator==(const OutboxAck& a, const OutboxAck& b) {
+  return a.through_epoch == b.through_epoch;
+}
+
+inline bool operator==(const IpcMessageSnapshot& a, const IpcMessageSnapshot& b) {
+  return a.value == b.value;
+}
+inline bool operator==(const IpcMessageDelta& a, const IpcMessageDelta& b) {
+  return a.value == b.value;
+}
+inline bool operator==(const IpcMessageCrdtSync& a, const IpcMessageCrdtSync& b) {
+  return a.value == b.value;
+}
+inline bool operator==(const IpcMessageResyncRequest& a, const IpcMessageResyncRequest& b) {
+  return a.value == b.value;
+}
+inline bool operator==(const IpcMessageOutboxAck& a, const IpcMessageOutboxAck& b) {
+  return a.value == b.value;
+}
+
 // -- Permission boundary --
 
 enum class OpKind { Read, Write, TriggerEffect };

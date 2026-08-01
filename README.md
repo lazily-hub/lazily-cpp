@@ -102,7 +102,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Lossless tree — concurrent merge convergence | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Frame codec — `json` **reference codec**: dependency-free interop floor, FFI baseline form, byte-canonical (**MUST**) — executable round-trip obligation (`conformance/codec/frame_roundtrip_json.json`, `#lzmsgpackparity`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Frame codec — `json` **reference codec**: dependency-free interop floor, FFI baseline form, byte-canonical (**MUST**) — executable round-trip obligation (`conformance/codec/frame_roundtrip_json.json`, `#lzmsgpackparity`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Frame codec — `msgpack` **cross-language binary default**: externally-tagged frame over named-field maps, semantic (not byte-identical) round-trip (**MUST**) — executable round-trip obligation (`conformance/codec/frame_roundtrip_msgpack.json`, `#lzmsgpackparity`). `~` = a MessagePack codec exists but is not this wire | ✅ | — | — | — | — | — | — | ~ | — |
 | Frame codec — `postcard` positional same-schema fast path: smallest + byte-canonical, not cross-language (**MAY**) | ✅ | — | — | — | — | — | — | — | — |
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -494,8 +494,10 @@ target_link_libraries(your_target PRIVATE lazily)
 | `lossless_tree_crdt.hpp` | LosslessTreeCrdt (M1, dotted-frontier anti-entropy) |
 | `stable_id.hpp` | Manufactured identity (anchors, content hashes, word-LCS alignment) |
 | `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake |
-| `codec.hpp` | msgpack wire codec — `encode`/`decode` the `IpcMessage` tree |
+| `codec.hpp` | msgpack wire codec — `encode`/`decode` the `IpcMessage` tree (a private internally-tagged envelope, **not** the spec's `msgpack` wire) |
 | `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker |
+| `json_codec.hpp` | `json` **reference codec** — `encode_json`/`decode_json` the externally-tagged `IpcMessage` envelope (protocol.md § Frame codecs, `#lzcppjsoncodec`) |
+| `json.hpp` | Minimal zero-dependency JSON DOM/parser/writer backing the reference codec |
 | `reliable_sync.hpp` | Reliable sync plus `OutboxStore`, `StoredOutbox<S>`, `InMemoryStore`, and locked `FileOutboxStore` |
 | `transport.hpp` | Cross-process zero-copy transport — pluggable `BlobBackend` (`InProcessBackend`/`ShmBackend`), spill/resolve, `BlobRouter` |
 | `receipt.hpp` | Causal receipts, StateProjectionMirror |

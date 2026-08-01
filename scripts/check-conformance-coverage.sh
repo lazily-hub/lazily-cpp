@@ -60,19 +60,24 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-# The current suite replays 112 distinct fixtures. Six collections fixtures
+# The current suite replays 113 distinct fixtures. Six collections fixtures
 # (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
-# moved out of KNOWN_UNCOVERED in #lazilycppcollections, and the seven ingress
-# schedules landed with the transport-agnostic ingress family; keep the floor
-# aligned so deleting a runner cannot hide behind older aggregate growth.
-MIN_FIXTURES="${MIN_FIXTURES:-112}"
+# moved out of KNOWN_UNCOVERED in #lazilycppcollections, the seven ingress
+# schedules landed with the transport-agnostic ingress family, and
+# codec/frame_roundtrip_json.json joined it with the json reference codec
+# (#lzcppjsoncodec); keep the floor aligned so deleting a runner cannot hide
+# behind older aggregate growth.
+MIN_FIXTURES="${MIN_FIXTURES:-113}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
 # does not read at all would make this guard permanently red, and omitting one it
 # does read would let that runner vanish unnoticed — which is the whole point.
 #
-# Deliberately ABSENT, with reasons (open gaps, not oversights):
+# Deliberately ABSENT, with reasons (open gaps, not oversights). `codec` left
+# this list in #lzcppjsoncodec — the binding replays the json half through a
+# real codec now, so the area is required and only its msgpack fixture stays
+# named in KNOWN_UNCOVERED:
 #   signaling  (1)  anti_spoof_session.json IS replayed by
 #                   test_signaling_conformance.cpp. frames.json is not: it needs
 #                   signaling wire serde, which this binding does not have.
@@ -84,6 +89,7 @@ MIN_FIXTURES="${MIN_FIXTURES:-112}"
 #   root-level (8)  snapshot_*/delta_*/arena_blob IPC wire fixtures; test_ipc.cpp
 #                   hand-builds the equivalent structures.
 REQUIRED_AREAS=(
+  codec
   collections
   coordination
   crdt-tree
@@ -116,17 +122,12 @@ REQUIRED_AREAS=(
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
   # codec — the frame-codec round-trip obligation (#lzmsgpackparity).
-  # `codec` is deliberately NOT in REQUIRED_AREAS above: that list demands at
-  # least one replay per area, and this binding replays neither fixture yet.
-  # Add it there in the same change that lands the first codec replay.
-  # protocol.md § Frame codecs makes BOTH of these MUST-level, and until now
-  # the requirement was prose only, so neither gap was visible anywhere.
-  #
-  # `json` is the REFERENCE codec — the dependency-free interop floor every
-  # binding MUST speak. lazily-cpp has no JSON codec for the IpcMessage
-  # envelope at all (the same reason distributed/crdt_sync_frames.json is
-  # excused below); tests/test_json.hpp is a fixture READER, not a codec.
-  "codec/frame_roundtrip_json.json"
+  # `codec` IS in REQUIRED_AREAS above as of #lzcppjsoncodec: this binding now
+  # ships include/lazily/json_codec.hpp — the `json` REFERENCE codec, the
+  # dependency-free interop floor — and tests/test_codec_conformance.cpp
+  # replays frame_roundtrip_json.json THROUGH it rather than reading it as
+  # data. protocol.md § Frame codecs makes both codecs MUST-level; one half is
+  # proven now and the other is still named below.
   # `msgpack` is not simply missing here — it is DIVERGENT, which is worse,
   # because include/lazily/codec.hpp made the binding look implemented. The
   # spec frame is externally tagged (`{"Snapshot": {...}}`) over named-field
@@ -136,8 +137,9 @@ KNOWN_UNCOVERED=(
   # tags, and also ships a positional array form that protocol.md excludes
   # outright. It is a good private codec and not the `msgpack` codec token.
   "codec/frame_roundtrip_msgpack.json"
-  # distributed — CrdtSync wire-serde frames; lazily-cpp has no JSON codec for
-  # the IpcMessage envelope, so replaying `wire` needs an encoder first.
+  # distributed — CrdtSync wire-serde frames. The cause this entry was written
+  # for is gone: json_codec.hpp decodes the IpcMessage envelope as of
+  # #lzcppjsoncodec, so what is missing is only the runner, not the encoder.
   "distributed/crdt_sync_frames.json"
   # materialization — mirrored by hand in test_reactive_family.cpp and its
   # async / thread-safe siblings; only entry_kind_orthogonal_to_mode.json is
