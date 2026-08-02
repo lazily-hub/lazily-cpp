@@ -80,11 +80,11 @@ template <typename Policy> void replay_merge_scenario(const Json& scenario) {
 void test_mergecell_algebra() {
   const auto root = fixture("mergecell_algebra.json");
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    // This corpus carries neither `id` nor `name`, so the ledger falls back to
-    // the positional spelling and the coverage script reports it.
-    lazily_test::record_scenario_at("collections/mergecell_algebra.json", scenario, i);
+  for (const auto& sv :
+       lazily_test::scenario_views("collections/mergecell_algebra.json", scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
     const auto policy = lazily_test::json_string(lazily_test::json_member(scenario, "policy"));
     if (policy == "KeepLatest") {
       replay_merge_scenario<KeepLatest>(scenario);
@@ -185,9 +185,11 @@ void assert_sem_values(SemTree<int, int>& tree, lazily_test::AssertionKeys& expe
 void test_semtree_incremental() {
   const auto root = fixture("semtree_incremental.json");
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    lazily_test::record_scenario_at("collections/semtree_incremental.json", scenario, i);
+  for (const auto& sv :
+       lazily_test::scenario_views("collections/semtree_incremental.json", scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
     const auto& tree_json = lazily_test::json_member(scenario, "tree");
     const auto fold_name = lazily_test::json_string(lazily_test::json_member(scenario, "fold"));
     SemTree<int, int>::FoldFn fold;
@@ -281,9 +283,11 @@ std::string match_string(const Match& match) {
 void test_stableid_alignment() {
   const auto root = fixture("stableid_alignment.json");
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    lazily_test::record_scenario_at("collections/stableid_alignment.json", scenario, i);
+  for (const auto& sv :
+       lazily_test::scenario_views("collections/stableid_alignment.json", scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
     lazily_test::AssertionKeys expect(std::string(__func__) + " expect",
                                       lazily_test::json_member(scenario, "expect"));
     if (scenario.has("blocks")) {
@@ -486,9 +490,10 @@ void assert_text_expectations(const ReplicaMap& replicas, lazily_test::Assertion
 void replay_text_fixture(const std::string& name) {
   const auto root = fixture(name);
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    lazily_test::record_scenario_at("collections/" + name, scenario, i);
+  for (const auto& sv : lazily_test::scenario_views("collections/" + name, scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
     auto replicas = text_seed(scenario);
     apply_text_steps(replicas, lazily_test::json_member(scenario, "steps"));
     lazily_test::AssertionKeys expect(name + " expect",

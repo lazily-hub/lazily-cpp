@@ -1180,12 +1180,15 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
     const Json* sname = scenario->find("name");
     const Json* ssteps = scenario->find("steps");
     REQUIRE(sname && ssteps, "scenario needs a name and steps");
-    // This runner carries its own JSON reader, so the scenario id is resolved
-    // here in the same fixed order the shared ledger uses (`id`, else `name`,
-    // else the positional index). A drift between the two spellings is not
-    // silent: the ledger DECLARES the id through `lazily_test::` and would
-    // report the one recorded below as an unreplayed scenario.
+    // This runner carries its own anonymous-namespace JSON reader, so it cannot
+    // take `lazily_test::ScenarioView` and the id is resolved here in the same
+    // fixed order the shared ledger uses (`id`, else `name`). A drift between
+    // the two spellings is not silent: the ledger DECLARES the id through
+    // `lazily_test::` and would report the one recorded here as unreplayed.
     const Json* sid = scenario->find("id");
+    // Booked AFTER the shape check and immediately before the replay consumes
+    // `ssteps` (#lzscenariobodyskip) — the REQUIRE above can abort past this
+    // point, and a scenario that never reaches its steps has not been replayed.
     lazily_test::record_scenario(std::string(kArea) + "/" + name,
                                  sid != nullptr && !sid->str.empty() ? sid->str : sname->str);
     World w;

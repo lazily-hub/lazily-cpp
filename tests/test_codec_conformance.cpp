@@ -254,9 +254,12 @@ TEST(test_json_frames_round_trip) {
           "both parses should see the same scenario count");
 
   std::size_t replayed = 0;
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    const std::string id = lazily_test::record_scenario_at(kFixtureId, scenario, i);
+  for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
+    const std::string id = sv.id();
+    const std::size_t i = sv.index();
 
     const JsonValue* wire = library_scenarios->array[i].find("wire");
     REQUIRE(wire != nullptr, "scenario should carry a `wire` frame");
@@ -429,9 +432,12 @@ TEST(test_msgpack_frames_round_trip) {
           "both parses should see the same scenario count");
 
   std::size_t replayed = 0;
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    const std::string id = lazily_test::record_scenario_at(kMsgpackFixtureId, scenario, i);
+  for (const auto& sv : lazily_test::scenario_views(kMsgpackFixtureId, scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
+    const std::string id = sv.id();
+    const std::size_t i = sv.index();
 
     // `wire` is written in the reference json form in both codec fixtures, so
     // the msgpack half starts from the same value and differs only in the

@@ -355,10 +355,11 @@ TEST(cancel_preempts_nonterminal_scenarios) {
   load("cancel_preempts_nonterminal.json", fx);
   const Json* scenarios = fx->find("scenarios");
   REQUIRE(scenarios != nullptr, "cancel fixture missing scenarios");
-  for (std::size_t i = 0; i < scenarios->array.size(); ++i) {
-    const auto& scenario = scenarios->array[i];
-    lazily_test::record_scenario_at("message-passing/cancel_preempts_nonterminal.json", *scenario,
-                                    i);
+  for (const auto& sv : lazily_test::scenario_views(
+           "message-passing/cancel_preempts_nonterminal.json", scenarios->array)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const Json* scenario = &sv.replay();
     CommandProjection p;
     for (const auto& fr : scenario->find("frames")->array)
       fold_frame(p, fr.get());

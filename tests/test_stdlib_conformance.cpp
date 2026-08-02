@@ -299,9 +299,10 @@ int main() {
     REQUIRE(string_field(*fixture, "feature") == feature, "stdlib feature mismatch");
     std::set<std::string> scenario_ids;
     const auto& scenarios = required(*fixture, "scenarios").array;
-    for (std::size_t i = 0; i < scenarios.size(); ++i) {
-      const auto& scenario = scenarios[i];
-      lazily_test::record_scenario_at(std::string("stdlib/") + name, *scenario, i);
+    for (const auto& sv : lazily_test::scenario_views(std::string("stdlib/") + name, scenarios)) {
+      // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+      // that stops short of replaying stops being booked.
+      const Json* scenario = &sv.replay();
       scenario_ids.insert(string_field(*scenario, "id"));
       if (std::string(feature) == "stdlib_timer_v1")
         replay_timer(*scenario);

@@ -58,6 +58,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "test_json.hpp"
 #include "test_require.hpp"
@@ -195,6 +196,82 @@ inline std::string record_scenario_at(const std::string& fixture_id, const Json&
                              "it a stable id upstream in lazily-spec (#lzspecscenarioids).");
   record_scenario(fixture_id, id);
   return id;
+}
+
+// ---------------------------------------------------------------------------
+// Yielding is not replaying (#lzscenariobodyskip)
+// ---------------------------------------------------------------------------
+//
+// `record_scenario_at` above books at the top of the loop body, which is one
+// step better than booking at the yield and still blind to the case rung 4
+// exists for: the call runs, and then the body does nothing. An early
+// `continue`, an unmatched dispatch arm, a `return` past the replay, a body
+// someone commented out — all of them leave a booked scenario that ran nothing,
+// and no other guard can see it, because an unreplayed scenario contributes no
+// unconsumed and no unasserted key.
+//
+// lazily-py found this against the contract's own probe; lazily-js, lazily-rs,
+// lazily-cs, lazily-kt, lazily-go, lazily-dart and lazily-zig carry the fix.
+// The rule is the same everywhere: book on the PAYLOAD, stay silent on the
+// LABEL.
+//
+// C++ has no property interception, so the seam is a handle that owns the
+// payload. `id()` and `peek()` are label reads; `replay()` is the only way to
+// reach the scenario a runner is about to replay, so forgetting to book stops
+// being expressible.
+class ScenarioView {
+public:
+  ScenarioView(std::string fixture, const Json& scenario, std::size_t index)
+      : fixture_(std::move(fixture)), scenario_(&scenario), index_(index) {}
+
+  // The resolved ledger id. Silent — naming a scenario is not replaying it.
+  const std::string& id() const {
+    if (id_.empty()) {
+      bool unidentified = false;
+      id_ = resolve_scenario_id(*scenario_, index_, &unidentified);
+      if (unidentified)
+        throw std::runtime_error(
+            fixture_ + ": scenario at index " + std::to_string(index_) +
+            " carries neither `id` nor `name`. The replay ledger would have to record it "
+            "by POSITION, where inserting a scenario ahead of it silently rebinds that "
+            "entry to a different scenario. Give it a stable id upstream in lazily-spec "
+            "(#lzspecscenarioids).");
+    }
+    return id_;
+  }
+
+  std::size_t index() const { return index_; }
+
+  // The scenario WITHOUT booking. For a runner that must inspect one it is not
+  // replaying.
+  const Json& peek() const { return *scenario_; }
+
+  // Book this scenario as REPLAYED and hand over its payload.
+  const Json& replay() const {
+    if (!booked_) {
+      booked_ = true;
+      record_scenario(fixture_, id());
+    }
+    return *scenario_;
+  }
+
+private:
+  std::string fixture_;
+  const Json* scenario_;
+  std::size_t index_;
+  mutable std::string id_;
+  mutable bool booked_ = false;
+};
+
+// Wrap a fixture's `scenarios` array. Iterating books nothing; each view books
+// when its payload is taken.
+inline std::vector<ScenarioView> scenario_views(const std::string& fixture_id,
+                                                const std::vector<JsonPtr>& scenarios) {
+  std::vector<ScenarioView> out;
+  out.reserve(scenarios.size());
+  for (std::size_t i = 0; i < scenarios.size(); ++i)
+    out.emplace_back(fixture_id, *scenarios[i], i);
+  return out;
 }
 
 struct ManifestFlusher {

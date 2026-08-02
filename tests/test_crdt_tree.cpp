@@ -19,9 +19,10 @@ int main() {
   static_assert(is_crdt_tree_v<TextCrdt>, "TextCrdt is the canonical CrdtTree");
   const auto fx = fixture();
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*fx, "scenarios"));
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    lazily_test::record_scenario_at("crdt-tree/algebra.json", scenario, i);
+  for (const auto& sv : lazily_test::scenario_views("crdt-tree/algebra.json", scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
     const auto& seed = lazily_test::json_member(scenario, "seed");
     const auto peer = lazily_test::json_u64(lazily_test::json_member(seed, "peer"));
     const auto text = lazily_test::json_string(lazily_test::json_member(seed, "text"));

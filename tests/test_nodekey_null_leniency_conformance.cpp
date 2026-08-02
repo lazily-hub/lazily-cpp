@@ -155,9 +155,11 @@ static void test_nodekey_null_leniency_is_replayed() {
   std::size_t replayed = 0;
   std::size_t keys_decoded = 0;
 
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    const std::string id = lazily_test::record_scenario_at(kFixtureId, scenario, i);
+  for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
+    const std::string id = sv.id();
     ++replayed;
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",

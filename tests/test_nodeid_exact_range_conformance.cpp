@@ -144,9 +144,11 @@ static void test_nodeid_exact_range_is_replayed() {
   std::size_t accepted = 0;
   std::size_t refused = 0;
 
-  for (std::size_t i = 0; i < scenarios.size(); ++i) {
-    const auto& scenario = *scenarios[i];
-    const std::string id = lazily_test::record_scenario_at(kFixtureId, scenario, i);
+  for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
+    // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
+    // that stops short of replaying stops being booked.
+    const auto& scenario = sv.replay();
+    const std::string id = sv.id();
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));

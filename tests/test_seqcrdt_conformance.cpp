@@ -114,8 +114,11 @@ static void assert_order(const Replica& r, const Json* expected, const std::stri
   REQUIRE(got == want, ("order mismatch: " + msg).c_str());
 }
 
-static void run_scenario(const Json* scenario, size_t idx) {
-  lazily_test::record_scenario_at("collections/seqcrdt_convergence.json", *scenario, idx);
+static void run_scenario(const lazily_test::ScenarioView& sv) {
+  // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip): a caller that
+  // selects a scenario and never replays it books nothing.
+  const Json* scenario = &sv.replay();
+  const size_t idx = sv.index();
   Replicas replicas;
 
   if (const Json* seed = scenario->find("seed")) {
@@ -246,8 +249,9 @@ TEST(conformance_seqcrdt_convergence) {
   auto doc = lazily_test::parse_json(text);
   const Json* scenarios = doc->find("scenarios");
   REQUIRE(scenarios != nullptr && !scenarios->array.empty(), "no scenarios in fixture");
-  for (size_t i = 0; i < scenarios->array.size(); ++i)
-    run_scenario(scenarios->array[i].get(), i);
+  for (const auto& sv :
+       lazily_test::scenario_views("collections/seqcrdt_convergence.json", scenarios->array))
+    run_scenario(sv);
 }
 
 int main() {
