@@ -32,7 +32,8 @@
 #   6. an excused scenario the run DID replay — a stale excuse
 #   7. an excused scenario no opened fixture declares — a stale excuse
 # Scenario ids whose fixture carries no `id` and no `name` fall back to the
-# positional spelling; those are REPORTED rather than silently accepted.
+# stable identifier; a scenario without one is a FAILURE, never booked by
+# position (#lzspecscenarioids).
 #
 # Usage: scripts/check-conformance-coverage.sh [manifest-path]
 #
@@ -202,8 +203,8 @@ fi
 replayed="$(mktemp)"
 declared_scenarios="$(mktemp)"
 replayed_scenarios="$(mktemp)"
-positional_scenarios="$(mktemp)"
-trap 'rm -f "$replayed" "$declared_scenarios" "$replayed_scenarios" "$positional_scenarios"' EXIT
+unidentified_scenarios="$(mktemp)"
+trap 'rm -f "$replayed" "$declared_scenarios" "$replayed_scenarios" "$unidentified_scenarios"' EXIT
 sort -u "$manifest" | grep . | grep -v '^@' > "$replayed" || true
 count="$(wc -l < "$replayed" | tr -d ' ')"
 
@@ -212,7 +213,7 @@ count="$(wc -l < "$replayed" | tr -d ' ')"
 # opened; `replayed` is what a runner actually entered.
 awk -F'\t' '$1=="@declared"   {print $2 "\t" $3}' "$manifest" | sort -u > "$declared_scenarios"
 awk -F'\t' '$1=="@replayed"   {print $2 "\t" $3}' "$manifest" | sort -u > "$replayed_scenarios"
-awk -F'\t' '$1=="@positional" {print $2 "\t" $3}' "$manifest" | sort -u > "$positional_scenarios"
+awk -F'\t' '$1=="@unidentified" {print $2 "\t" $3}' "$manifest" | sort -u > "$unidentified_scenarios"
 scenario_count="$(wc -l < "$replayed_scenarios" | tr -d ' ')"
 
 status=0
@@ -334,16 +335,22 @@ if (( status != 0 )); then
   exit 1
 fi
 
-# Reported, never silently accepted: an id resolved by position means the corpus
-# gives that scenario no `id` and no `name`, so the ledger cannot survive a
-# reordering upstream. Visibility here is what makes the corpus gap fixable.
-if [[ -s "$positional_scenarios" ]]; then
-  echo "NOTE: $(wc -l < "$positional_scenarios" | tr -d ' ') scenario(s) carry no 'id' and no 'name'" \
-       "upstream and are ledgered by position:"
+# A scenario with no `id` and no `name` is a corpus defect, not an id to invent
+# (#lzspecscenarioids). Booking it by POSITION makes every ledger entry for that
+# fixture order-dependent: a reordering upstream silently rebinds them all, and
+# the guard compares "index 1 was replayed" against whatever now sits at index 1
+# and agrees with itself.
+if [[ -s "$unidentified_scenarios" ]]; then
   while IFS= read -r pair; do
     [[ -n "$pair" ]] || continue
-    echo "        ${pair%%$'\t'*} scenario ${pair#*$'\t'}"
-  done < "$positional_scenarios"
+    echo "ERROR: ${pair%%$'\t'*} scenario at index ${pair#*$'\t'} carries neither 'id' nor" >&2
+    echo "       'name'. The ledger would record it by POSITION, which silently rebinds" >&2
+    echo "       on a corpus reorder. Give it a stable id upstream in lazily-spec" >&2
+    echo "       (#lzspecscenarioids)." >&2
+  done < "$unidentified_scenarios"
+  echo "conformance coverage FAILED: $(wc -l < "$unidentified_scenarios" | tr -d ' ')" \
+       "unidentified scenario(s)" >&2
+  exit 1
 fi
 
 echo "conformance coverage OK: $count canonical fixtures replayed across ${#REQUIRED_AREAS[@]} areas" \

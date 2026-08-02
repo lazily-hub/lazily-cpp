@@ -55,6 +55,7 @@
 #include <iostream>
 #include <iterator>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -95,36 +96,52 @@ inline std::set<std::string>& loaded_fixtures() {
 //
 // Scenario id resolution, fixed and identical in every binding:
 //
-//   1. `id` when the scenario carries one   (the three stdlib corpora)
-//   2. else `name`                          (28 of the 31 scenario fixtures)
-//   3. else the positional index, spelled "#<n>", 0-based
+//   1. `id` when the scenario carries one
+//   2. else `name`
 //
-// The positional fallback exists so this guard is not blocked on a shared
-// corpus edit: collections/mergecell_algebra.json distinguishes its three
-// scenarios by `policy` alone and carries no identifier at all. A fallback id
-// is REPORTED by the coverage script rather than silently accepted, because
-// that visibility is what makes the corpus gap fixable upstream later.
+// There is no third step (#lzspecscenarioids). The positional "#<n>" fallback
+// let the ledger record a scenario BY POSITION, where inserting one ahead of it
+// silently rebinds that entry -- and any excuse naming it -- to a different
+// scenario, with nothing turning red: the guard compares "index 1 was replayed"
+// against whatever now sits at index 1 and agrees with itself.
+//
+// It was load-bearing for exactly one fixture,
+// collections/mergecell_algebra.json, whose three scenarios were told apart by
+// `policy` alone. They carry ids now, and lazily-spec's
+// `scenario-identity-check` keeps every scenario identified -- so this is a hole
+// with no users, which is one waiting to become load-bearing again.
+//
+// `unidentified` is set instead of inventing an id, and a BLANK identifier sets
+// it too: accepting a blank would file every blank-id scenario under one ledger
+// entry, which reads as "replayed" the moment any one of them runs.
+inline bool scenario_identifier_is_blank(const std::string& value) {
+  return value.find_first_not_of(" \t\r\n") == std::string::npos;
+}
+
 inline std::string resolve_scenario_id(const Json& scenario, std::size_t index,
-                                       bool* positional = nullptr) {
-  if (positional != nullptr) *positional = false;
+                                       bool* unidentified = nullptr) {
+  if (unidentified != nullptr) *unidentified = false;
   if (scenario.is_object()) {
     for (const char* key : {"id", "name"}) {
       const Json* value = scenario.find(key);
-      if (value != nullptr && value->type == Json::Type::String && !value->str.empty())
+      if (value != nullptr && value->type == Json::Type::String &&
+          !scenario_identifier_is_blank(value->str))
         return value->str;
     }
   }
-  if (positional != nullptr) *positional = true;
+  if (unidentified != nullptr) *unidentified = true;
   return "#" + std::to_string(index);
 }
 
 // (fixture id, scenario id) pairs. `declared` is what the corpus on disk says
-// exists; `replayed` is what a runner actually entered; `positional` flags the
-// entries whose id came from the index fallback.
+// exists; `replayed` is what a runner actually entered; `unidentified` flags the
+// entries the corpus gives no stable identifier at all -- a corpus defect the
+// coverage script FAILS on rather than booking by position
+// (#lzspecscenarioids).
 struct ScenarioLedger {
   std::set<std::pair<std::string, std::string>> declared;
   std::set<std::pair<std::string, std::string>> replayed;
-  std::set<std::pair<std::string, std::string>> positional;
+  std::set<std::pair<std::string, std::string>> unidentified;
   std::set<std::string> scanned; // fixtures already enumerated
 };
 
@@ -146,10 +163,10 @@ inline void declare_fixture_scenarios(const std::string& fixture_id, const std::
   const Json* scenarios = root->find("scenarios");
   if (scenarios == nullptr || !scenarios->is_array()) return;
   for (std::size_t i = 0; i < scenarios->array.size(); ++i) {
-    bool positional = false;
-    const std::string id = resolve_scenario_id(*scenarios->array[i], i, &positional);
+    bool unidentified = false;
+    const std::string id = resolve_scenario_id(*scenarios->array[i], i, &unidentified);
     ledger.declared.emplace(fixture_id, id);
-    if (positional) ledger.positional.emplace(fixture_id, id);
+    if (unidentified) ledger.unidentified.emplace(fixture_id, id);
   }
 }
 
@@ -165,7 +182,17 @@ inline void record_scenario(const std::string& fixture_id, const std::string& sc
 // above. Returns the id, which doubles as the label for failure messages.
 inline std::string record_scenario_at(const std::string& fixture_id, const Json& scenario,
                                       std::size_t index) {
-  std::string id = resolve_scenario_id(scenario, index);
+  bool unidentified = false;
+  std::string id = resolve_scenario_id(scenario, index, &unidentified);
+  // An unidentified scenario is a corpus defect, not an id to invent
+  // (#lzspecscenarioids). Booking it by POSITION would silently rebind this
+  // ledger entry to a different scenario on any corpus reorder, so refuse.
+  if (unidentified)
+    throw std::runtime_error(fixture_id + ": scenario at index " + std::to_string(index) +
+                             " carries neither `id` nor `name`. The replay ledger would have "
+                             "to record it by POSITION, where inserting a scenario ahead of "
+                             "it silently rebinds that entry to a different scenario. Give "
+                             "it a stable id upstream in lazily-spec (#lzspecscenarioids).");
   record_scenario(fixture_id, id);
   return id;
 }
@@ -187,8 +214,8 @@ struct ManifestFlusher {
       manifest << "@declared\t" << entry.first << "\t" << entry.second << "\n";
     for (const auto& entry : ledger.replayed)
       manifest << "@replayed\t" << entry.first << "\t" << entry.second << "\n";
-    for (const auto& entry : ledger.positional)
-      manifest << "@positional\t" << entry.first << "\t" << entry.second << "\n";
+    for (const auto& entry : ledger.unidentified)
+      manifest << "@unidentified\t" << entry.first << "\t" << entry.second << "\n";
   }
 };
 
