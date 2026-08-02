@@ -129,6 +129,16 @@ add_executable(test_nodeid_exact_range_conformance test_nodeid_exact_range_confo
 target_link_libraries(test_nodeid_exact_range_conformance PRIVATE lazily)
 add_test(NAME NodeIdExactRangeConformance COMMAND test_nodeid_exact_range_conformance)
 
+# Replays ../lazily-spec/conformance/codec/nodekey_null_leniency.json through
+# BOTH codecs (#lzkeynullstrict). Omit-when-absent binds the ENCODER; a decoder
+# must read an omitted `key` and an explicit `key: null` alike as absent, and
+# must still emit the omitted form. The re-encode half is why this is a separate
+# binary rather than an extra scenario on the round-trip runner: it inspects the
+# produced frame's FIELD SET, which no assertion over a decoded value can reach.
+add_executable(test_nodekey_null_leniency_conformance test_nodekey_null_leniency_conformance.cpp)
+target_link_libraries(test_nodekey_null_leniency_conformance PRIVATE lazily)
+add_test(NAME NodeKeyNullLeniencyConformance COMMAND test_nodekey_null_leniency_conformance)
+
 add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
 add_test(NAME crdt COMMAND test_crdt)
@@ -334,7 +344,8 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_receipts_conformance
   test_distributed_conformance
   test_codec_conformance
-  test_nodeid_exact_range_conformance)
+  test_nodeid_exact_range_conformance
+  test_nodekey_null_leniency_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
   target_compile_definitions(${_target} PRIVATE

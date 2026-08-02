@@ -69,9 +69,11 @@ fi
 # codec/frame_roundtrip_msgpack.json joined them with the spec `msgpack` wire
 # (#lzcppmsgpackwire), and codec/nodeid_exact_range.json joined them with the
 # NodeId exact-representation bound (#lzspecdecoderbound) — the runner that found
-# `uint 64` wrapping to a negative int64_t in read_i64(); keep the floor aligned
-# so deleting a runner cannot hide behind older aggregate growth.
-MIN_FIXTURES="${MIN_FIXTURES:-116}"
+# `uint 64` wrapping to a negative int64_t in read_i64(), and
+# codec/nodekey_null_leniency.json joined them with the NodeKey null-leniency
+# rule (#lzkeynullstrict); keep the floor aligned so deleting a runner cannot
+# hide behind older aggregate growth.
+MIN_FIXTURES="${MIN_FIXTURES:-117}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
