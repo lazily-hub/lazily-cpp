@@ -61,7 +61,7 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-# The current suite replays 115 distinct fixtures. Six collections fixtures
+# The current suite replays 118 distinct fixtures. Six collections fixtures
 # (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
 # moved out of KNOWN_UNCOVERED in #lazilycppcollections, the seven ingress
 # schedules landed with the transport-agnostic ingress family,
@@ -72,9 +72,12 @@ fi
 # NodeId exact-representation bound (#lzspecdecoderbound) — the runner that found
 # `uint 64` wrapping to a negative int64_t in read_i64(), and
 # codec/nodekey_null_leniency.json joined them with the NodeKey null-leniency
-# rule (#lzkeynullstrict); keep the floor aligned so deleting a runner cannot
-# hide behind older aggregate growth.
-MIN_FIXTURES="${MIN_FIXTURES:-117}"
+# rule (#lzkeynullstrict), and codec/blob_backend_discriminator.json joined them
+# with the blob-backend discriminator clause (#lzblobbackendstrict) — the runner
+# that holds an unknown `backend` token REFUSED rather than normalized to `shm`;
+# keep the floor aligned so deleting a runner cannot hide behind older aggregate
+# growth.
+MIN_FIXTURES="${MIN_FIXTURES:-118}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -189,7 +192,7 @@ excuse_scenario "reliable-sync/outbox_store_protocol.json" \
 # Minimum DISTINCT scenarios replayed, the per-scenario twin of MIN_FIXTURES.
 # Without it a ledger that stopped recording entirely would leave the
 # declared-vs-replayed comparison vacuously satisfied on both sides.
-MIN_SCENARIOS="${MIN_SCENARIOS:-75}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-83}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2

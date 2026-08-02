@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -59,17 +60,30 @@ private:
 //
 // Spec: lazily-spec/docs/zero-copy-transport.md. The descriptor (ShmBlobRef)
 // carries this discriminator so a receiver routes resolution to the right
-// backend. Defaults to `Shm` for backward compatibility (legacy descriptors
-// absent the field resolve as POSIX shared memory).
+// backend. The field is OPTIONAL and its ABSENCE means `Shm` (a descriptor
+// minted before the field existed resolves as POSIX shared memory); a PRESENT
+// token outside the enum is refused — see `blob_backend_kind_from_str`
+// (`#lzblobbackendstrict`).
 
 enum class BlobBackendKind : uint8_t { Shm, Arrow, InProcess };
 
-// INTENTIONALLY LENIENT — the trailing `return "shm"` is the mirror of the
-// decoder below, for a `BlobBackendKind` outside the three named values (a value
-// only reachable by casting an integer into the enum). Keeping it total means an
-// encoder never emits a frame with an empty backend token, which no decoder in
-// any binding would accept. Pinned by `blob_backend_leniency_is_pinned` in
-// tests/test_transport.cpp.
+// INTENTIONALLY TOTAL — the trailing `return "shm"` covers a `BlobBackendKind`
+// outside the three named values (only reachable by casting an integer into the
+// enum). Keeping it total means an encoder never emits a frame with an empty
+// backend token, which no decoder in any binding would accept.
+//
+// This does NOT contradict the decoder's strictness below. The encoder half of
+// `#lzblobbackendstrict` is an OMISSION rule, not a token rule: a conforming
+// encoder omits `backend` entirely when the value is `Shm`, so a pre-field
+// descriptor round-trips byte-identically. That rule lives at the call site
+// (`json_from_shm_blob_ref` in json_codec.hpp writes the field only when the
+// backend is not `Shm`, and msgpack_codec.hpp serializes the same tree, so both
+// spec wires inherit it). This function is only asked for a token once the
+// caller has already decided to write one.
+//
+// Pinned by `blob_backend_strictness_is_pinned` in tests/test_transport.cpp and
+// by the `reencoded_backend_field_present` expectations in
+// tests/test_blob_backend_discriminator_conformance.cpp.
 inline const char* blob_backend_kind_str(BlobBackendKind k) {
   switch (k) {
   case BlobBackendKind::Shm:
@@ -82,28 +96,59 @@ inline const char* blob_backend_kind_str(BlobBackendKind k) {
   return "shm";
 }
 
-// INTENTIONALLY LENIENT — an unrecognised backend token decodes as `Shm`.
+// STRICT — a PRESENT `backend` token outside the enum is REFUSED, naming the
+// offending token (`#lzblobbackendstrict`). ABSENCE stays lenient and is handled
+// by the callers, which never reach this function when the field is missing:
+// `ShmBlobRef::backend` default-initialises to `Shm`.
 //
-// Wire reason: `backend` is an OPTIONAL descriptor field added after ShmBlobRef
-// shipped (lazily-spec/docs/zero-copy-transport.md), and every encoder in the
-// family OMITS it when the value is `Shm` so a descriptor written before the
-// field existed round-trips byte-identically. A decoder therefore cannot
-// distinguish "absent" from "unknown" without breaking that omission rule, and
-// the spec pins absent → Shm. Refusing an unknown token would also make a
-// descriptor from a peer that added a backend variant unreadable in its
-// ENTIRETY, when the frame's other fields are still fully understood.
+// That asymmetry is the whole clause. `backend` is optional and a conforming
+// encoder OMITS it when the value is `Shm`, so absence is the
+// forward-compatibility channel — it carries every descriptor minted before the
+// field existed and MUST decode as `Shm`. A present token is a different fact:
+// the producer named a backend, and there is no reading of an unrecognised name
+// that is both safe and lenient.
 //
-// Consequence of the default: the descriptor resolves against the shm backend
-// rather than the one that wrote it. It does not read another backend's memory
-// — `ShmBackend::read_view` / `BlobArena::read_view` verify generation, epoch,
-// length and checksum before returning anything, so a foreign descriptor yields
-// an EMPTY BlobView. Unknown backend degrades to "blob unavailable", never to
-// wrong bytes. Pinned by `blob_backend_leniency_is_pinned` in
-// tests/test_transport.cpp.
+// This function used to normalise an unknown token to `Shm`, on the argument
+// that `ShmBackend::read_view` / `BlobArena::read_view` verify generation,
+// epoch, length and checksum before returning bytes, so a foreign descriptor
+// would yield an empty view rather than the wrong bytes. That argument inverts
+// the `resolve_wrong_backend` theorem in
+// lazily-spec/docs/zero-copy-transport.md: a descriptor of one kind never
+// resolves against a different backend's table BECAUSE receivers route by kind.
+// Reading an unknown kind as `Shm` *is* routing a non-shm descriptor into the
+// shm table, and the verification then only *usually* catches it. "Usually" is
+// the defect — the guarantee is structural, discharged by routing, and
+// normalising downgrades it to a probabilistic one discharged by a 64-bit
+// checksum against a backend this build genuinely resolves, so a collision
+// returns BYTES. A refusal is a visible protocol error the peer recovers from
+// by resync.
+//
+// Nor is an unknown token a newer peer: a backend joins the family by ADDING an
+// enum value, which is a spec change carrying a fixture. An unrecognised token
+// on the wire is a corrupt or non-conforming producer.
+//
+// `std::runtime_error`, not `std::invalid_argument` and not `assert`.
+// `std::invalid_argument` derives from `std::logic_error`, which is exactly the
+// hierarchy mistake `#lzspecdecoderbound` pinned in this suite: callers guard a
+// decode with `catch (const std::runtime_error&)`, and a `logic_error` escapes
+// it. `assert` is one build-flag edit from vanishing, and this is a wire
+// refusal, not an internal invariant.
+//
+// Cost: this is a DECODE-BOUNDARY function. Its only callers are the three
+// codecs' ShmBlobRef readers (json_codec.hpp, and codec.hpp's map + positional
+// private framings), each called once per descriptor arriving on the wire.
+// Nothing on a resolve or per-node reactive path calls it — `BlobRouter` and
+// the backends switch on the already-decoded enum — so the refusal costs no
+// per-node work in the reactive core.
+//
+// Pinned by `blob_backend_strictness_is_pinned` in tests/test_transport.cpp and
+// replayed from ../lazily-spec/conformance/codec/blob_backend_discriminator.json
+// by tests/test_blob_backend_discriminator_conformance.cpp.
 inline BlobBackendKind blob_backend_kind_from_str(std::string_view s) {
+  if (s == "shm") return BlobBackendKind::Shm;
   if (s == "arrow") return BlobBackendKind::Arrow;
   if (s == "in_process") return BlobBackendKind::InProcess;
-  return BlobBackendKind::Shm; // default (covers absent/unknown → shm)
+  throw std::runtime_error("codec: unknown blob backend '" + std::string(s) + "'");
 }
 
 // -- ShmBlobRef: descriptor into a blob backend --

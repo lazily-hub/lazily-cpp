@@ -139,6 +139,22 @@ add_executable(test_nodekey_null_leniency_conformance test_nodekey_null_leniency
 target_link_libraries(test_nodekey_null_leniency_conformance PRIVATE lazily)
 add_test(NAME NodeKeyNullLeniencyConformance COMMAND test_nodekey_null_leniency_conformance)
 
+# Replays ../lazily-spec/conformance/codec/blob_backend_discriminator.json
+# through BOTH codecs (#lzblobbackendstrict). The clause splits the two forms a
+# lenient decoder conflated: an OMITTED `backend` is the forward-compat channel
+# and MUST decode as `shm`, while a PRESENT token outside the enum MUST be
+# refused naming the token. lazily-cpp normalized the unknown token to `Shm` and
+# documented it as forward compatibility; that reads a non-shm descriptor into
+# the shm table, which is the misroute `resolve_wrong_backend` excludes
+# structurally. Like the NodeKey runner this is a separate binary because half
+# its assertions inspect the RE-ENCODED frame's field set, which no assertion
+# over a decoded value can reach.
+add_executable(test_blob_backend_discriminator_conformance
+  test_blob_backend_discriminator_conformance.cpp)
+target_link_libraries(test_blob_backend_discriminator_conformance PRIVATE lazily)
+add_test(NAME BlobBackendDiscriminatorConformance
+  COMMAND test_blob_backend_discriminator_conformance)
+
 add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
 add_test(NAME crdt COMMAND test_crdt)
@@ -345,7 +361,8 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_distributed_conformance
   test_codec_conformance
   test_nodeid_exact_range_conformance
-  test_nodekey_null_leniency_conformance)
+  test_nodekey_null_leniency_conformance
+  test_blob_backend_discriminator_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
   target_compile_definitions(${_target} PRIVATE
@@ -380,6 +397,13 @@ set_tests_properties(
   ReceiptsConformance
   DistributedConformance
   CodecConformance
+  # Same omission as the four above, spotted while adding the third of them: all
+  # three read the sibling checkout through `require_spec_checkout_or_skip`, so
+  # without SKIP_RETURN_CODE their exit-77 SKIP is a hard ctest FAILURE whenever
+  # lazily-spec is absent.
+  NodeIdExactRangeConformance
+  NodeKeyNullLeniencyConformance
+  BlobBackendDiscriminatorConformance
   PROPERTIES SKIP_RETURN_CODE 77)
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
