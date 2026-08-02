@@ -90,9 +90,14 @@ void test_mergecell_algebra() {
       replay_merge_scenario<KeepLatest>(scenario);
     } else if (policy == "Sum") {
       replay_merge_scenario<Sum>(scenario);
-    } else {
-      assert(policy == "Max");
+    } else if (policy == "Max") {
       replay_merge_scenario<Max>(scenario);
+    } else {
+      // Fail closed (#lzscenariobodyskip). This was `assert(policy == "Max")`,
+      // which NDEBUG compiles out: a release build replayed Max for ANY unknown
+      // policy and reported green, and the scenario ledger cannot see it because
+      // the scenario WAS replayed — just as something the fixture never named.
+      REQUIRE(false, ("unknown merge policy in fixture: " + policy).c_str());
     }
   }
 }
