@@ -47,10 +47,10 @@ int main() {
   static_assert(is_outbox_store_v<FileOutboxStore>, "file byte store contract");
   const auto fixture = fixture_text();
   assert(fixture.find("\"model\": \"OutboxStore\"") != std::string::npos);
-  assert(fixture.find("unordered puts replay in ascending epoch order") != std::string::npos);
-  assert(fixture.find("ack cursor is monotone and prune-safe") != std::string::npos);
-  assert(fixture.find("restart reloads cursor and unacked suffix") != std::string::npos);
-  assert(fixture.find("stale handle cannot regress serialized cursor") != std::string::npos);
+  assert(fixture.find("unordered_puts_replay_in_epoch_order") != std::string::npos);
+  assert(fixture.find("ack_cursor_is_monotone_and_prune_safe") != std::string::npos);
+  assert(fixture.find("restart_reloads_cursor_and_unacked_suffix") != std::string::npos);
+  assert(fixture.find("stale_handle_cannot_regress_cursor") != std::string::npos);
 
   InMemoryOutbox outbox;
   outbox.append(3, frame(3));

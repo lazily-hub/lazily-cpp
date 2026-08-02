@@ -174,16 +174,16 @@ excuse_scenario() {
 # it. Converting the runner is tracked as its own item; excused here rather than
 # recorded as replayed, because recording it would be the false claim.
 excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "unordered puts replay in ascending epoch order" \
+  "unordered_puts_replay_in_epoch_order" \
   "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
 excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "ack cursor is monotone and prune-safe" \
+  "ack_cursor_is_monotone_and_prune_safe" \
   "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
 excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "restart reloads cursor and unacked suffix" \
+  "restart_reloads_cursor_and_unacked_suffix" \
   "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
 excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "stale handle cannot regress serialized cursor" \
+  "stale_handle_cannot_regress_cursor" \
   "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
 
 # Minimum DISTINCT scenarios replayed, the per-scenario twin of MIN_FIXTURES.

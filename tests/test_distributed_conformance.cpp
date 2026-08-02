@@ -136,7 +136,10 @@ static bool is_known_expect_key(const std::string& key) {
 }
 
 static bool is_known_scenario_key(const std::string& key) {
-  return key == "name" || key == "description" || key == "ops" || key == "expect" ||
+  // `id` is the canonical scenario identity (#recommendedconformanceco) and is
+  // what record_scenario_at books into the replay ledger; `name` is its prose
+  // label.
+  return key == "id" || key == "name" || key == "description" || key == "ops" || key == "expect" ||
          key == "redeliver" || key == "reverse_order_equivalent";
 }
 

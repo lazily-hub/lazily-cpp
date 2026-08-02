@@ -110,7 +110,7 @@ static void run_scenario(PeerId origin_peer, PeerId target_peer, const std::vect
   if (want_epoch_bumped) assert(target.membership_epoch() != epoch_before);
 }
 
-// scenario "materialize remote keys and converge"
+// scenario "materialize_remote_keys_and_converge"
 TEST(test_materialize_remote_keys_and_converge) {
   run_scenario(1, 2, {{"2", true, 100}, {"3", true, 101}},
                /*reingest=*/false, /*want_suffixes=*/{"2", "3"},
@@ -119,7 +119,7 @@ TEST(test_materialize_remote_keys_and_converge) {
                /*epoch_bumped=*/true);
 }
 
-// scenario "last-writer-wins update converges after materialize"
+// scenario "lww_update_converges_after_materialize"
 TEST(test_lww_update_converges_after_materialize) {
   run_scenario(1, 2, {{"2", true, 100}, {"3", true, 101}, {"2", false, 300}},
                /*reingest=*/false, /*want_suffixes=*/{"2", "3"},
@@ -128,7 +128,7 @@ TEST(test_lww_update_converges_after_materialize) {
                /*epoch_bumped=*/true);
 }
 
-// scenario "membership only grows and re-ingest is idempotent"
+// scenario "membership_grows_and_reingest_is_idempotent"
 TEST(test_membership_grows_and_reingest_idempotent) {
   run_scenario(1, 2, {{"7", true, 10}},
                /*reingest=*/true, /*want_suffixes=*/{"7"},
