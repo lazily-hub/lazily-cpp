@@ -493,10 +493,11 @@ target_link_libraries(your_target PRIVATE lazily)
 | `crdt_tree.hpp` | C++17 `CrdtTree<T>` structural contract (`#lzcrdttree`) |
 | `lossless_tree_crdt.hpp` | LosslessTreeCrdt (M1, dotted-frontier anti-entropy) |
 | `stable_id.hpp` | Manufactured identity (anchors, content hashes, word-LCS alignment) |
-| `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake |
+| `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake (carrying a negotiated `Codec`, not a free string) |
 | `codec.hpp` | Private internal framing — `encode`/`decode` the `IpcMessage` tree as an internally-tagged MessagePack envelope. Same-binding serialization only; **not** the spec's `msgpack` wire (`#lzcppmsgpackwire`) |
 | `msgpack_codec.hpp` | `msgpack` **cross-language binary default** — `encode_msgpack`/`decode_msgpack` the externally-tagged, named-field `IpcMessage` frame (protocol.md § Frame codecs, `#lzcppmsgpackwire`) |
 | `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker backing both |
+| `codec_dispatch.hpp` | `codec_encode`/`codec_decode` and `negotiated_encode`/`negotiated_decode` — the negotiated `Codec` selects the encoder, so the private framing is unreachable from a token (`#lzcppcodecdispatch`) |
 | `json_codec.hpp` | `json` **reference codec** — `encode_json`/`decode_json` the externally-tagged `IpcMessage` envelope (protocol.md § Frame codecs, `#lzcppjsoncodec`) |
 | `json.hpp` | Minimal zero-dependency JSON DOM/parser/writer backing the reference codec |
 | `reliable_sync.hpp` | Reliable sync plus `OutboxStore`, `StoredOutbox<S>`, `InMemoryStore`, and locked `FileOutboxStore` |

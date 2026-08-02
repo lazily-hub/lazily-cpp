@@ -1,4 +1,5 @@
 #include <lazily/codec.hpp>
+#include <lazily/codec_dispatch.hpp>
 #include <lazily/command.hpp>
 #include <lazily/msgpack_codec.hpp>
 #include <lazily/stdlib.hpp>
@@ -175,12 +176,17 @@ lazily::CrdtSync unwrap_sync(lazily::IpcMessage decoded, const char* codec) {
 // The `msgpack` codec token this peer advertises in `hello`. protocol.md
 // § Frame codecs names ONE wire for that token, and it is the externally tagged
 // named-field frame in include/lazily/msgpack_codec.hpp — NOT codec.hpp's
-// private internally-tagged framing (#lzcppmsgpackwire). Every frame this peer
-// hands to or takes from another binding goes through that wire, so the
-// advertised capability and the bytes agree.
-lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync& sync) {
+// private internally-tagged framing (#lzcppmsgpackwire). The encoder is
+// selected by the negotiated `Codec` rather than named here, so this peer
+// cannot drift from what it advertised (#lzcppcodecdispatch).
+lazily::CrdtSync normalize_negotiated(const lazily::CrdtSync& sync, lazily::Codec codec) {
   const lazily::IpcMessage message = lazily::IpcMessageCrdtSync{sync};
-  return unwrap_sync(lazily::decode_msgpack(lazily::encode_msgpack(message)), "msgpack");
+  return unwrap_sync(lazily::codec_decode(codec, lazily::codec_encode(codec, message)),
+                     lazily::codec_token(codec));
+}
+
+lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync& sync) {
+  return normalize_negotiated(sync, lazily::Codec::MsgPack);
 }
 
 // The private framing, exercised only by the self-check. It is a lazily-cpp
@@ -521,12 +527,28 @@ void self_check() {
   // The advertised `msgpack` token is the SPEC wire, so prove the bytes are the
   // externally tagged frame rather than the private envelope this peer used to
   // normalize through (#lzcppmsgpackwire).
-  const auto spec_bytes =
-      lazily::encode_msgpack(lazily::IpcMessage{lazily::IpcMessageCrdtSync{original}});
+  const auto spec_bytes = lazily::codec_encode(
+      lazily::Codec::MsgPack, lazily::IpcMessage{lazily::IpcMessageCrdtSync{original}});
   const auto spec_view = lazily::msgpack_to_json(spec_bytes);
   if (!spec_view.is_object() || spec_view.object.size() != 1 ||
       spec_view.object.front().first != "CrdtSync") {
     throw std::runtime_error("advertised msgpack codec is not the externally tagged spec wire");
+  }
+  // The advertised `codecs` list is a literal in `hello`, so it can drift from
+  // the `Codec` enum silently — the same shape of defect as advertising a codec
+  // whose bytes are wrong (#lzcppcodecdispatch). Pin the exact list and require
+  // every token in it to resolve to a codec this binding can dispatch on.
+  const auto hello_response = Peer{}.handle(
+      *lazily_test::parse_json("{\"cmd\":\"hello\",\"peer\":9,\"protocol_version\":1}"));
+  const char* const advertised = "\"codecs\":[\"json\",\"msgpack\"]";
+  if (hello_response.find(advertised) == std::string::npos) {
+    throw std::runtime_error("hello no longer advertises exactly the dispatchable codec tokens");
+  }
+  for (const char* token : {"json", "msgpack"}) {
+    if (!lazily::codec_from_token(token)) {
+      throw std::runtime_error(std::string("advertised codec token ") + token +
+                               " does not resolve to a dispatchable codec");
+    }
   }
 
   lazily::CrdtPlaneRuntime runtime(1);

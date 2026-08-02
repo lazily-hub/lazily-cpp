@@ -567,7 +567,10 @@ struct CapabilityCheck {
 struct CapabilityHandshake {
   std::string protocol_id = kProtocolId;
   int protocol_major_version = kProtocolMajorVersion;
-  std::string codec = kDefaultCodec;
+  // A closed `Codec`, not a free string (`#lzcppcodecdispatch`): the negotiated
+  // token is what `codec_encode`/`codec_decode` dispatch on, so the codec the
+  // peers agreed on is the codec that produces the bytes.
+  Codec codec = kDefaultCodec;
   int64_t max_frame_size = kDefaultMaxFrameSize;
   bool fragmentation_supported = false;
   bool ordered_reliable = true;
@@ -587,7 +590,10 @@ struct CapabilityHandshake {
     if (protocol_id != other.protocol_id) return {false, "protocol_id", "protocol id mismatch"};
     if (protocol_major_version != other.protocol_major_version)
       return {false, "protocol_major_version", "major version mismatch"};
-    if (codec != other.codec) return {false, "codec", "codec mismatch"};
+    if (codec != other.codec)
+      return {false, "codec",
+              std::string("codec mismatch: ") + codec_token(codec) + " vs " +
+                  codec_token(other.codec)};
     if (!ordered_reliable || !other.ordered_reliable)
       return {false, "ordered_reliable", "both peers must require ordered reliable"};
     for (auto& f : required_features) {

@@ -5,6 +5,7 @@
 #include <lazily/async_reactive_family.hpp>
 #include <lazily/cell.hpp>
 #include <lazily/codec.hpp>
+#include <lazily/codec_dispatch.hpp>
 #include <lazily/collections.hpp>
 #include <lazily/command.hpp>
 #include <lazily/context.hpp>
@@ -20,6 +21,7 @@
 #include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/membership.hpp>
 #include <lazily/merge.hpp>
+#include <lazily/msgpack_codec.hpp>
 #include <lazily/presence.hpp>
 #include <lazily/queue.hpp>
 #include <lazily/rateshape.hpp>

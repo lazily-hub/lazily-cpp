@@ -118,6 +118,105 @@ TEST(test_capability_required_feature) {
   assert(check.ok);
 }
 
+// -- Negotiated-codec dispatch (#lzcppcodecdispatch) --
+
+// The token spelling is the wire contract, and an unknown token has to fail
+// closed. `postcard` is the interesting case: protocol.md defines it, so a peer
+// may legitimately offer it, and this binding does not implement it — resolving
+// it to anything at all would be the same class of lie as advertising `msgpack`
+// over a private framing.
+TEST(test_codec_tokens_resolve_both_ways) {
+  assert(std::strcmp(codec_token(Codec::Json), "json") == 0);
+  assert(std::strcmp(codec_token(Codec::MsgPack), "msgpack") == 0);
+  assert(codec_from_token("json") == Codec::Json);
+  assert(codec_from_token("msgpack") == Codec::MsgPack);
+  assert(!codec_from_token("postcard").has_value());
+  assert(!codec_from_token("").has_value());
+  assert(!codec_from_token("MsgPack").has_value());
+  // Round trip every value the enum can hold, so adding a codec without a token
+  // is a test failure rather than a silent "msgpack".
+  for (const Codec codec : {Codec::Json, Codec::MsgPack})
+    assert(codec_from_token(codec_token(codec)) == codec);
+}
+
+static IpcMessage codec_dispatch_sample() {
+  CrdtSync sync;
+  sync.frontier.push_back({1, WireStamp{5, 0, 1}});
+  sync.ops.push_back({7, std::nullopt, WireStamp{5, 0, 1}, IpcValueInline{{1, 2, 3}}});
+  return IpcMessageCrdtSync{sync};
+}
+
+// A handshake defaults to `msgpack`, and what it encodes must be the SPEC
+// msgpack wire: an externally tagged frame keyed by the variant name. Checking
+// only that the bytes round-trip would pass against codec.hpp's private
+// framing, which is precisely the frame this test exists to exclude.
+TEST(test_negotiated_msgpack_uses_the_spec_wire) {
+  const auto session = new_capability_handshake(1, "s");
+  assert(session.codec == Codec::MsgPack);
+
+  const IpcMessage message = codec_dispatch_sample();
+  const std::vector<uint8_t> frame = negotiated_encode(session, message);
+  assert(negotiated_decode(session, frame) == message);
+
+  const JsonValue view = msgpack_to_json(frame);
+  assert(view.is_object());
+  assert(view.object.size() == 1);
+  assert(view.object.front().first == "CrdtSync");
+}
+
+TEST(test_negotiated_json_uses_the_reference_codec) {
+  auto session = new_capability_handshake(1, "s");
+  session.codec = Codec::Json;
+
+  const IpcMessage message = codec_dispatch_sample();
+  const std::vector<uint8_t> frame = negotiated_encode(session, message);
+  assert(negotiated_decode(session, frame) == message);
+
+  const std::string text(frame.begin(), frame.end());
+  assert(text == encode_json(message));
+  assert(text.rfind("{\"CrdtSync\":", 0) == 0);
+}
+
+// The point of the whole seam: no negotiated token reaches codec.hpp's private
+// framing. Both directions are checked, because "the encoder is right" and "the
+// decoder refuses a foreign frame" are separate failures — a dispatch that
+// encoded correctly but decoded the private form would still let a peer push
+// bytes nothing agreed on.
+TEST(test_private_framing_is_unreachable_from_a_negotiated_token) {
+  const IpcMessage message = codec_dispatch_sample();
+  const std::vector<uint8_t> private_frame = encode(message);
+  assert(decode(private_frame) == message); // the private codec still works
+
+  for (const Codec codec : {Codec::Json, Codec::MsgPack}) {
+    assert(codec_encode(codec, message) != private_frame);
+    bool threw = false;
+    try {
+      (void)codec_decode(codec, private_frame);
+    } catch (const std::runtime_error&) {
+      threw = true;
+    }
+    assert(threw);
+  }
+}
+
+// Two peers that negotiated the same codec exchange frames through it; a
+// mismatch is caught at the handshake and names both sides.
+TEST(test_negotiated_codec_mismatch_fails_the_handshake) {
+  auto a = new_capability_handshake(1, "s");
+  auto b = new_capability_handshake(2, "s");
+  assert(a.is_compatible_with(b));
+
+  const IpcMessage message = codec_dispatch_sample();
+  assert(negotiated_decode(b, negotiated_encode(a, message)) == message);
+
+  b.codec = Codec::Json;
+  const auto check = a.check_compatible(b, {});
+  assert(!check.ok);
+  assert(check.field == "codec");
+  assert(check.reason.find("msgpack") != std::string::npos);
+  assert(check.reason.find("json") != std::string::npos);
+}
+
 // -- Delta sequencing --
 
 TEST(test_delta_sequencing) {
