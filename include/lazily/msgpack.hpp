@@ -198,6 +198,16 @@ public:
     case 0xdf:
       return Kind::Map;
     default:
+      // INTENTIONALLY LENIENT — CLASSIFYING a tag lazily never produces is not
+      // the same as accepting it. `peek_kind` is a non-consuming predicate used
+      // to branch (nil-vs-string for an optional field, map-vs-array for the
+      // legacy-vs-positional envelope), so it must be total: throwing here would
+      // make a peek throw for bytes the caller was about to reject anyway, and
+      // would put an exception in `eof`-adjacent probing code. Every path that
+      // ACTS on the byte refuses it — `skip()` throws "cannot skip unsupported
+      // value" on `Other`, and each `read_*` throws on a tag it does not name.
+      // So an ext/fixext tag is classified, never consumed. Pinned by
+      // `msgpack_other_kind_is_classified_then_refused` in tests/test_codec.cpp.
       return Kind::Other; // ext / fixext — lazily never produces these
     }
   }

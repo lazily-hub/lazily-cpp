@@ -307,6 +307,98 @@ TEST(test_chart_reactive) {
   assert(!is_on);
 }
 
+// FAIL CLOSED: a chart naming a state it never declared is refused at build
+// time. Before this, `build()` accepted it and the engine's `def.kind(target)`
+// missed, reported `Atomic`, and inserted the undeclared id into the active
+// configuration as if it were a real leaf.
+TEST(dangling_chart_references_are_refused) {
+  // The control: the same chart with every reference declared builds.
+  {
+    auto def = ChartBuilder()
+                   .state(StateBuilder::compound("root", "off"))
+                   .state(StateBuilder::atomic("off").parent("root").on("toggle", "on"))
+                   .state(StateBuilder::atomic("on").parent("root").on("toggle", "off"))
+                   .build();
+    assert(def.has_value());
+    assert(def->kind("off") == Kind::Atomic);
+  }
+  // A transition target that was never declared.
+  {
+    auto def = ChartBuilder()
+                   .state(StateBuilder::compound("root", "off"))
+                   .state(StateBuilder::atomic("off").parent("root").on("toggle", "onn"))
+                   .state(StateBuilder::atomic("on").parent("root"))
+                   .build();
+    assert(!def.has_value());
+  }
+  // A compound state whose `initial` was never declared.
+  {
+    auto def = ChartBuilder()
+                   .state(StateBuilder::compound("root", "nowhere"))
+                   .state(StateBuilder::atomic("off").parent("root"))
+                   .build();
+    assert(!def.has_value());
+  }
+  // A `parent` that was never declared.
+  {
+    auto def = ChartBuilder()
+                   .state(StateBuilder::compound("root", "off"))
+                   .state(StateBuilder::atomic("off").parent("root"))
+                   .state(StateBuilder::atomic("stray").parent("ghost"))
+                   .build();
+    assert(!def.has_value());
+  }
+  // A history state's `default_child` that was never declared.
+  {
+    auto def = ChartBuilder()
+                   .state(StateBuilder::compound("root", "off"))
+                   .state(StateBuilder::atomic("off").parent("root"))
+                   .state(StateBuilder::history_shallow("h").parent("root").default_child("gone"))
+                   .build();
+    assert(!def.has_value());
+  }
+  // The pre-existing refusals still hold.
+  {
+    auto dup =
+        ChartBuilder().state(StateBuilder::atomic("a")).state(StateBuilder::atomic("a")).build();
+    assert(!dup.has_value());
+    auto no_root = ChartBuilder().state(StateBuilder::atomic("a").parent("a")).build();
+    assert(!no_root.has_value());
+  }
+}
+
+// INTENTIONAL leniency, pinned: a guard the caller did not supply evaluates
+// false, so the transition does not fire and the machine keeps its
+// configuration. Defaulting to true would fire a transition the host never
+// authorised.
+TEST(absent_guard_does_not_fire) {
+  auto def = ChartBuilder()
+                 .state(StateBuilder::compound("root", "closed"))
+                 .state(StateBuilder::atomic("closed").parent("root").on_guarded("open", "opened",
+                                                                                 "unlocked"))
+                 .state(StateBuilder::atomic("opened").parent("root"))
+                 .build();
+  assert(def.has_value());
+
+  Context ctx;
+  StateChart chart(ctx, *def);
+  assert(chart.matches(ctx, "closed"));
+
+  // Guard name absent from the environment entirely.
+  chart.send(ctx, "open", {});
+  assert(chart.matches(ctx, "closed"));
+
+  // Present and false: same outcome, which is what makes "absent" conservative
+  // rather than merely undefined.
+  chart.send(ctx, "open", {{"unlocked", false}});
+  assert(chart.matches(ctx, "closed"));
+
+  // Present and true: the transition fires, so the test above is not passing
+  // because the chart is inert.
+  chart.send(ctx, "open", {{"unlocked", true}});
+  assert(chart.matches(ctx, "opened"));
+}
+
 int main() {
   std::cout << "lazily-cpp statechart tests: " << test_passed << "/" << test_count << " passed"
             << std::endl;

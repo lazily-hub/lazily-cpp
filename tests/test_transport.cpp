@@ -142,6 +142,65 @@ TEST(test_shm_backend_cross_process) {
 }
 #endif
 
+// INTENTIONAL leniency, pinned: an unrecognised `backend` token on a ShmBlobRef
+// decodes as `Shm`, and the CONSEQUENCE of that default is an empty view, never
+// wrong bytes. See the wire reason on `blob_backend_kind_from_str` in ipc.hpp.
+TEST(blob_backend_leniency_is_pinned) {
+  // The tokens this binding speaks resolve to their own variants.
+  assert(blob_backend_kind_from_str("shm") == BlobBackendKind::Shm);
+  assert(blob_backend_kind_from_str("arrow") == BlobBackendKind::Arrow);
+  assert(blob_backend_kind_from_str("in_process") == BlobBackendKind::InProcess);
+
+  // A backend a future peer adds, and an absent field, both resolve to `Shm`.
+  assert(blob_backend_kind_from_str("iouring") == BlobBackendKind::Shm);
+  assert(blob_backend_kind_from_str("") == BlobBackendKind::Shm);
+  assert(blob_backend_kind_from_str("SHM") == BlobBackendKind::Shm); // case-sensitive
+
+  // The encoder half stays total: every variant has a non-empty token, and no
+  // two variants share one.
+  assert(std::string(blob_backend_kind_str(BlobBackendKind::Shm)) == "shm");
+  assert(std::string(blob_backend_kind_str(BlobBackendKind::Arrow)) == "arrow");
+  assert(std::string(blob_backend_kind_str(BlobBackendKind::InProcess)) == "in_process");
+
+  // Through a real frame: a descriptor naming an unknown backend decodes — the
+  // frame is NOT refused — and arrives as `Shm`.
+  {
+    MsgPacker p;
+    p.map_header(6);
+    p.str("offset");
+    p.i64(0);
+    p.str("len");
+    p.i64(3);
+    p.str("generation");
+    p.i64(1);
+    p.str("epoch");
+    p.i64(0);
+    p.str("checksum");
+    p.i64(0);
+    p.str("backend");
+    p.str("iouring");
+    const auto frame = std::move(p).take();
+    MsgUnpacker u(frame);
+    const ShmBlobRef ref = unpack_shm_blob_ref(u);
+    assert(ref.backend == BlobBackendKind::Shm);
+    assert(ref.len == 3);
+
+    // The consequence. Resolving that foreign descriptor against a live backend
+    // yields an EMPTY view: generation/len/checksum are verified before any
+    // payload is handed back, so an unknown backend degrades to "blob
+    // unavailable" rather than to another blob's bytes.
+    InProcessBackend backend;
+    const std::vector<uint8_t> real{1, 2, 3};
+    ShmBlobRef good = backend.write(real);
+    assert(bytes_eq(backend.read_view(good), real));
+    assert(!backend.read_view(ref));
+
+    // And a router with no backend registered for a kind resolves to empty too.
+    BlobRouter router;
+    assert(!router.read_view(good));
+  }
+}
+
 int main() {
   std::cout << "lazily-cpp transport tests: " << test_passed << "/" << test_count << " passed"
             << std::endl;

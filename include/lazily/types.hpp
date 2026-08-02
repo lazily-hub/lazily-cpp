@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,8 +61,22 @@ enum class Codec {
   MsgPack,
 };
 
+// The token a peer advertises for `codec`. Written as an exhaustive switch, not
+// as `codec == Codec::Json ? "json" : "msgpack"`: the comment above says
+// `postcard` is a MAY this binding has not implemented, so `Codec` is a closed
+// enum that is EXPECTED to gain a variant. Under the ternary the new variant
+// would have advertised itself as `msgpack` and the handshake would have
+// succeeded against a peer speaking a wire nobody agreed on — the exact
+// token/bytes drift `#lzcppmsgpackwire` cost. A variant with no token here is a
+// programming error in this binding, so it throws rather than guessing.
 inline constexpr const char* codec_token(Codec codec) {
-  return codec == Codec::Json ? "json" : "msgpack";
+  switch (codec) {
+  case Codec::Json:
+    return "json";
+  case Codec::MsgPack:
+    return "msgpack";
+  }
+  throw std::invalid_argument("lazily: Codec variant has no negotiated token");
 }
 
 // nullopt for any token this binding does not speak, including the ones

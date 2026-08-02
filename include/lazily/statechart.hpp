@@ -49,6 +49,19 @@ struct ChartDef {
   std::unordered_map<std::string, size_t> depth;
   std::string root;
 
+  // INTENTIONALLY LENIENT, and safe only because the gate upstream is not.
+  //
+  // `kind` runs on the engine's hot path — `enter_subtree`, `exit_set`,
+  // `history_child_of` and the leaf scan all call it per state per transition —
+  // so it stays a plain lookup with no throw and no allocation. What makes the
+  // `Atomic` fallback harmless is `ChartBuilder::build()`, which refuses a chart
+  // whose `parent`, `initial`, `default_child` or transition `target` names a
+  // state that was never declared. For any `ChartDef` that came out of the
+  // builder, the miss branch is unreachable. It remains reachable only for a
+  // `ChartDef` aggregate-initialised by hand, which bypasses the gate; treating
+  // an undeclared id as an atomic leaf keeps that case terminating rather than
+  // recursing. Pinned by `dangling_chart_references_are_refused` in
+  // tests/test_statechart.cpp.
   Kind kind(const std::string& id) const {
     auto it = states.find(id);
     return it != states.end() ? it->second.kind : Kind::Atomic;
@@ -209,6 +222,25 @@ private:
       }
     }
     if (!root) return std::nullopt;
+    // Refuse a chart that names a state it never declared.
+    //
+    // `build()` already rejects duplicate ids and a chart without a single root,
+    // but every id-valued field went unchecked, so a typo in a transition target
+    // produced a chart that built fine and then misbehaved at runtime: the
+    // engine's `def.kind(target)` missed, reported `Atomic`, and the undeclared
+    // id was inserted into the active configuration as if it were a real leaf.
+    // The chart is external data — it comes from a config file or a fixture, not
+    // from this library — so the reference check belongs here, at the one-time
+    // gate, rather than as a per-lookup cost on the transition hot path.
+    for (const auto& [id, def] : states) {
+      if (def.parent && !states.count(*def.parent)) return std::nullopt;
+      if (def.initial && !states.count(*def.initial)) return std::nullopt;
+      if (def.default_child && !states.count(*def.default_child)) return std::nullopt;
+      for (const auto& [_event, transition] : def.transitions) {
+        if (!states.count(transition.target)) return std::nullopt;
+      }
+      (void)id;
+    }
     for (auto& [_, kids] : children) {
       std::sort(kids.begin(), kids.end(), [&](const std::string& a, const std::string& b) {
         auto ia = order.find(a);
@@ -236,6 +268,18 @@ private:
 
 // -- Context-free transition engine --
 
+// INTENTIONALLY LENIENT — a guard the caller did not supply evaluates FALSE.
+//
+// Contract reason: `guards` is the per-`send` evaluation environment, not part
+// of the chart, and the two are authored separately (the chart may come from
+// config while the guard values are computed by the host at each step). SCXML's
+// `cond` semantics are what this mirrors: a condition that cannot be evaluated
+// is not taken. Failing closed here means "the transition does not fire", which
+// leaves the machine in its current configuration — the conservative outcome —
+// whereas defaulting to true would fire a transition the host never authorised.
+// Refusing the whole `send` instead would make a chart unusable to any host that
+// supplies guards lazily. Pinned by `absent_guard_does_not_fire` in
+// tests/test_statechart.cpp.
 inline bool guard_passes(const Transition& t, const std::unordered_map<std::string, bool>& guards) {
   if (!t.guard) return true;
   auto it = guards.find(*t.guard);

@@ -485,11 +485,35 @@ private:
     // `catch (const std::runtime_error&)` — the documented error type — missed
     // it entirely and terminated. Route it back through `fail()` so an
     // out-of-range identifier is an ordinary, catchable decode error.
+    //
+    // `std::invalid_argument` needs the same routing for the same reason. The
+    // scan above accepts any run of digits, signs, dots and exponent markers, so
+    // tokens `stoll`/`stod` refuse outright — a bare `-`, `+`, `.`, or `e` —
+    // reach this call. Those threw `std::invalid_argument`, which is also a
+    // `std::logic_error` and also escaped a caller guarding decode with
+    // `catch (const std::runtime_error&)`: a one-byte malformed frame
+    // terminated the process instead of being reported as a decode error.
+    //
+    // The other half is that `stoll`/`stod` do not report a PARTIAL parse at
+    // all — they consume the longest valid prefix and return it. `1e+` decoded
+    // as `1`, and `1.2.3` as `1.2`: a malformed number arrived as a plausible
+    // one, which is worse than a refusal because nothing downstream can tell.
+    // `consumed` is what closes that: the conversion must have used the WHOLE
+    // token the scan claimed.
+    std::size_t consumed = 0;
     try {
-      if (floating) return JsonValue::of_double(std::stod(token));
-      return JsonValue::of_int(static_cast<int64_t>(std::stoll(token)));
+      if (floating) {
+        const double value = std::stod(token, &consumed);
+        if (consumed != token.size()) fail(("`" + token + "` is not a number").c_str());
+        return JsonValue::of_double(value);
+      }
+      const long long value = std::stoll(token, &consumed);
+      if (consumed != token.size()) fail(("`" + token + "` is not a number").c_str());
+      return JsonValue::of_int(static_cast<int64_t>(value));
     } catch (const std::out_of_range&) {
       fail("number is outside the range this decoder represents exactly");
+    } catch (const std::invalid_argument&) {
+      fail(("`" + token + "` is not a number").c_str());
     }
   }
 };

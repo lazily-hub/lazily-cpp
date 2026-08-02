@@ -40,6 +40,14 @@ namespace lazily {
 // their sub-types) as self-describing MessagePack MAPs with short string keys.
 // Unknown keys are skipped on decode for forward compatibility (older readers
 // can ignore newer fields; the protocol is versioned via kProtocolMajorVersion).
+// That leniency is DELIBERATE and it is scoped to unknown FIELDS: a writer that
+// gains a field within the same major version must stay readable by a peer that
+// predates it, so `u.skip()` consumes the value and the frame decodes with that
+// field's effect absent. The corresponding refusal is that a field the decoder
+// DOES know must still be well formed, and every DISCRIMINATOR
+// ("type"/"op"/"kind") is closed — an unrecognised discriminator changes what
+// the frame means rather than adding to it, so it throws. Test:
+// `codec_forward_compat_and_closed_discriminators` in tests/test_codec.cpp.
 // Variant types carry a discriminator field ("type"/"op"/"kind") written FIRST
 // so the decoder can pick the shape before reading the remaining fields.
 // MessagePack was chosen for schema-less flexibility (vs protobuf's rigid
@@ -123,7 +131,19 @@ inline std::optional<NodeKey> unpack_optional_node_key(MsgUnpacker& u) {
     u.expect_nil();
     return std::nullopt;
   }
-  return NodeKey::create(u.read_str_view()); // validates; nullopt if invalid
+  // `nil` and an omitted field mean ABSENT and are accepted (`#lzkeynullstrict`,
+  // protocol.md § NodeKey). A key that is PRESENT but not a valid NodeKey path
+  // is a different thing entirely, and returning `NodeKey::create`'s `nullopt`
+  // for it collapsed the two: an over-long or malformed path arrived as "this
+  // frame carried no key", so the node silently lost its identity instead of
+  // the frame being refused. json_codec.hpp's `json_to_optional_node_key`
+  // already refuses it; this is the msgpack half saying the same thing.
+  const std::string_view path = u.read_str_view();
+  auto key = NodeKey::create(path);
+  if (!key)
+    throw std::runtime_error("codec: `key` is not a valid NodeKey path: `" + std::string(path) +
+                             "`");
+  return key;
 }
 
 inline void pack_node_state(MsgPacker& p, const NodeState& s) {
@@ -162,9 +182,17 @@ inline NodeState unpack_node_state(MsgUnpacker& u) {
     else
       u.skip();
   }
+  // The discriminator is closed, and every OTHER decoder in this repo already
+  // said so: the positional reader throws "NodeState positional unknown kind",
+  // and json_codec.hpp throws "unknown NodeState variant". Only this map reader
+  // treated the discriminator as a hint — kind 7 from a newer peer, or a frame
+  // with no `kind` field at all, decoded as `Opaque`, which is a REAL variant
+  // meaning "this node's body is deliberately not carried". A dropped payload
+  // and an intentionally empty one are indistinguishable downstream.
   if (kind == 0) return NodeStatePayload{std::move(bytes)};
   if (kind == 1) return NodeStateSharedBlob{blob};
-  return NodeStateOpaque{};
+  if (kind == 2) return NodeStateOpaque{};
+  throw std::runtime_error("codec: unknown NodeState kind " + std::to_string(kind));
 }
 
 inline void pack_ipc_value(MsgPacker& p, const IpcValue& v) {
@@ -198,8 +226,15 @@ inline IpcValue unpack_ipc_value(MsgUnpacker& u) {
     else
       u.skip();
   }
+  // The "assumed last variant" shape: only kind 0 was tested, so EVERY other
+  // value — a future variant, or a frame that carried no `kind` at all — fell
+  // into `SharedBlob` holding the zero-initialised `ShmBlobRef` above. That is
+  // a descriptor pointing at offset 0, length 0, generation 0, and a receiver
+  // resolves it against a live backend rather than rejecting the frame. Both
+  // sibling decoders (positional, json) already throw here.
   if (kind == 0) return IpcValueInline{std::move(bytes)};
-  return IpcValueSharedBlob{blob};
+  if (kind == 1) return IpcValueSharedBlob{blob};
+  throw std::runtime_error("codec: unknown IpcValue kind " + std::to_string(kind));
 }
 
 // ── Snapshot ─────────────────────────────────────────────────────────────────
@@ -723,7 +758,13 @@ inline std::optional<NodeKey> unpack_optional_node_key_positional(MsgUnpacker& u
     u.expect_nil();
     return std::nullopt;
   }
-  return NodeKey::create(u.read_str_view());
+  // Same split as the map form above: nil is absent, an invalid path is refused.
+  const std::string_view path = u.read_str_view();
+  auto key = NodeKey::create(path);
+  if (!key)
+    throw std::runtime_error("codec: `key` is not a valid NodeKey path: `" + std::string(path) +
+                             "`");
+  return key;
 }
 
 // ── WireStamp ──

@@ -6,6 +6,10 @@
 
 #include <cassert>
 #include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 using namespace lazily;
 
@@ -318,6 +322,252 @@ TEST(test_positional_and_legacy_interoperate) {
   assert(from_legacy.epoch == 5 && from_pos.epoch == 5);
   assert(from_legacy.nodes[0].node == 1 && from_pos.nodes[0].node == 1);
   assert(from_pos.nodes[0].key->path() == "p/q");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fail-open audit of the codec's dispatch surface.
+//
+// The library-side counterpart to the runner sweep. Each test below names one
+// site and asserts the verdict recorded in the header comment beside it, so a
+// deliberate leniency and a forgotten one stop looking alike from the outside.
+// ─────────────────────────────────────────────────────────────────────────────
+
+template <typename F> static bool throws_runtime_error(F&& f) {
+  try {
+    f();
+  } catch (const std::runtime_error&) {
+    return true;
+  } catch (...) {
+    return false; // wrong type is a failure, not a pass
+  }
+  return false;
+}
+
+// INTENTIONAL: an unknown FIELD is skipped (forward compatibility).
+// FAIL CLOSED: an unknown DISCRIMINATOR is refused.
+TEST(codec_forward_compat_and_closed_discriminators) {
+  // (a) The leniency. A WireStamp map carrying a field this reader predates
+  //     decodes, and the fields it does know survive intact.
+  {
+    MsgPacker p;
+    p.map_header(4);
+    p.str("wall_time");
+    p.i64(11);
+    p.str("logical");
+    p.i64(22);
+    p.str("peer");
+    p.i64(33);
+    p.str("a_field_from_a_newer_writer");
+    p.str("ignored");
+    MsgUnpacker u(p.bytes());
+    WireStamp s = unpack_wire_stamp(u);
+    assert(s.wall_time == 11 && s.logical == 22 && s.peer == 33);
+  }
+
+  // A NodeState map with the given `kind`, or with no `kind` field at all.
+  auto node_state_frame = [](std::optional<int64_t> kind) {
+    MsgPacker p;
+    p.map_header(kind ? 2 : 1);
+    if (kind) {
+      p.str("kind");
+      p.i64(*kind);
+    }
+    p.str("bytes");
+    p.bin(std::vector<uint8_t>{7, 7});
+    return std::move(p).take();
+  };
+  auto ipc_value_frame = [](std::optional<int64_t> kind) {
+    MsgPacker p;
+    p.map_header(kind ? 2 : 1);
+    if (kind) {
+      p.str("kind");
+      p.i64(*kind);
+    }
+    p.str("bytes");
+    p.bin(std::vector<uint8_t>{8, 8});
+    return std::move(p).take();
+  };
+
+  // (b) The three NodeState kinds this codec writes still decode.
+  {
+    auto payload = node_state_frame(0);
+    MsgUnpacker u(payload);
+    assert(std::holds_alternative<NodeStatePayload>(unpack_node_state(u)));
+    auto opaque = node_state_frame(2);
+    MsgUnpacker u2(opaque);
+    assert(std::holds_alternative<NodeStateOpaque>(unpack_node_state(u2)));
+  }
+  // (c) An unknown NodeState kind is refused, not folded into `Opaque`.
+  {
+    auto frame = node_state_frame(7);
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(frame);
+      (void)unpack_node_state(u);
+    }));
+  }
+  // (d) A NodeState map with NO discriminator is refused. It used to decode as
+  //     `Opaque` — a real variant meaning "body deliberately not carried".
+  {
+    auto frame = node_state_frame(std::nullopt);
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(frame);
+      (void)unpack_node_state(u);
+    }));
+  }
+  // (e) IpcValue: kind 0 and 1 decode; anything else is refused. The old code
+  //     tested only kind 0, so every other value became a `SharedBlob` holding
+  //     a zero-initialised descriptor.
+  {
+    auto inl = ipc_value_frame(0);
+    MsgUnpacker u(inl);
+    assert(std::holds_alternative<IpcValueInline>(unpack_ipc_value(u)));
+  }
+  {
+    auto frame = ipc_value_frame(9);
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(frame);
+      (void)unpack_ipc_value(u);
+    }));
+  }
+  {
+    auto frame = ipc_value_frame(std::nullopt);
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(frame);
+      (void)unpack_ipc_value(u);
+    }));
+  }
+}
+
+// INTENTIONAL: `peek_kind` classifies a tag lazily never writes as `Other`
+// rather than throwing; every path that consumes the byte still refuses it.
+TEST(msgpack_other_kind_is_classified_then_refused) {
+  const std::vector<uint8_t> fixext1{0xd4, 0x00, 0x00}; // fixext 1: type 0, one byte
+  MsgUnpacker peek(fixext1);
+  assert(peek.peek_kind() == MsgUnpacker::Kind::Other);
+  assert(throws_runtime_error([&] {
+    MsgUnpacker u(fixext1);
+    u.skip();
+  }));
+  assert(throws_runtime_error([&] {
+    MsgUnpacker u(fixext1);
+    (void)u.read_i64();
+  }));
+}
+
+// FAIL CLOSED: `nil` means absent, but a PRESENT key that is not a valid
+// NodeKey path is refused instead of quietly decoding as absent.
+TEST(codec_refuses_an_invalid_nodekey_path) {
+  auto key_frame = [](std::string_view path) {
+    MsgPacker p;
+    p.str(path);
+    return std::move(p).take();
+  };
+  auto nil_frame = [] {
+    MsgPacker p;
+    p.nil();
+    return std::move(p).take();
+  };
+
+  // The leniency that must survive (`#lzkeynullstrict`): nil decodes as absent.
+  {
+    auto frame = nil_frame();
+    MsgUnpacker u(frame);
+    assert(!unpack_optional_node_key(u).has_value());
+    MsgUnpacker u2(frame);
+    assert(!unpack_optional_node_key_positional(u2).has_value());
+  }
+  // A valid path still decodes.
+  {
+    auto frame = key_frame("doc/a/b");
+    MsgUnpacker u(frame);
+    assert(unpack_optional_node_key(u)->path() == "doc/a/b");
+  }
+  // An invalid path is refused by BOTH msgpack forms, matching json_codec.hpp.
+  for (const char* bad : {"", "doc//b", "/leading", "trailing/"}) {
+    auto frame = key_frame(bad);
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(frame);
+      (void)unpack_optional_node_key(u);
+    }));
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(frame);
+      (void)unpack_optional_node_key_positional(u);
+    }));
+  }
+  // A whole frame carrying one is refused, not silently stripped of its key.
+  {
+    MsgPacker p;
+    p.map_header(2);
+    p.str("type");
+    p.i64(0);
+    p.str("value");
+    p.map_header(4);
+    p.str("epoch");
+    p.i64(1);
+    p.str("nodes");
+    p.array_header(1);
+    p.map_header(4);
+    p.str("node");
+    p.i64(1);
+    p.str("type_tag");
+    p.str("cell");
+    p.str("state");
+    p.map_header(1);
+    p.str("kind");
+    p.i64(2);
+    p.str("key");
+    p.str("doc//b");
+    p.str("edges");
+    p.array_header(0);
+    p.str("roots");
+    p.array_header(0);
+    const auto frame = std::move(p).take();
+    assert(throws_runtime_error([&] { (void)decode(frame); }));
+  }
+}
+
+// FAIL CLOSED: a token `stoll`/`stod` refuses must surface as the parser's own
+// `std::runtime_error`, not as the `std::logic_error` those functions throw.
+// A caller guarding decode with `catch (const std::runtime_error&)` — the
+// documented error type — used to miss it and terminate.
+TEST(json_parse_refuses_a_malformed_number_as_a_decode_error) {
+  for (const char* text : {"-", "+", ".", "e", "-."}) {
+    assert(throws_runtime_error([&] { (void)json_parse(text); }));
+  }
+  // Partial parses. `stoll`/`stod` consume the longest valid prefix and report
+  // nothing, so these used to decode as 1, 1.2 and 1 respectively.
+  //
+  // Both branches must be probed. The number scan sets `floating` only on
+  // `.`/`e`/`E`, so every token below that contains one exercises `stod` and
+  // NONE of them reaches `stoll` — an all-floating list leaves the integer
+  // branch's check unfalsifiable. `1-2` and `12+34` are the integer probes:
+  // interior signs keep `floating` false, and `stoll` stops at the sign.
+  for (const char* floating : {"1e+", "1.2.3", "1..2", "1e", "--1", "1.2e"}) {
+    assert(throws_runtime_error([&] { (void)json_parse(floating); }));
+  }
+  for (const char* integral : {"1-2", "12+34", "1-", "5+"}) {
+    assert(throws_runtime_error([&] { (void)json_parse(integral); }));
+  }
+  // The out-of-range half of the same contract, already covered by
+  // `#lzspecdecoderbound`, must keep working.
+  assert(throws_runtime_error([&] { (void)json_parse("99999999999999999999999"); }));
+  // And well-formed numbers still parse.
+  assert(json_parse("-12").integer == -12);
+  assert(json_parse("1e2").real == 100.0);
+}
+
+// FAIL CLOSED: every `Codec` variant maps to its OWN token. Written as an
+// exhaustive switch so a variant added later cannot inherit `msgpack`.
+TEST(codec_token_is_distinct_per_variant) {
+  assert(std::string(codec_token(Codec::Json)) == "json");
+  assert(std::string(codec_token(Codec::MsgPack)) == "msgpack");
+  assert(std::string(codec_token(Codec::Json)) != std::string(codec_token(Codec::MsgPack)));
+  // Round-trip: the token a peer advertises resolves back to the same variant.
+  assert(codec_from_token(codec_token(Codec::Json)) == Codec::Json);
+  assert(codec_from_token(codec_token(Codec::MsgPack)) == Codec::MsgPack);
+  // And an unspoken token fails the handshake rather than defaulting.
+  assert(!codec_from_token("postcard").has_value());
+  assert(!codec_from_token("").has_value());
 }
 
 int main() {

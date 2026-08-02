@@ -64,6 +64,12 @@ private:
 
 enum class BlobBackendKind : uint8_t { Shm, Arrow, InProcess };
 
+// INTENTIONALLY LENIENT — the trailing `return "shm"` is the mirror of the
+// decoder below, for a `BlobBackendKind` outside the three named values (a value
+// only reachable by casting an integer into the enum). Keeping it total means an
+// encoder never emits a frame with an empty backend token, which no decoder in
+// any binding would accept. Pinned by `blob_backend_leniency_is_pinned` in
+// tests/test_transport.cpp.
 inline const char* blob_backend_kind_str(BlobBackendKind k) {
   switch (k) {
   case BlobBackendKind::Shm:
@@ -76,6 +82,24 @@ inline const char* blob_backend_kind_str(BlobBackendKind k) {
   return "shm";
 }
 
+// INTENTIONALLY LENIENT — an unrecognised backend token decodes as `Shm`.
+//
+// Wire reason: `backend` is an OPTIONAL descriptor field added after ShmBlobRef
+// shipped (lazily-spec/docs/zero-copy-transport.md), and every encoder in the
+// family OMITS it when the value is `Shm` so a descriptor written before the
+// field existed round-trips byte-identically. A decoder therefore cannot
+// distinguish "absent" from "unknown" without breaking that omission rule, and
+// the spec pins absent → Shm. Refusing an unknown token would also make a
+// descriptor from a peer that added a backend variant unreadable in its
+// ENTIRETY, when the frame's other fields are still fully understood.
+//
+// Consequence of the default: the descriptor resolves against the shm backend
+// rather than the one that wrote it. It does not read another backend's memory
+// — `ShmBackend::read_view` / `BlobArena::read_view` verify generation, epoch,
+// length and checksum before returning anything, so a foreign descriptor yields
+// an EMPTY BlobView. Unknown backend degrades to "blob unavailable", never to
+// wrong bytes. Pinned by `blob_backend_leniency_is_pinned` in
+// tests/test_transport.cpp.
 inline BlobBackendKind blob_backend_kind_from_str(std::string_view s) {
   if (s == "arrow") return BlobBackendKind::Arrow;
   if (s == "in_process") return BlobBackendKind::InProcess;
