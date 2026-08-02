@@ -476,8 +476,21 @@ private:
     }
     if (pos_ == start) fail("expected a value");
     const std::string token(src_.substr(start, pos_ - start));
-    if (floating) return JsonValue::of_double(std::stod(token));
-    return JsonValue::of_int(static_cast<int64_t>(std::stoll(token)));
+    // An integer wider than `int64_t` — a `NodeId` in the top half of the u64
+    // wire range, say — MUST be refused, never rounded or truncated
+    // (protocol.md § NodeId / PeerId, `#lzspecdecoderbound`). `std::stoll`
+    // already refuses it, but by throwing `std::out_of_range`, which derives
+    // from `std::logic_error` and NOT from the `std::runtime_error` this parser
+    // raises for every other malformed frame. A caller guarding decode with
+    // `catch (const std::runtime_error&)` — the documented error type — missed
+    // it entirely and terminated. Route it back through `fail()` so an
+    // out-of-range identifier is an ordinary, catchable decode error.
+    try {
+      if (floating) return JsonValue::of_double(std::stod(token));
+      return JsonValue::of_int(static_cast<int64_t>(std::stoll(token)));
+    } catch (const std::out_of_range&) {
+      fail("number is outside the range this decoder represents exactly");
+    }
   }
 };
 

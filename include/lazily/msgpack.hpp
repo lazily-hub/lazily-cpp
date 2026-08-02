@@ -227,8 +227,21 @@ public:
       return read_u16();
     case 0xce:
       return read_u32();
-    case 0xcf:
-      return static_cast<int64_t>(read_u64());
+    case 0xcf: {
+      // `uint 64`. A value above INT64_MAX has no int64_t representation, and
+      // the plain cast WRAPPED it — u64::MAX arrived as -1, a perfectly
+      // well-formed identifier for a different node, with no error anywhere.
+      // protocol.md § NodeId / PeerId (`#lzspecdecoderbound`) makes that the
+      // forbidden outcome: a decoder that cannot represent a received value
+      // exactly MUST reject the frame rather than substitute a neighbour.
+      // `int 64` (0xd3) below is a different case — there the cast is the
+      // correct two's-complement reading of a signed field, not a narrowing.
+      const uint64_t raw = read_u64();
+      if (raw > static_cast<uint64_t>(INT64_MAX))
+        throw std::runtime_error(
+            "msgpack: uint64 value is outside the range this decoder represents exactly");
+      return static_cast<int64_t>(raw);
+    }
     case 0xd0:
       return static_cast<int8_t>(read_u8());
     case 0xd1:

@@ -117,6 +117,18 @@ add_executable(test_codec_conformance test_codec_conformance.cpp)
 target_link_libraries(test_codec_conformance PRIVATE lazily)
 add_test(NAME CodecConformance COMMAND test_codec_conformance)
 
+# Replays ../lazily-spec/conformance/codec/nodeid_exact_range.json through BOTH
+# codecs (#lzspecdecoderbound). The clause it carries — a decoder that cannot
+# represent a received identifier exactly MUST reject the frame rather than
+# round it — is the half protocol.md left undefined, and lazily-cpp's int64_t
+# NodeId is narrower than the u64 wire type, so refusal is its conforming
+# answer for the top of the range. The same binary pins the error TYPE of that
+# refusal: it used to escape as std::out_of_range, outside the std::runtime_error
+# every caller guards a decode with.
+add_executable(test_nodeid_exact_range_conformance test_nodeid_exact_range_conformance.cpp)
+target_link_libraries(test_nodeid_exact_range_conformance PRIVATE lazily)
+add_test(NAME NodeIdExactRangeConformance COMMAND test_nodeid_exact_range_conformance)
+
 add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
 add_test(NAME crdt COMMAND test_crdt)
@@ -321,7 +333,8 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_statechart_conformance
   test_receipts_conformance
   test_distributed_conformance
-  test_codec_conformance)
+  test_codec_conformance
+  test_nodeid_exact_range_conformance)
 
 foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
   target_compile_definitions(${_target} PRIVATE

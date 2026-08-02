@@ -67,9 +67,11 @@ fi
 # codec/frame_roundtrip_json.json plus distributed/crdt_sync_frames.json joined
 # them with the json reference codec (#lzcppjsoncodec, #lazilycppexcuses), and
 # codec/frame_roundtrip_msgpack.json joined them with the spec `msgpack` wire
-# (#lzcppmsgpackwire); keep the floor aligned so deleting a runner cannot hide
-# behind older aggregate growth.
-MIN_FIXTURES="${MIN_FIXTURES:-115}"
+# (#lzcppmsgpackwire), and codec/nodeid_exact_range.json joined them with the
+# NodeId exact-representation bound (#lzspecdecoderbound) — the runner that found
+# `uint 64` wrapping to a negative int64_t in read_i64(); keep the floor aligned
+# so deleting a runner cannot hide behind older aggregate growth.
+MIN_FIXTURES="${MIN_FIXTURES:-116}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
