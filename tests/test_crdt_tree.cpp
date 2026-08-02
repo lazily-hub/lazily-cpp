@@ -61,8 +61,12 @@ int main() {
                           fold.version_vector() == folds.front().version_vector());
       }
     } else if (scenario.has("snapshot")) {
-      assert(lazily_test::json_string(lazily_test::json_member(scenario, "snapshot")) ==
-             "delta_since({})");
+      // Fail closed (#lzscenariobodyskip): this arm replays exactly one
+      // snapshot spelling, so any other must fail rather than be replayed as it.
+      const auto snapshot_kind =
+          lazily_test::json_string(lazily_test::json_member(scenario, "snapshot"));
+      REQUIRE(snapshot_kind == "delta_since({})",
+              "unknown crdt-tree snapshot form in fixture: " + snapshot_kind);
       auto source = TextCrdt::from_str(peer, text);
       const auto snapshot = source.delta_since({});
       TextCrdt restored(lazily_test::json_u64(lazily_test::json_member(scenario, "restore_peer")));
@@ -92,8 +96,11 @@ int main() {
         expect.assert_key("later_merge_duplicates", duplicates);
       }
     } else {
-      assert(lazily_test::json_string(lazily_test::json_member(scenario, "frontier")) ==
-             "version_vector()");
+      // Fail closed (#lzscenariobodyskip).
+      const auto frontier_kind =
+          lazily_test::json_string(lazily_test::json_member(scenario, "frontier"));
+      REQUIRE(frontier_kind == "version_vector()",
+              "unknown crdt-tree frontier form in fixture: " + frontier_kind);
       auto steady = TextCrdt::from_str(peer, text);
       const auto empty = steady.delta_since(steady.version_vector());
       lazily_test::AssertionKeys expect(std::string("crdt-tree/algebra.json expect"),

@@ -122,7 +122,9 @@ void test_keyed_reconciliation() {
       if (type == "remove") {
         assert((ops[i].kind == DiffOp<std::string, int>::Kind::Remove));
       } else {
-        assert(type == "move");
+        // Fail closed (#lzscenariobodyskip): an unnamed expected-diff kind must
+        // not be checked as a Move.
+        REQUIRE(type == "move", "unknown expected diff-op type in fixture: " + type);
         assert((ops[i].kind == DiffOp<std::string, int>::Kind::Move));
         const auto at = std::find(result_order.begin(), result_order.end(), key);
         assert(at != result_order.end());
@@ -206,7 +208,10 @@ void test_semtree_incremental() {
         return result;
       };
     } else {
-      assert(fold_name == "count_positive");
+      // Fail closed (#lzscenariobodyskip): an unnamed fold must not replay as
+      // `count_positive` — the scenario would be booked as replayed while
+      // asserting a fold the fixture never named.
+      REQUIRE(fold_name == "count_positive", "unknown semtree fold in fixture: " + fold_name);
       fold = [](const int& value, const std::vector<int>& children) {
         int result = value > 0 ? 1 : 0;
         for (int child : children)
@@ -439,7 +444,9 @@ void apply_text_steps(ReplicaMap& replicas, const Json& steps) {
       } else if (op == "delete") {
         replica.del(lazily_test::json_u64(lazily_test::json_member(step, "index")));
       } else {
-        assert(op == "gc");
+        // Fail closed (#lzscenariobodyskip): an unnamed op must not replay as a
+        // `gc`.
+        REQUIRE(op == "gc", "unknown text-crdt op in fixture: " + op);
         const bool stable = lazily_test::json_bool(lazily_test::json_member(step, "stable"));
         const auto collected = replica.gc_with([stable](OpId) { return stable; });
         assert(collected ==

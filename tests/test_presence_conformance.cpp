@@ -74,9 +74,12 @@ TEST(test_presence) {
                      lazily_test::json_string(lazily_test::json_member(op, "value")), now);
     } else if (type == "evict") {
       cell.evict(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now);
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       cell.tick(ctx, now);
+    } else {
+      // Fail closed (#lzscenariobodyskip). An unnamed op must not replay as the
+      // last arm — the ledger books the step either way.
+      REQUIRE(false, "unknown presence op in fixture: " + type);
     }
     expected.assert_key("present", cell.present(ctx), json_presence_map);
     // INVALIDATION via the `computed` + `is_set` cache-survival technique: the
@@ -110,9 +113,11 @@ TEST(test_awareness) {
     if (type == "set") {
       cell.set(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")),
                lazily_test::json_string(lazily_test::json_member(op, "value")), now);
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       cell.tick(ctx, now);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown presence-map op in fixture: " + type);
     }
     expected.assert_key("present", cell.present(ctx), json_presence_map);
     const bool was = ctx.is_set(observed);
@@ -145,9 +150,11 @@ TEST(test_ephemeral) {
     if (type == "set") {
       cell.set(ctx, lazily_test::json_string(lazily_test::json_member(op, "value")), now,
                lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       cell.tick(ctx, now);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown ephemeral op in fixture: " + type);
     }
     expected.assert_key("value", cell.value(ctx), lazily_test::json_optional_string);
     const bool was = ctx.is_set(observed);

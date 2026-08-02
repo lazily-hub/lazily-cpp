@@ -77,7 +77,10 @@ TEST(test_membership_lifecycle) {
     } else if (op == "tick") {
       m.tick(ctx, now);
     } else {
-      assert(false && "unknown op");
+      // Fail closed (#lzscenariobodyskip). This was `assert(false && "unknown
+      // op")`, which NDEBUG compiles out — the step would then be booked as
+      // replayed while nothing ran at all.
+      REQUIRE(false, "unknown membership op in fixture: " + op);
     }
 
     // Per-peer state.
@@ -85,11 +88,18 @@ TEST(test_membership_lifecycle) {
       assert(states.is_object());
       for (const auto& want : states.object) {
         const auto state = lazily_test::json_string(*want.second);
-        const auto want_state =
-            state == "Alive"
-                ? PeerState::Alive
-                : (state == "Suspect" ? PeerState::Suspect
-                                      : (state == "Dead" ? PeerState::Dead : PeerState::Left));
+        // Fail closed (#lzscenariobodyskip). This ended in a bare
+        // `: PeerState::Left`, so any unrecognised spelling silently became the
+        // Left expectation instead of failing.
+        PeerState want_state = PeerState::Left;
+        if (state == "Alive")
+          want_state = PeerState::Alive;
+        else if (state == "Suspect")
+          want_state = PeerState::Suspect;
+        else if (state == "Dead")
+          want_state = PeerState::Dead;
+        else
+          REQUIRE(state == "Left", "unknown peer state in fixture: " + state);
         const auto got = m.state(std::stoull(want.first));
         if (!got || *got != want_state) return false;
       }

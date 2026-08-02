@@ -62,7 +62,11 @@ TEST(test_tumbling_count) {
     const auto& op = lazily_test::json_member(item, "op");
     lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
                                         lazily_test::json_member(item, "expected"));
-    assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "push");
+    // Fail closed (#lzscenariobodyskip): this runner replays every step as a
+    // push, so a step of any other type must fail rather than be replayed as
+    // one.
+    const auto count_type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    REQUIRE(count_type == "push", "unknown tumbling-count op in fixture: " + count_type);
     const OptU emit = w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "value")));
     assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
@@ -97,9 +101,12 @@ TEST(test_tumbling_time) {
       w.push(ctx, lazily_test::json_u64(lazily_test::json_member(op, "now")),
              lazily_test::json_u64(lazily_test::json_member(op, "value")));
       emit = std::nullopt;
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       emit = w.tick(ctx, lazily_test::json_u64(lazily_test::json_member(op, "now")));
+    } else {
+      // Fail closed (#lzscenariobodyskip). An unnamed op must not replay as the
+      // last arm — the ledger books the step either way.
+      REQUIRE(false, "unknown tumbling-time op in fixture: " + type);
     }
     assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
@@ -159,11 +166,15 @@ TEST(test_session) {
                                         lazily_test::json_member(item, "expected"));
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
+    // Fail closed (#lzscenariobodyskip) BEFORE dispatching. The guard used to be
+    // an `assert` placed AFTER the ternary, so an unnamed op had already been
+    // replayed as a flush by the time anything checked it — and NDEBUG erases
+    // the assert entirely.
+    REQUIRE(type == "push" || type == "flush", "unknown sliding-window op in fixture: " + type);
     const OptU emit =
         type == "push"
             ? w.push(ctx, now, lazily_test::json_u64(lazily_test::json_member(op, "value")))
             : w.flush(ctx, now);
-    assert(type == "push" || type == "flush");
     assert(emit == lazily_test::json_optional_u64(lazily_test::json_member(item, "returns")));
     expected.assert_key("output", w.output(ctx), lazily_test::json_optional_u64);
 

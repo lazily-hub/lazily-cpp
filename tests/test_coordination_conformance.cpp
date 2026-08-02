@@ -76,10 +76,14 @@ TEST(test_lease) {
       assert(lease.renew(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now,
                          lazily_test::json_u64(lazily_test::json_member(op, "ttl"))) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       assert(lease.tick(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    } else {
+      // Fail closed (#lzscenariobodyskip). An unnamed op must not replay as the
+      // last arm: the ledger books the step either way, so a silent
+      // substitution reports green for something the fixture never named.
+      REQUIRE(false, "unknown lease op in fixture: " + type);
     }
     expected.assert_key("holder", lease.holder(now), lazily_test::json_optional_u64);
     expected.assert_key("held", lease.is_held(now));
@@ -111,15 +115,25 @@ TEST(test_leader) {
     } else if (type == "contend") {
       got = leader.contend(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")), now,
                            lazily_test::json_u64(lazily_test::json_member(op, "ttl")));
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       got = leader.tick(ctx, now);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown leader op in fixture: " + type);
     }
     expected.assert_key_with("role", [&](const lazily_test::Json& value) {
       const auto role = lazily_test::json_string(value);
-      const auto want = role == "Leader"
-                            ? LeaderRole::Leader
-                            : (role == "Follower" ? LeaderRole::Follower : LeaderRole::Candidate);
+      // Fail closed (#lzscenariobodyskip). This chain used to end in a bare
+      // `: LeaderRole::Candidate`, so ANY unrecognised role spelling became the
+      // Candidate expectation — a typo in the corpus silently changed what was
+      // being asserted instead of failing.
+      LeaderRole want = LeaderRole::Candidate;
+      if (role == "Leader")
+        want = LeaderRole::Leader;
+      else if (role == "Follower")
+        want = LeaderRole::Follower;
+      else
+        REQUIRE(role == "Candidate", "unknown leader role in fixture: " + role);
       return got == want;
     });
     expected.assert_key("current_leader", leader.current_leader(now),
@@ -151,10 +165,12 @@ TEST(test_lock) {
     } else if (type == "validate") {
       assert(lock.validate(lazily_test::json_u64(lazily_test::json_member(op, "fence"))) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       assert(lock.tick(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown lock op in fixture: " + type);
     }
     expected.assert_key("is_locked", lock.is_locked(now));
     expected.assert_key("fence", lock.fence());
@@ -180,10 +196,12 @@ TEST(test_semaphore) {
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     if (type == "acquire") {
       assert(sem.acquire(ctx) == lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    } else {
-      assert(type == "release");
+    } else if (type == "release") {
       assert(lazily_test::json_member(item, "returns").is_null());
       sem.release(ctx);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown semaphore op in fixture: " + type);
     }
     expected.assert_key("permits_available", sem.permits_available(ctx));
     assert_inval(ctx, observed, expected, "permits_available");
@@ -206,7 +224,10 @@ TEST(test_quorum) {
     const auto& op = lazily_test::json_member(item, "op");
     lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
                                         lazily_test::json_member(item, "expected"));
-    assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "vote");
+    // Fail closed (#lzscenariobodyskip): this runner replays every step as a
+    // vote, so a step of any other type must fail rather than be miscounted.
+    const auto quorum_type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    REQUIRE(quorum_type == "vote", "unknown quorum op in fixture: " + quorum_type);
     assert(q.arrive(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer"))) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     expected.assert_key("votes", q.count());

@@ -86,6 +86,11 @@ static const JsonValue& reencoded_node(const lazily_test::Json& scenario, const 
     owner = json_parse(encode_json(message));
   }
   const std::string field = lazily_test::json_string(lazily_test::json_member(scenario, "field"));
+  // Fail closed (#lzscenariobodyskip). `field` fell through to the Delta arm for
+  // ANY spelling that was not `snapshot`, so a renamed or misspelled field
+  // silently re-encoded and asserted the node_add frame while the scenario was
+  // still booked as replayed.
+  REQUIRE(field == "snapshot" || field == "node_add", "unknown nodekey field in fixture: " + field);
   if (field == "snapshot") {
     const JsonValue* body = owner.find("Snapshot");
     REQUIRE(body != nullptr, "re-encoded frame carries a Snapshot envelope");
@@ -99,6 +104,8 @@ static const JsonValue& reencoded_node(const lazily_test::Json& scenario, const 
 static std::optional<std::string> decoded_key(const lazily_test::Json& scenario,
                                               const IpcMessage& message) {
   const std::string field = lazily_test::json_string(lazily_test::json_member(scenario, "field"));
+  // Fail closed (#lzscenariobodyskip) — see `reencoded_node`.
+  REQUIRE(field == "snapshot" || field == "node_add", "unknown nodekey field in fixture: " + field);
   if (field == "snapshot") {
     const auto* envelope = std::get_if<IpcMessageSnapshot>(&message);
     REQUIRE(envelope != nullptr, "fixture declares the Snapshot variant");

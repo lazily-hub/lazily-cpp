@@ -87,9 +87,16 @@ TEST(test_health) {
           lazily_test::json_bool(lazily_test::json_member(op, "critical")));
     expected.assert_key_with("health", [&](const lazily_test::Json& value) {
       const auto health = lazily_test::json_string(value);
-      const auto want = health == "Healthy"
-                            ? Health::Healthy
-                            : (health == "Degraded" ? Health::Degraded : Health::Unhealthy);
+      // Fail closed (#lzscenariobodyskip). This ended in a bare
+      // `: Health::Unhealthy`, so any unrecognised spelling silently became the
+      // Unhealthy expectation instead of failing.
+      Health want = Health::Unhealthy;
+      if (health == "Healthy")
+        want = Health::Healthy;
+      else if (health == "Degraded")
+        want = Health::Degraded;
+      else
+        REQUIRE(health == "Unhealthy", "unknown health state in fixture: " + health);
       return h.health() == want;
     });
     assert_inval(ctx, observed, expected, "health");
@@ -141,9 +148,12 @@ TEST(test_discovery) {
              lazily_test::json_optional_string(lazily_test::json_member(item, "returns")));
     } else if (type == "evict") {
       d.evict(ctx, lazily_test::json_u64(lazily_test::json_member(op, "peer")));
-    } else {
-      assert(type == "deregister");
+    } else if (type == "deregister") {
       d.deregister(ctx, lazily_test::json_string(lazily_test::json_member(op, "service")));
+    } else {
+      // Fail closed (#lzscenariobodyskip). An unnamed op must not replay as the
+      // last arm — the ledger books the step either way.
+      REQUIRE(false, "unknown discovery op in fixture: " + type);
     }
     expected.assert_key("discovery", d.discovery(ctx), json_map);
     assert_inval(ctx, observed, expected, "discovery");
@@ -170,9 +180,11 @@ TEST(test_service_registry) {
                     lazily_test::json_string(lazily_test::json_member(op, "endpoint")));
     } else if (type == "deregister") {
       reg.deregister(ctx, lazily_test::json_string(lazily_test::json_member(op, "service")));
-    } else {
-      assert(type == "replay");
+    } else if (type == "replay") {
       reg.replay(ctx);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown registry op in fixture: " + type);
     }
     expected.assert_key("projection", reg.projection(ctx), json_map);
     assert_inval(ctx, observed, expected, "projection");

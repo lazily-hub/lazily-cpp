@@ -75,6 +75,11 @@ static Fixture fixture(const std::string& file) {
     result.keys.push_back(std::make_unique<AssertionKeys>(std::string(__func__) + " expected",
                                                           json_member(step, "expected")));
     const auto type = json_string(json_member(op, "type"));
+    // Fail closed (#lzscenariobodyskip). `is_input` below is just
+    // `type == "input"`, so before this guard EVERY unrecognised op replayed as
+    // a `tick` — the step was booked as replayed while driving something the
+    // fixture never named.
+    REQUIRE(type == "input" || type == "tick", "unknown rateshape op in fixture: " + type);
     const Json* now = op.find("now");
     const Json* value = op.find("value");
     const Json* draw = op.find("draw");
@@ -139,6 +144,10 @@ static void run_throttle(const std::string& file) {
   const auto fx = fixture(file);
   const auto& initial = lazily_test::json_member(*fx.root, "initial");
   const auto edge_name = lazily_test::json_string(lazily_test::json_member(initial, "edge"));
+  // Fail closed (#lzscenariobodyskip): a bare `: ThrottleEdge::Trailing` made
+  // any unrecognised edge spelling silently configure a trailing throttle.
+  REQUIRE(edge_name == "Leading" || edge_name == "Trailing",
+          "unknown throttle edge in fixture: " + edge_name);
   const auto edge = edge_name == "Leading" ? ThrottleEdge::Leading : ThrottleEdge::Trailing;
   Context ctx;
   const uint64_t window = lazily_test::json_u64(lazily_test::json_member(initial, "window"));

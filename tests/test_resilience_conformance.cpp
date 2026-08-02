@@ -59,16 +59,26 @@ TEST(test_circuit_breaker) {
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     if (type == "record") {
       cb.record(ctx, lazily_test::json_bool(lazily_test::json_member(op, "success")), now);
-    } else {
-      assert(type == "allow");
+    } else if (type == "allow") {
       assert(cb.allow(ctx, now) ==
              lazily_test::json_bool(lazily_test::json_member(item, "returns")));
+    } else {
+      // Fail closed (#lzscenariobodyskip). An unnamed op must not replay as the
+      // last arm — the ledger books the step either way.
+      REQUIRE(false, "unknown circuit-breaker op in fixture: " + type);
     }
     expected.assert_key_with("state", [&](const lazily_test::Json& value) {
       const auto state = lazily_test::json_string(value);
-      const auto want = state == "Closed"
-                            ? BreakerState::Closed
-                            : (state == "Open" ? BreakerState::Open : BreakerState::HalfOpen);
+      // Fail closed (#lzscenariobodyskip). This ended in a bare
+      // `: BreakerState::HalfOpen`, so any unrecognised spelling silently became
+      // the HalfOpen expectation instead of failing.
+      BreakerState want = BreakerState::HalfOpen;
+      if (state == "Closed")
+        want = BreakerState::Closed;
+      else if (state == "Open")
+        want = BreakerState::Open;
+      else
+        REQUIRE(state == "HalfOpen", "unknown breaker state in fixture: " + state);
       return cb.state() == want;
     });
     const bool was = ctx.is_set(observed);
@@ -124,10 +134,12 @@ TEST(test_bulkhead) {
     const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
     if (type == "acquire") {
       assert(b.acquire(ctx) == lazily_test::json_bool(lazily_test::json_member(item, "returns")));
-    } else {
-      assert(type == "release");
+    } else if (type == "release") {
       assert(lazily_test::json_member(item, "returns").is_null());
       b.release(ctx);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown bulkhead op in fixture: " + type);
     }
     expected.assert_key("in_use", b.permits_in_use(ctx));
     const bool was = ctx.is_set(observed);
@@ -159,9 +171,12 @@ TEST(test_timeout) {
     if (type == "arm") {
       t.arm(ctx, now, lazily_test::json_u64(lazily_test::json_member(op, "timeout")));
       got = false;
-    } else {
-      assert(type == "tick");
+    } else if (type == "tick") {
       got = t.tick(ctx, now);
+    } else {
+      // Fail closed (#lzscenariobodyskip).
+      REQUIRE(false, "unknown timeout op in fixture: " + type);
+      got = false;
     }
     assert(got == lazily_test::json_bool(lazily_test::json_member(item, "returns")));
     expected.assert_key("is_timed_out", t.is_timed_out(ctx));

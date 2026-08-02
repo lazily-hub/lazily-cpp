@@ -115,6 +115,9 @@ void replay_timer(const Json& scenario) {
         actual = {"pending", deadline.value};
       }
     } else {
+      // Fail closed (#lzscenariobodyskip): everything that is not `start` was
+      // replayed as an `observe`.
+      REQUIRE(op == "observe", "unknown timer op in fixture: " + op);
       REQUIRE(timer != nullptr, "timer observe before start");
       const auto observation = timer->observe(u64_field(step, "now"));
       actual.outcome = timer_outcome(observation.outcome);
@@ -150,6 +153,10 @@ std::string timeout_outcome(TimeoutObservation::Outcome outcome) {
 lazily::TimeoutCancellation cancellation(const std::string& value) {
   if (value == "cancelled") return lazily::TimeoutCancellation::cancelled;
   if (value == "unavailable") return lazily::TimeoutCancellation::unavailable;
+  // Fail closed (#lzscenariobodyskip). The bare `return pending` here meant any
+  // unrecognised cancellation spelling drove the poll as `pending`, and the
+  // scenario was still booked as replayed.
+  REQUIRE(value == "pending", "unknown cancellation state in fixture: " + value);
   return lazily::TimeoutCancellation::pending;
 }
 
@@ -168,11 +175,23 @@ void replay_timeout(const Json& scenario) {
           "pending",
           lazily::checked_deadline(u64_field(step, "now"), u64_field(step, "duration")).value};
     } else {
+      // Fail closed (#lzscenariobodyskip): everything that is not `start` was
+      // replayed as a `poll`.
+      REQUIRE(op == "poll", "unknown timeout op in fixture: " + op);
       REQUIRE(timeout != nullptr, "timeout poll before start");
       std::uint64_t operation_calls = 0;
       std::uint64_t cancellation_calls = 0;
       const auto operation = string_field(step, "operation");
       const auto cancellation_state = string_field(step, "cancellation");
+      // Fail closed (#lzscenariobodyskip) at the READ site, not inside the
+      // callbacks: `poll` decides whether it invokes them at all, so a guard
+      // buried in a lambda goes unrun on exactly the steps that skip it and an
+      // unrecognised spelling survives.
+      REQUIRE(operation == "completed" || operation == "unavailable" || operation == "pending",
+              "unknown timeout operation in fixture: " + operation);
+      REQUIRE(cancellation_state == "cancelled" || cancellation_state == "unavailable" ||
+                  cancellation_state == "pending",
+              "unknown cancellation state in fixture: " + cancellation_state);
       const auto observation = timeout->poll(
           u64_field(step, "now"),
           [&] {
@@ -181,6 +200,9 @@ void replay_timeout(const Json& scenario) {
               return lazily::TimeoutOperation<std::string>::completed(string_field(step, "value"));
             if (operation == "unavailable")
               return lazily::TimeoutOperation<std::string>::unavailable();
+            // The `pending` spelling is pinned at the read site above
+            // (#lzscenariobodyskip); the bare `return pending()` here used to be
+            // the only path an unrecognised spelling took.
             return lazily::TimeoutOperation<std::string>::pending();
           },
           [&] {

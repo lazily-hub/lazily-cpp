@@ -60,7 +60,11 @@ TEST(test_timer_single_shot) {
     const auto& op = lazily_test::json_member(item, "op");
     lazily_test::AssertionKeys expected(std::string(__func__) + " expected",
                                         lazily_test::json_member(item, "expected"));
-    assert(lazily_test::json_string(lazily_test::json_member(op, "type")) == "tick");
+    // Fail closed (#lzscenariobodyskip): this runner replays every step as a
+    // tick, so a step of any other type must fail rather than be replayed as
+    // one.
+    const auto type = lazily_test::json_string(lazily_test::json_member(op, "type"));
+    REQUIRE(type == "tick", "unknown temporal op in fixture: " + type);
     const auto now = lazily_test::json_u64(lazily_test::json_member(op, "now"));
     assert(timer.tick(ctx, now) ==
            lazily_test::json_bool(lazily_test::json_member(item, "returns")));
