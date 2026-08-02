@@ -2,8 +2,8 @@
 
 Status of the high-load optimization arc and the recommended next paths. See
 [`BENCHMARKS.md`](BENCHMARKS.md) for measured numbers and
-[`tasks/software/plan-lazily-rs-lock-free-context.md`](../lazily-rs) (in the
-workspace) for the lock-free evaluation that governs the A*/CAS gates.
+the lock-free-context plan (workspace-local, not published) for the
+lock-free evaluation that governs the A*/CAS gates.
 
 ## Shipped
 
