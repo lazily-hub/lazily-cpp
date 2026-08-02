@@ -1,5 +1,6 @@
 #include <lazily/codec.hpp>
 #include <lazily/command.hpp>
+#include <lazily/msgpack_codec.hpp>
 #include <lazily/stdlib.hpp>
 
 #include "test_json.hpp"
@@ -164,14 +165,30 @@ lazily::CrdtSync parse_sync(const Json& frame) {
   return sync;
 }
 
-lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync& sync, bool positional = false) {
-  const lazily::IpcMessage message = lazily::IpcMessageCrdtSync{sync};
-  const auto bytes = positional ? lazily::encode_positional(message) : lazily::encode(message);
-  auto decoded = lazily::decode(bytes);
+lazily::CrdtSync unwrap_sync(lazily::IpcMessage decoded, const char* codec) {
   if (!std::holds_alternative<lazily::IpcMessageCrdtSync>(decoded)) {
-    throw std::runtime_error("production codec changed CrdtSync variant");
+    throw std::runtime_error(std::string(codec) + " codec changed CrdtSync variant");
   }
   return std::get<lazily::IpcMessageCrdtSync>(std::move(decoded)).value;
+}
+
+// The `msgpack` codec token this peer advertises in `hello`. protocol.md
+// § Frame codecs names ONE wire for that token, and it is the externally tagged
+// named-field frame in include/lazily/msgpack_codec.hpp — NOT codec.hpp's
+// private internally-tagged framing (#lzcppmsgpackwire). Every frame this peer
+// hands to or takes from another binding goes through that wire, so the
+// advertised capability and the bytes agree.
+lazily::CrdtSync normalize_msgpack(const lazily::CrdtSync& sync) {
+  const lazily::IpcMessage message = lazily::IpcMessageCrdtSync{sync};
+  return unwrap_sync(lazily::decode_msgpack(lazily::encode_msgpack(message)), "msgpack");
+}
+
+// The private framing, exercised only by the self-check. It is a lazily-cpp
+// internal serialization and is never advertised as a codec token.
+lazily::CrdtSync normalize_private_codec(const lazily::CrdtSync& sync, bool positional = false) {
+  const lazily::IpcMessage message = lazily::IpcMessageCrdtSync{sync};
+  const auto bytes = positional ? lazily::encode_positional(message) : lazily::encode(message);
+  return unwrap_sync(lazily::decode(bytes), "private");
 }
 
 std::uint64_t u64_field(const Json& value, const std::string& field) {
@@ -394,9 +411,13 @@ private:
            "\"version\":\"0.27.0\",\"protocol_version\":1,"
            "\"features\":[\"distributed_crdt\",\"stdlib_timer_v1\","
            "\"stdlib_timeout_v1\",\"stdlib_revision_barrier_v1\"],"
-           "\"codecs\":[\"msgpack\"],\"channels\":[],"
+           // Both MUST-level frame codecs are implemented and replayed through
+           // the canonical corpus: `json` by include/lazily/json_codec.hpp
+           // (#lzcppjsoncodec) and `msgpack` by include/lazily/msgpack_codec.hpp
+           // (#lzcppmsgpackwire). Neither is a carve-out any more.
+           "\"codecs\":[\"json\",\"msgpack\"],\"channels\":[],"
            "\"channel_variants\":{},\"platform_profile\":\"portable\","
-           "\"carve_outs\":[\"json\",\"shared_blob\",\"transport_links\"]}";
+           "\"carve_outs\":[\"shared_blob\",\"transport_links\"]}";
   }
 
   std::string local_set(const Json& request) {
@@ -490,11 +511,22 @@ void self_check() {
       {{1, stamp}},
       {{7, std::nullopt, stamp, lazily::IpcValueInline{{65}}}},
   };
-  const auto keyed = normalize_msgpack(original);
-  const auto positional = normalize_msgpack(original, true);
-  if (keyed.ops.size() != 1 || positional.ops.size() != 1 || keyed.ops[0].key ||
-      positional.ops[0].key) {
+  const auto spec_msgpack = normalize_msgpack(original);
+  const auto keyed = normalize_private_codec(original);
+  const auto positional = normalize_private_codec(original, true);
+  if (spec_msgpack.ops.size() != 1 || keyed.ops.size() != 1 || positional.ops.size() != 1 ||
+      spec_msgpack.ops[0].key || keyed.ops[0].key || positional.ops[0].key) {
     throw std::runtime_error("MessagePack variants lost the canonical null key");
+  }
+  // The advertised `msgpack` token is the SPEC wire, so prove the bytes are the
+  // externally tagged frame rather than the private envelope this peer used to
+  // normalize through (#lzcppmsgpackwire).
+  const auto spec_bytes =
+      lazily::encode_msgpack(lazily::IpcMessage{lazily::IpcMessageCrdtSync{original}});
+  const auto spec_view = lazily::msgpack_to_json(spec_bytes);
+  if (!spec_view.is_object() || spec_view.object.size() != 1 ||
+      spec_view.object.front().first != "CrdtSync") {
+    throw std::runtime_error("advertised msgpack codec is not the externally tagged spec wire");
   }
 
   lazily::CrdtPlaneRuntime runtime(1);

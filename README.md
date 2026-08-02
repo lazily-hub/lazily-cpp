@@ -103,7 +103,7 @@ canonical matrix with per-cell notes and platform carve-outs lives in
 | Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ~ | ✅ | ✅ | ✅ | ✅ |
 | Frame codec — `json` **reference codec**: dependency-free interop floor, FFI baseline form, byte-canonical (**MUST**) — executable round-trip obligation (`conformance/codec/frame_roundtrip_json.json`, `#lzmsgpackparity`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Frame codec — `msgpack` **cross-language binary default**: externally-tagged frame over named-field maps, semantic (not byte-identical) round-trip (**MUST**) — executable round-trip obligation (`conformance/codec/frame_roundtrip_msgpack.json`, `#lzmsgpackparity`). `~` = a MessagePack codec exists but is not this wire | ✅ | — | — | — | — | — | — | ~ | — |
+| Frame codec — `msgpack` **cross-language binary default**: externally-tagged frame over named-field maps, semantic (not byte-identical) round-trip (**MUST**) — executable round-trip obligation (`conformance/codec/frame_roundtrip_msgpack.json`, `#lzmsgpackparity`). Shipping *a* MessagePack codec does not earn this mark: lazily-cpp read `~` here while its private internally-tagged framing wore the token, and only flipped once it shipped the spec wire (`#lzcppmsgpackwire`) | ✅ | — | — | — | — | — | — | ✅ | — |
 | Frame codec — `postcard` positional same-schema fast path: smallest + byte-canonical, not cross-language (**MAY**) | ✅ | — | — | — | — | — | — | — | — |
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Cross-process zero-copy transport (`BlobBackend` / shm / arrow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -494,8 +494,9 @@ target_link_libraries(your_target PRIVATE lazily)
 | `lossless_tree_crdt.hpp` | LosslessTreeCrdt (M1, dotted-frontier anti-entropy) |
 | `stable_id.hpp` | Manufactured identity (anchors, content hashes, word-LCS alignment) |
 | `ipc.hpp` | IPC wire types (Snapshot/Delta/CrdtSync), NodeKey, ShmBlobArena, PeerPermissions, CapabilityHandshake |
-| `codec.hpp` | msgpack wire codec — `encode`/`decode` the `IpcMessage` tree (a private internally-tagged envelope, **not** the spec's `msgpack` wire) |
-| `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker |
+| `codec.hpp` | Private internal framing — `encode`/`decode` the `IpcMessage` tree as an internally-tagged MessagePack envelope. Same-binding serialization only; **not** the spec's `msgpack` wire (`#lzcppmsgpackwire`) |
+| `msgpack_codec.hpp` | `msgpack` **cross-language binary default** — `encode_msgpack`/`decode_msgpack` the externally-tagged, named-field `IpcMessage` frame (protocol.md § Frame codecs, `#lzcppmsgpackwire`) |
+| `msgpack.hpp` | Minimal zero-dependency MessagePack packer/unpacker backing both |
 | `json_codec.hpp` | `json` **reference codec** — `encode_json`/`decode_json` the externally-tagged `IpcMessage` envelope (protocol.md § Frame codecs, `#lzcppjsoncodec`) |
 | `json.hpp` | Minimal zero-dependency JSON DOM/parser/writer backing the reference codec |
 | `reliable_sync.hpp` | Reliable sync plus `OutboxStore`, `StoredOutbox<S>`, `InMemoryStore`, and locked `FileOutboxStore` |

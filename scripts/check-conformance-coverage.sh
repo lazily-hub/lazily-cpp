@@ -60,15 +60,16 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-# The current suite replays 114 distinct fixtures. Six collections fixtures
+# The current suite replays 115 distinct fixtures. Six collections fixtures
 # (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
 # moved out of KNOWN_UNCOVERED in #lazilycppcollections, the seven ingress
-# schedules landed with the transport-agnostic ingress family, and
+# schedules landed with the transport-agnostic ingress family,
 # codec/frame_roundtrip_json.json plus distributed/crdt_sync_frames.json joined
-# them with the json reference codec (#lzcppjsoncodec, #lazilycppexcuses); keep
-# the floor aligned so deleting a runner cannot hide behind older aggregate
-# growth.
-MIN_FIXTURES="${MIN_FIXTURES:-114}"
+# them with the json reference codec (#lzcppjsoncodec, #lazilycppexcuses), and
+# codec/frame_roundtrip_msgpack.json joined them with the spec `msgpack` wire
+# (#lzcppmsgpackwire); keep the floor aligned so deleting a runner cannot hide
+# behind older aggregate growth.
+MIN_FIXTURES="${MIN_FIXTURES:-115}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -76,9 +77,10 @@ MIN_FIXTURES="${MIN_FIXTURES:-114}"
 # does read would let that runner vanish unnoticed — which is the whole point.
 #
 # Deliberately ABSENT, with reasons (open gaps, not oversights). `codec` left
-# this list in #lzcppjsoncodec — the binding replays the json half through a
-# real codec now, so the area is required and only its msgpack fixture stays
-# named in KNOWN_UNCOVERED:
+# this list in #lzcppjsoncodec and is now fully replayed: json_codec.hpp is the
+# `json` REFERENCE codec and msgpack_codec.hpp is the `msgpack` CROSS-LANGUAGE
+# BINARY DEFAULT (#lzcppmsgpackwire), so both halves of the frame-codec
+# obligation go THROUGH a real codec and neither is named in KNOWN_UNCOVERED:
 #   signaling  (1)  anti_spoof_session.json IS replayed by
 #                   test_signaling_conformance.cpp. frames.json is not: it needs
 #                   signaling wire serde, which this binding does not have.
@@ -122,22 +124,6 @@ REQUIRED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
-  # codec — the frame-codec round-trip obligation (#lzmsgpackparity).
-  # `codec` IS in REQUIRED_AREAS above as of #lzcppjsoncodec: this binding now
-  # ships include/lazily/json_codec.hpp — the `json` REFERENCE codec, the
-  # dependency-free interop floor — and tests/test_codec_conformance.cpp
-  # replays frame_roundtrip_json.json THROUGH it rather than reading it as
-  # data. protocol.md § Frame codecs makes both codecs MUST-level; one half is
-  # proven now and the other is still named below.
-  # `msgpack` is not simply missing here — it is DIVERGENT, which is worse,
-  # because include/lazily/codec.hpp made the binding look implemented. The
-  # spec frame is externally tagged (`{"Snapshot": {...}}`) over named-field
-  # maps whose keys match the json schema. codec.hpp writes an INTERNALLY
-  # tagged envelope (`{"type": 0, "value": ...}`), gives NodeState/IpcValue
-  # integer `kind` discriminators instead of the `Payload`/`Inline` external
-  # tags, and also ships a positional array form that protocol.md excludes
-  # outright. It is a good private codec and not the `msgpack` codec token.
-  "codec/frame_roundtrip_msgpack.json"
   # materialization — mirrored by hand in test_reactive_family.cpp and its
   # async / thread-safe siblings; only entry_kind_orthogonal_to_mode.json is
   # replayed from the canonical bytes.

@@ -13,20 +13,38 @@
 
 namespace lazily {
 
-// lazily IPC wire codec — MessagePack.
+// lazily-cpp PRIVATE internal framing — NOT protocol.md's `msgpack` codec
+// (`#lzcppmsgpackwire`).
 //
-// Encodes the closed IpcMessage variant tree (Snapshot / Delta / CrdtSync and
-// their sub-types) as self-describing msgpack MAPs with short string keys.
+// Read this first, because the file name and the MessagePack framing invite the
+// opposite conclusion: **this is not the `msgpack` codec token.** That token
+// names one wire — the externally tagged frame (`{"Snapshot": {…}}`) over
+// named-field maps whose keys are the `json` field names (protocol.md § Frame
+// codecs, "Shipping *a* MessagePack codec is not implementing `msgpack`"). This
+// header writes an INTERNALLY tagged envelope (`{"type": 0, "value": …}`),
+// gives NodeState/IpcValue integer `kind` discriminators instead of the
+// `Payload`/`Inline` external tags, and also offers a positional array form the
+// spec excludes outright. A peer that negotiated `msgpack` with this encoder
+// could not decode its frames.
+//
+// The spec wire lives in include/lazily/msgpack_codec.hpp. That is what
+// `encode_msgpack`/`decode_msgpack` speak and what any cross-language boundary
+// must use. THIS header stays for what it is good at: an in-process /
+// same-binding serialization for the IPC and distributed paths (ffi.hpp
+// previously accepted frames as-is), where both ends are lazily-cpp and the
+// integer discriminators and positional form are cheaper than the named-field
+// wire. Encoding the IpcMessage tree in two shapes is deliberate — the shapes
+// are different protocols, and only one of them is the interop contract.
+//
+// Shape: the closed IpcMessage variant tree (Snapshot / Delta / CrdtSync and
+// their sub-types) as self-describing MessagePack MAPs with short string keys.
 // Unknown keys are skipped on decode for forward compatibility (older readers
 // can ignore newer fields; the protocol is versioned via kProtocolMajorVersion).
 // Variant types carry a discriminator field ("type"/"op"/"kind") written FIRST
 // so the decoder can pick the shape before reading the remaining fields.
-//
-// This is the foundational serialization layer the IPC / distributed paths were
-// missing (ffi.hpp previously accepted frames as-is). msgpack was chosen for
-// schema-less flexibility (vs protobuf's rigid schema); capnproto was not needed
-// since lazily wire types are integer/string/bytes only (no zero-copy struct
-// layout requirement at this layer).
+// MessagePack was chosen for schema-less flexibility (vs protobuf's rigid
+// schema); capnproto was not needed since lazily wire types are integer/string/
+// bytes only (no zero-copy struct layout requirement at this layer).
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -1249,7 +1267,10 @@ inline IpcMessage unpack_ipc_message_positional(MsgUnpacker& u) {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-// Default encoder: legacy string-keyed msgpack maps (backward compatible).
+// Default encoder for the PRIVATE framing: string-keyed MessagePack maps with
+// an internally tagged envelope. This is NOT protocol.md's `msgpack` wire — use
+// `lazily::encode_msgpack` (include/lazily/msgpack_codec.hpp) on any boundary
+// that negotiated the `msgpack` codec token.
 inline std::vector<uint8_t> encode(const IpcMessage& m) {
   MsgPacker p;
   pack_ipc_message(p, m);
@@ -1265,8 +1286,10 @@ inline std::vector<uint8_t> encode_positional(const IpcMessage& m) {
   return std::move(p).take();
 }
 
-// Format-tolerant decoder. Peeks the top-level msgpack byte: a MAP routes to
-// the legacy string-keyed path; an ARRAY routes to the positional path.
+// Format-tolerant decoder for the PRIVATE framing. Peeks the top-level
+// MessagePack byte: a MAP routes to the string-keyed path; an ARRAY routes to
+// the positional path. It does NOT read protocol.md `msgpack` frames — those
+// are externally tagged, and `lazily::decode_msgpack` owns them.
 // Existing callers that produce/consume string-keyed frames are unaffected;
 // positional-encoded frames interoperate without code changes.
 inline IpcMessage decode(const uint8_t* data, size_t len) {
