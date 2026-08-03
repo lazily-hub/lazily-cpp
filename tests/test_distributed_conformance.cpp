@@ -163,6 +163,39 @@ static void assert_converged(const std::string& scenario, const CrdtPlaneRuntime
   }
 }
 
+static bool stamp_less(const WireStamp& left, const WireStamp& right) {
+  if (left.wall_time != right.wall_time) return left.wall_time < right.wall_time;
+  if (left.logical != right.logical) return left.logical < right.logical;
+  return left.peer < right.peer;
+}
+
+// Assert the rule only after ingest, against the state the runtime selected.
+// The corpus deliberately puts a lower-stamp op last in one conflict, so an
+// arrival-order implementation cannot satisfy this comparison accidentally.
+static void assert_max_stamp_resolution(const std::string& scenario, const Json& resolution,
+                                        const std::vector<CrdtOp>& ops,
+                                        const CrdtPlaneRuntime& runtime) {
+  ++g_checks;
+  REQUIRE(resolution.type == Json::Type::String && resolution.str == "max_stamp",
+          "unknown convergence resolution rule in fixture");
+
+  for (const auto& candidate : ops) {
+    const bool is_winner = std::none_of(ops.begin(), ops.end(), [&](const CrdtOp& rival) {
+      return rival.node == candidate.node && stamp_less(candidate.stamp, rival.stamp);
+    });
+    if (!is_winner) continue;
+
+    const auto got = runtime.value(candidate.node);
+    ++g_checks;
+    REQUIRE(got.has_value(), "a max-stamp winner has no value in the runtime");
+    if (!ipc_value_equal(*got, candidate.state)) {
+      std::cout << "FAIL: " << scenario << ": resolution=max_stamp did not select node "
+                << candidate.node << "'s greatest-stamp op" << std::endl;
+      std::abort();
+    }
+  }
+}
+
 // `crdt_sync_frames.json` is a WIRE fixture, not a plane-behaviour one: each
 // frame carries a `CrdtSync` payload plus assertions about its shape, and it
 // pins the CODEC boundary rather than convergence. It was excused in
@@ -310,11 +343,8 @@ int main() {
               "unrecognised distributed expect key in fixture — it would be "
               "silently ignored");
 
-    // Only the max-stamp rule is modelled. A new rule landing upstream must fail
-    // here rather than being replayed under the wrong resolution.
     const Json* resolution = expect->find("resolution");
-    REQUIRE(resolution != nullptr && resolution->str == "max_stamp",
-            "unknown convergence resolution rule in fixture");
+    REQUIRE(resolution != nullptr, "a scenario has no resolution rule");
 
     const Json* want_applied = expect->find("applied_count");
     REQUIRE(want_applied != nullptr, "a scenario has no applied_count");
@@ -331,6 +361,7 @@ int main() {
       std::abort();
     }
     assert_converged(name, runtime, expect->find("converged"));
+    assert_max_stamp_resolution(name, *resolution, ops, runtime);
 
     // State-based CvRDT idempotence: re-delivering the same frame applies
     // nothing new and leaves the converged state untouched. Asserted for EVERY

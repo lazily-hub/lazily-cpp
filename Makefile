@@ -1,7 +1,7 @@
 # lazily-cpp — build, test, and verification targets.
 
 .PHONY: all configure build test test-interop-peer check fmt fmt-fix tidy clean \
-	conformance conformance-coverage bench ci-reach
+conformance conformance-coverage assertion-ordering-check bench ci-reach
 
 BUILD_DIR ?= build
 
@@ -89,5 +89,8 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Full local gate — run before committing.
-check: fmt build test test-interop-peer conformance-coverage ci-reach
+assertion-ordering-check:
+	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding cpp --root .
+
+check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check
 	@echo "lazily-cpp: check OK"
