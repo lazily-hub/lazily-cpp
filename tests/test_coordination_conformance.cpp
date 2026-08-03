@@ -47,8 +47,8 @@ static void assert_inval(Context& ctx, const Computed<T>& observed,
                          lazily_test::AssertionKeys& expected, const std::string& reader) {
   const bool was = ctx.is_set(observed);
   (void)ctx.get(observed);
-  expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-    return lazily_test::json_bool(lazily_test::json_member(want, reader)) == !was;
+  expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+    invalidates.assert_key(reader, !was);
   });
 }
 

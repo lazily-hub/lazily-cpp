@@ -83,8 +83,8 @@ TEST(test_circuit_breaker) {
     });
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "state")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("state", !was);
     });
   }
 }
@@ -109,8 +109,8 @@ TEST(test_retry) {
     expected.assert_key("delay", r.delay(ctx));
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "delay")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("delay", !was);
     });
   }
 }
@@ -144,8 +144,8 @@ TEST(test_bulkhead) {
     expected.assert_key("in_use", b.permits_in_use(ctx));
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "in_use")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("in_use", !was);
     });
   }
 }
@@ -182,8 +182,8 @@ TEST(test_timeout) {
     expected.assert_key("is_timed_out", t.is_timed_out(ctx));
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "is_timed_out")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("is_timed_out", !was);
     });
   }
 }

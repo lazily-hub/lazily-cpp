@@ -73,8 +73,8 @@ TEST(test_tumbling_count) {
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("output", !was_cached);
     });
   }
 }
@@ -113,8 +113,8 @@ TEST(test_tumbling_time) {
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("output", !was_cached);
     });
   }
 }
@@ -142,8 +142,8 @@ TEST(test_sliding_count) {
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("output", !was_cached);
     });
   }
 }
@@ -180,8 +180,8 @@ TEST(test_session) {
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("output", !was_cached);
     });
   }
 }

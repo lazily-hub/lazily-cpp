@@ -485,17 +485,29 @@ void assert_text_expectations(const ReplicaMap& replicas, lazily_test::Assertion
   });
   expect.assert_key_if_present("tombstone_count", replicas.at("a").tombstone_count(),
                                lazily_test::json_u64);
-  expect.assert_key_with_if_present("text_on", [&](const Json& text_on) {
-    for (const auto& entry : text_on.object) {
-      if (replicas.at(entry.first).text() != lazily_test::json_string(*entry.second)) return false;
+  // Descended into (`#lzsubblockkeyset`): the child tracker owns each replica
+  // name, so a replica the fixture grows is compared rather than skipped.
+  expect.with_sub_if_present("text_on", [&](lazily_test::AssertionKeys& text_on) {
+    for (const auto& replica : text_on.keys()) {
+      text_on.assert_key_with(replica, [&](const Json& want) {
+        return replicas.at(replica).text() == lazily_test::json_string(want);
+      });
     }
-    return true;
   });
-  expect.assert_key_with_if_present("version_vector_on", [&](const Json& vv_on) {
-    for (const auto& entry : vv_on.object) {
-      assert_version_vector(replicas.at(entry.first), *entry.second);
+  expect.with_sub_if_present("version_vector_on", [&](lazily_test::AssertionKeys& vv_on) {
+    for (const auto& replica : vv_on.keys()) {
+      // One level further down: a replica's version vector is itself an object
+      // keyed by node id, and its completeness is the whole claim -- so the node
+      // set goes through the tracker rather than living inside
+      // `assert_version_vector`'s own size check (`#lzsubblockkeyset`).
+      std::set<std::string> nodes;
+      for (const auto& entry : replicas.at(replica).version_vector())
+        nodes.insert(std::to_string(entry.first));
+      vv_on.assert_key_set_with(replica, nodes, [&](const Json& want) {
+        assert_version_vector(replicas.at(replica), want);
+        return true;
+      });
     }
-    return true;
   });
 }
 

@@ -37,7 +37,10 @@ template <typename Queue> struct Readers {
   }
 
   void assert_invalidates(lazily_test::AssertionKeys& expected, const std::string& where) {
-    expected.assert_key_with("invalidates", [&](const Json& inv) {
+    // Descended into (`#lzsubblockkeyset`): the child tracker owns every reader
+    // name under `invalidates`, so a reader the fixture grows fails by name
+    // instead of falling past this four-entry table.
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& inv) {
       const struct {
         const char* name;
         bool cached;
@@ -48,12 +51,12 @@ template <typename Queue> struct Readers {
           {"dead_letter_len", graph.is_set(handles.dead_letter_len)},
       };
       for (const auto& reader : actual) {
-        const Json* want = inv.find(reader.name);
-        REQUIRE(want != nullptr, where + ": invalidates." + reader.name + " is absent");
-        REQUIRE((!reader.cached) == want->as_bool(),
-                where + ": invalidates." + reader.name + " mismatch");
+        inv.assert_key_with(reader.name, [&](const Json& want) {
+          REQUIRE((!reader.cached) == want.as_bool(),
+                  where + ": invalidates." + reader.name + " mismatch");
+          return true;
+        });
       }
-      return true;
     });
   }
 };
@@ -174,19 +177,26 @@ std::size_t replay(const std::string& fixture, const std::string& flavor) {
     readers.assert_invalidates(expected, where);
     assert_state(queue, expected, where);
     readers.refresh();
-    expected.assert_key_with("reads", [&](const Json& reads) {
-      REQUIRE(queue.pending_len(ctx) ==
-                  static_cast<std::size_t>(reads.find("pending_len")->as_int()),
-              where + ": pending_len read mismatch");
-      REQUIRE(queue.is_empty(ctx) == reads.find("is_empty")->as_bool(),
-              where + ": is_empty read mismatch");
-      REQUIRE(queue.in_flight_len(ctx) ==
-                  static_cast<std::size_t>(reads.find("in_flight_len")->as_int()),
-              where + ": in_flight_len read mismatch");
-      REQUIRE(queue.dead_letter_len(ctx) ==
-                  static_cast<std::size_t>(reads.find("dead_letter_len")->as_int()),
-              where + ": dead_letter_len read mismatch");
-      return true;
+    expected.with_sub("reads", [&](lazily_test::AssertionKeys& reads) {
+      reads.assert_key_with("pending_len", [&](const Json& want) {
+        REQUIRE(queue.pending_len(ctx) == static_cast<std::size_t>(want.as_int()),
+                where + ": pending_len read mismatch");
+        return true;
+      });
+      reads.assert_key_with("is_empty", [&](const Json& want) {
+        REQUIRE(queue.is_empty(ctx) == want.as_bool(), where + ": is_empty read mismatch");
+        return true;
+      });
+      reads.assert_key_with("in_flight_len", [&](const Json& want) {
+        REQUIRE(queue.in_flight_len(ctx) == static_cast<std::size_t>(want.as_int()),
+                where + ": in_flight_len read mismatch");
+        return true;
+      });
+      reads.assert_key_with("dead_letter_len", [&](const Json& want) {
+        REQUIRE(queue.dead_letter_len(ctx) == static_cast<std::size_t>(want.as_int()),
+                where + ": dead_letter_len read mismatch");
+        return true;
+      });
     });
   }
   return steps->array.size();

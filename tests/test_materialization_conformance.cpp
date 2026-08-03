@@ -186,18 +186,23 @@ int main() {
 
   // Reads are strategy-independent: every key observes its canonical value,
   // whether it was present at build or minted on access.
-  expected.assert_key_with("observe", [&](const Json& block) {
-    for (const auto& kv : block.object) {
-      const auto want = static_cast<uint32_t>(kv.second->as_int());
-      if (cells.is_present(kv.first)) {
-        REQUIRE(cells.get(ctx, kv.first) == std::optional<uint32_t>(want),
-                "an input entry did not observe its canonical value");
-      } else {
-        REQUIRE(slots.get_or_insert_with(ctx, kv.first, factory) == want,
-                "a derived entry did not observe its canonical value");
-      }
+  // Descended into (`#lzsubblockkeyset`): the child tracker owns each entry
+  // name, so a key the fixture grows must reach a comparison instead of being
+  // walked past by a loop nothing audits.
+  expected.with_sub("observe", [&](lazily_test::AssertionKeys& observe) {
+    for (const auto& name : observe.keys()) {
+      observe.assert_key_with(name, [&](const Json& want_value) {
+        const auto want = static_cast<uint32_t>(want_value.as_int());
+        if (cells.is_present(name)) {
+          REQUIRE(cells.get(ctx, name) == std::optional<uint32_t>(want),
+                  "an input entry did not observe its canonical value");
+        } else {
+          REQUIRE(slots.get_or_insert_with(ctx, name, factory) == want,
+                  "a derived entry did not observe its canonical value");
+        }
+        return true;
+      });
     }
-    return true;
   });
 
   // -- Eager strategy --

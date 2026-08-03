@@ -340,80 +340,95 @@ template <typename Model> void run_fixture(const std::string& fixture) {
     });
 
     // -- values -------------------------------------------------------------
-    expected.assert_key_with_if_present("values", [&](const Json& want_values) {
-      for (const auto& kv : want_values.object) {
-        auto got = model.value_untracked(kv.first);
-        REQUIRE(got.has_value(), where + ": value for " + kv.first + " is absent");
-        REQUIRE(*got == static_cast<int>(kv.second->as_int()),
-                where + ": value for " + kv.first + " is " + std::to_string(*got) + ", expected " +
-                    std::to_string(kv.second->as_int()));
+    //
+    // Descended into rather than walked by hand (`#lzsubblockkeyset`): the child
+    // tracker owns each entry name, so a value the fixture grows is compared
+    // rather than skipped.
+    expected.with_sub_if_present("values", [&](lazily_test::AssertionKeys& values) {
+      for (const auto& name : values.keys()) {
+        values.assert_key_with(name, [&](const Json& want) {
+          auto got = model.value_untracked(name);
+          REQUIRE(got.has_value(), where + ": value for " + name + " is absent");
+          REQUIRE(*got == static_cast<int>(want.as_int()),
+                  where + ": value for " + name + " is " + std::to_string(*got) + ", expected " +
+                      std::to_string(want.as_int()));
+          return true;
+        });
       }
-      return true;
     });
 
     // -- the invalidation matrix -------------------------------------------
     //
-    // Nested under `expected`, which is where the fixtures actually put it.
-    expected.assert_key_with("invalidates", [&](const Json& invalidates) {
+    // Nested under `expected`, which is where the fixtures actually put it. A
+    // reader name the matrix grows fails the child tracker's own finish rather
+    // than falling past the three arms this site knows (`#lzsubblockkeyset`).
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
       ++asserted_invalidations;
-      const std::vector<std::string> dirty_values = string_array(invalidates.find("value"));
-      const std::set<std::string> dirty(dirty_values.begin(), dirty_values.end());
       // Only survivors are checked: a key this op removed has no entry left to
       // read, and a key it added had no reader to invalidate.
-      const std::set<std::string> survivors(got_order.begin(), got_order.end());
-      for (auto& kv : value_readers) {
-        if (survivors.count(kv.first) == 0) continue;
-        const bool want_dirty = dirty.count(kv.first) > 0;
-        const bool still_cached = model.cached(kv.second);
-        if (want_dirty) {
-          REQUIRE(!still_cached,
-                  where + ": value reader for " + kv.first + " should have been invalidated");
-        } else {
-          REQUIRE(still_cached, where + ": value reader for " + kv.first +
-                                    " should have stayed cached - per-entry "
-                                    "independence is the whole point");
+      const auto check_value_readers = [&](const std::set<std::string>& dirty) {
+        const std::set<std::string> survivors(got_order.begin(), got_order.end());
+        for (auto& kv : value_readers) {
+          if (survivors.count(kv.first) == 0) continue;
+          const bool want_dirty = dirty.count(kv.first) > 0;
+          const bool still_cached = model.cached(kv.second);
+          if (want_dirty) {
+            REQUIRE(!still_cached,
+                    where + ": value reader for " + kv.first + " should have been invalidated");
+          } else {
+            REQUIRE(still_cached, where + ": value reader for " + kv.first +
+                                      " should have stayed cached - per-entry "
+                                      "independence is the whole point");
+          }
         }
-      }
+      };
+      const bool had_value = invalidates.assert_key_with_if_present("value", [&](const Json& want) {
+        const std::vector<std::string> dirty_values = string_array(&want);
+        check_value_readers(std::set<std::string>(dirty_values.begin(), dirty_values.end()));
+        return true;
+      });
+      if (!had_value) check_value_readers({});
 
-      const Json* want_membership_dirty = invalidates.find("membership");
-      if (want_membership_dirty != nullptr) {
-        const bool want_dirty = want_membership_dirty->as_bool();
+      invalidates.assert_key_with_if_present("membership", [&](const Json& want) {
+        const bool want_dirty = want.as_bool();
         REQUIRE(model.cached(membership) != want_dirty,
                 where + std::string(": membership reader should have ") +
                     (want_dirty ? "been invalidated" : "stayed cached") +
                     " - a pure reorder must NOT invalidate set-identity "
                     "readers");
-      }
+        return true;
+      });
 
-      const Json* want_order_dirty = invalidates.find("order");
-      if (want_order_dirty != nullptr) {
-        const bool want_dirty = want_order_dirty->as_bool();
+      invalidates.assert_key_with_if_present("order", [&](const Json& want) {
+        const bool want_dirty = want.as_bool();
         REQUIRE(model.cached(order) != want_dirty,
                 where + std::string(": order reader should have ") +
                     (want_dirty ? "been invalidated" : "stayed cached"));
-      }
-      return true;
+        return true;
+      });
     });
 
     // -- handle stability ---------------------------------------------------
     //
     // The law that separates an atomic move from a remove + re-mint: a reorder
     // keeps the entry's node, so its dependents and CRDT lineage survive.
-    expected.assert_key_with_if_present("handle_stable", [&](const Json& stable) {
-      for (const auto& kv : stable.object) {
-        auto before = handles_before.count(kv.first) ? handles_before[kv.first] : std::nullopt;
-        auto after = model.handle_id(kv.first);
-        if (kv.second->as_bool()) {
-          REQUIRE(before.has_value() && after.has_value() && *before == *after,
-                  where + ": handle for " + kv.first +
-                      " must survive the move - a reorder that re-mints is a "
-                      "remove + insert, not a move");
-        } else {
-          REQUIRE(!after.has_value() || !before.has_value() || *before != *after,
-                  where + ": handle for " + kv.first + " should have changed");
-        }
+    expected.with_sub_if_present("handle_stable", [&](lazily_test::AssertionKeys& stable) {
+      for (const auto& name : stable.keys()) {
+        stable.assert_key_with(name, [&](const Json& want) {
+          auto before = handles_before.count(name) ? handles_before[name] : std::nullopt;
+          auto after = model.handle_id(name);
+          if (want.as_bool()) {
+            REQUIRE(before.has_value() && after.has_value() && *before == *after,
+                    where + ": handle for " + name +
+                        " must survive the move - a reorder that re-mints is a "
+                        "remove + insert, not a move");
+          } else {
+            REQUIRE(!after.has_value() || !before.has_value() || *before != *after,
+                    where + ": handle for " + name + " should have changed");
+          }
+          return true;
+        });
       }
-      return true;
     });
   }
 

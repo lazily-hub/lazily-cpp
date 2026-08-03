@@ -68,13 +68,38 @@
 // a failure rather than a missing optional, which is what makes deleting the
 // replay redden the assertion.
 //
+// A sixth path is the null form ONE LEVEL DOWN (`#lzsubblockkeyset`). Every
+// rung above is scoped to the keys of the block it was handed, so an assertion
+// key whose VALUE is a JSON OBJECT is guarded only at its own name: the runner
+// reaches inside with `json_member(want, "output")` for the sub-fields it knows
+// and nothing looks at the rest. A field added to that object upstream is then
+// compared by nothing -- the unconsumed-key hole this file exists to close,
+// reappearing inside an assertion key rather than beside one. A per-call-site
+// field count is the cheap fix and the wrong one: it relies on each site
+// remembering, which is exactly what the tracker exists to stop relying on.
+//
+// So an object-valued key is consumed one of two ways, and `finish()` refuses
+// anything else:
+//   `with_sub(key, body)`  -- hand the caller a CHILD tracker bound to the
+//                             object. The child owns the drop/finish check for
+//                             every key beneath it, so an unrecognised
+//                             sub-field fails exactly as an unrecognised
+//                             top-level key does.
+//   `assert_key_set(key, produced)` -- compare the object's KEY SET against the
+//                             set the RUN produced, in both directions. For a
+//                             glossary (`assertions.outcomes`) whose sub-values
+//                             are prose but whose NAMES are the vocabulary.
+// `excuse_key` and `prose_key` stay available for an object that genuinely
+// carries no obligation, because both record a reason the ledgers can falsify.
+//
 // Usage:
 //   lazily_test::AssertionKeys keys("presence.json#3 expected", expected);
 //   keys.assert_key("present", cell.present(ctx), json_presence_map);
 //   keys.assert_key("closed", actually_closed);          // bool, parsed by type
-//   keys.assert_key_with("invalidates", [&](const Json& v) {
-//     return json_bool(json_member(v, "present")) == !was;
+//   keys.with_sub("invalidates", [&](lazily_test::AssertionKeys& inv) {
+//     inv.assert_key("present", !was);
 //   });
+//   keys.assert_key_set("outcomes", outcomes_the_run_reached);
 //   keys.assert_key_against_run("scenario_count", [](const Json& want, const RunFacts& run) {
 //     return static_cast<long long>(json_u64(want)) == run.count("scenarios_replayed");
 //   });
@@ -678,6 +703,83 @@ public:
     return true;
   }
 
+  // Type-only inspection, for a call site that must DISPATCH on the shape the
+  // corpus chose -- an ingress `authority` is `null` before a claim and an
+  // object after it, and the two need different entry points below. Consumes
+  // nothing and asserts nothing: the key still has to reach an accessor and a
+  // comparison, or `finish()` refuses it exactly as before.
+  bool value_is_object(const std::string& key) const {
+    const Json* value = object_->find(key);
+    return value != nullptr && value->is_object();
+  }
+
+  // -- rung 6: object-valued keys (`#lzsubblockkeyset`) -------------------
+  //
+  // The two -- and only two -- ways to consume a key whose fixture value is a
+  // JSON object. `finish()` fails any object-valued key that reached an
+  // `assert_key*` call without going through one of them, so a site that
+  // reaches for `assert_key_with` on an object and compares the sub-fields it
+  // happens to know about gets a red suite instead of a silent hole.
+
+  // DESCEND. Hands `body` a CHILD tracker bound to the object, which owns the
+  // consumption and assertion check for every key beneath it: a sub-field the
+  // body never asks for fails the child's `finish()` by name, exactly as an
+  // unread top-level key fails this one. The child is scope-bound, so the check
+  // happens when `body` returns whatever path it took.
+  template <typename Body> void with_sub(const std::string& key, Body body) {
+    const Json& want = required(key);
+    mark_object_checked(key, want);
+    AssertionKeys child(ChildTag{}, where_ + "." + key, want);
+    body(child);
+  }
+
+  // As `with_sub`, but a no-op when the fixture omits the key. Returns whether
+  // the key was present, and therefore descended into.
+  template <typename Body> bool with_sub_if_present(const std::string& key, Body body) {
+    const Json* want = optional(key);
+    if (want == nullptr) return false;
+    mark_object_checked(key, *want);
+    AssertionKeys child(ChildTag{}, where_ + "." + key, *want);
+    body(child);
+    return true;
+  }
+
+  // KEY SET. Compare the object's NAMES against the names the RUN produced --
+  // the outcome tokens the replay really dispatched on, the readers it really
+  // probed. Both directions: a fixture name nothing produced and a produced
+  // name the fixture omits are each a failure, which is what makes the corpus
+  // retiring or coining a name redden this binding.
+  //
+  // For an object whose sub-VALUES carry nothing comparable (a glossary of
+  // prose glosses) but whose sub-KEYS are the vocabulary itself.
+  void assert_key_set(const std::string& key, const std::set<std::string>& produced) {
+    const Json& want = required(key);
+    mark_object_checked(key, want);
+    compare_key_set(key, want, produced);
+  }
+
+  // Key set AND a check over the object's values, for a site whose comparison
+  // is genuinely whole-object but whose completeness nothing else can see.
+  template <typename Check>
+  void assert_key_set_with(const std::string& key, const std::set<std::string>& produced,
+                           Check check) {
+    const Json& want = required(key);
+    mark_object_checked(key, want);
+    compare_key_set(key, want, produced);
+    if (!check(want)) fail_mismatch(key, want);
+  }
+
+  template <typename Check>
+  bool assert_key_set_with_if_present(const std::string& key, const std::set<std::string>& produced,
+                                      Check check) {
+    const Json* want = optional(key);
+    if (want == nullptr) return false;
+    mark_object_checked(key, *want);
+    compare_key_set(key, *want, produced);
+    if (!check(*want)) fail_mismatch(key, *want);
+    return true;
+  }
+
   // -- rung 5: assertions against the RUN (`#lznullformblind`) ------------
 
   // Compare `key` against facts THE RUN produced, in a block that cannot see the
@@ -787,8 +889,10 @@ public:
     finished_ = true;
     // Publish this block's assertions to the fixture ledger BEFORE any verdict,
     // so a discharge naming a key asserted here is checkable from a block that
-    // has already gone out of scope.
-    {
+    // has already gone out of scope. A CHILD block publishes nothing: its keys
+    // are sub-field names, and `descriptor.epoch` satisfying a discharge that
+    // named the top-level `epoch` would be the collision this ledger cannot see.
+    if (!child_) {
       auto& ledger = prose_ledger();
       ledger.asserted[fixture_].insert(asserted_.begin(), asserted_.end());
       // Every key this block CARRIES, so a discharge naming a key the fixture
@@ -886,6 +990,24 @@ public:
                   << std::endl;
         std::abort();
       }
+      // Rung 6 (`#lzsubblockkeyset`). The key was asserted -- but if its value
+      // is an OBJECT and the assertion did not go through `with_sub` or
+      // `assert_key_set`, nothing looked at the object's key SET, so a
+      // sub-field added upstream is compared by nothing. This is the
+      // unconsumed-key hole one level down, and it is reported here rather
+      // than left to each call site to remember.
+      if (kv.second->is_object() && object_checked_.count(key) == 0) {
+        std::cout << "FAIL: " << where_ << ": assertion key '" << key
+                  << "' has a JSON OBJECT value (" << json_debug(*kv.second)
+                  << ") and was consumed WITHOUT a key-set check. Reaching inside "
+                     "for the sub-fields this site knows about leaves every other "
+                     "one compared by nothing, so a field added upstream is silent "
+                     "-- descend with with_sub(), which makes the child tracker own "
+                     "each sub-key, or compare the object's names against the run "
+                     "with assert_key_set() (#lzsubblockkeyset)"
+                  << std::endl;
+        std::abort();
+      }
     }
     // The other direction: an excuse for a key the block does not carry has
     // outlived the shape it was written for.
@@ -902,6 +1024,53 @@ public:
   }
 
 private:
+  // Tag for the CHILD constructor used by `with_sub`. A child is bound to a
+  // sub-object, not to a fixture's `assertions` block, so it registers with
+  // neither the rung-0 bind ledger (its fingerprint is not the block the loader
+  // required) nor the prose ledger (the corpus declares paragraphs only at the
+  // top level).
+  struct ChildTag {};
+
+  AssertionKeys(ChildTag, std::string where, const Json& object)
+      : where_(std::move(where)), object_(&object), child_(true) {
+    REQUIRE(object.is_object(), "an object-valued assertion key must be a JSON object");
+    consumed_ = assertion_narrative_keys();
+    fixture_ = fixture_of(where_);
+  }
+
+  // Shared by both rung-6 entry points: the value must really be an object, the
+  // key counts as asserted, and the key-set obligation is now discharged.
+  void mark_object_checked(const std::string& key, const Json& want) {
+    if (!want.is_object()) {
+      std::cout << "FAIL: " << where_ << ": assertion key '" << key
+                << "' was consumed as an object-valued key but the fixture value is "
+                << json_debug(want) << " (#lzsubblockkeyset)" << std::endl;
+      std::abort();
+    }
+    asserted_.insert(key);
+    object_checked_.insert(key);
+  }
+
+  void compare_key_set(const std::string& key, const Json& want,
+                       const std::set<std::string>& produced) {
+    std::set<std::string> declared;
+    for (const auto& kv : want.object)
+      declared.insert(kv.first);
+    if (declared == produced) return;
+    std::string missing;
+    for (const auto& name : declared)
+      if (produced.count(name) == 0) missing += (missing.empty() ? "" : ", ") + name;
+    std::string extra;
+    for (const auto& name : produced)
+      if (declared.count(name) == 0) extra += (extra.empty() ? "" : ", ") + name;
+    std::cout << "FAIL: " << where_ << ": the key set of assertion key '" << key
+              << "' differs from what this run produced"
+              << (missing.empty() ? "" : " -- in the fixture, never produced: " + missing)
+              << (extra.empty() ? "" : " -- produced, not in the fixture: " + extra)
+              << " (#lzsubblockkeyset)" << std::endl;
+    std::abort();
+  }
+
   [[noreturn]] void fail_mismatch(const std::string& key, const Json& want) const {
     std::cout << "FAIL: " << where_ << ": assertion key '" << key
               << "' disagreed with the fixture value " << json_debug(want) << std::endl;
@@ -916,8 +1085,11 @@ private:
   std::map<std::string, std::string> excused_;
   std::set<std::string> prose_declared_;
   std::set<std::string> discharged_;
+  // Object-valued keys whose KEY SET really reached a check (`#lzsubblockkeyset`).
+  std::set<std::string> object_checked_;
   bool prose_discharged_any_ = false;
   bool finished_ = false;
+  bool child_ = false;
 };
 
 // Fixture-end verification of the prose ledger (`#lzprosekeyconvention`). Call

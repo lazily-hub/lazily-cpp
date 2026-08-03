@@ -22,6 +22,7 @@
 #include <cassert>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 
 using namespace lazily;
@@ -52,8 +53,8 @@ static void assert_inval(Context& ctx, const Computed<T>& observed,
                          lazily_test::AssertionKeys& expected, const std::string& field) {
   const bool was = ctx.is_set(observed);
   (void)ctx.get(observed);
-  expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-    return lazily_test::json_bool(lazily_test::json_member(want, field)) == !was;
+  expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+    invalidates.assert_key(field, !was);
   });
 }
 
@@ -155,7 +156,16 @@ TEST(test_discovery) {
       // last arm — the ledger books the step either way.
       REQUIRE(false, "unknown discovery op in fixture: " + type);
     }
-    expected.assert_key("discovery", d.discovery(ctx), json_map);
+    // The map is compared whole, but nothing outside this site could see that
+    // -- so the KEY SET goes through the tracker (`#lzsubblockkeyset`), and a
+    // service name on either side that the other lacks is named as such.
+    const Map discovery_got = d.discovery(ctx);
+    std::set<std::string> discovery_names;
+    for (const auto& entry : discovery_got)
+      discovery_names.insert(entry.first);
+    expected.assert_key_set_with("discovery", discovery_names, [&](const lazily_test::Json& want) {
+      return discovery_got == json_map(want);
+    });
     assert_inval(ctx, observed, expected, "discovery");
   }
 }
@@ -186,7 +196,16 @@ TEST(test_service_registry) {
       // Fail closed (#lzscenariobodyskip).
       REQUIRE(false, "unknown registry op in fixture: " + type);
     }
-    expected.assert_key("projection", reg.projection(ctx), json_map);
+    // The map is compared whole, but nothing outside this site could see that
+    // -- so the KEY SET goes through the tracker (`#lzsubblockkeyset`), and a
+    // service name on either side that the other lacks is named as such.
+    const Map projection_got = reg.projection(ctx);
+    std::set<std::string> projection_names;
+    for (const auto& entry : projection_got)
+      projection_names.insert(entry.first);
+    expected.assert_key_set_with(
+        "projection", projection_names,
+        [&](const lazily_test::Json& want) { return projection_got == json_map(want); });
     assert_inval(ctx, observed, expected, "projection");
   }
 }

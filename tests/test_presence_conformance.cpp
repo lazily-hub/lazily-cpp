@@ -18,6 +18,7 @@
 #include <cassert>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 using namespace lazily;
@@ -81,13 +82,22 @@ TEST(test_presence) {
       // last arm — the ledger books the step either way.
       REQUIRE(false, "unknown presence op in fixture: " + type);
     }
-    expected.assert_key("present", cell.present(ctx), json_presence_map);
+    // Whole-map equality, with the KEY SET routed through the tracker so the
+    // completeness of the comparison is visible from outside this site
+    // (`#lzsubblockkeyset`).
+    const PresenceMap present = cell.present(ctx);
+    std::set<std::string> present_peers;
+    for (const auto& entry : present)
+      present_peers.insert(std::to_string(entry.first));
+    expected.assert_key_set_with("present", present_peers, [&](const lazily_test::Json& want) {
+      return present == json_presence_map(want);
+    });
     // INVALIDATION via the `computed` + `is_set` cache-survival technique: the
     // cached value survived iff nothing invalidated the observer slot.
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "present")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("present", !was);
     });
   }
 }
@@ -119,11 +129,20 @@ TEST(test_awareness) {
       // Fail closed (#lzscenariobodyskip).
       REQUIRE(false, "unknown presence-map op in fixture: " + type);
     }
-    expected.assert_key("present", cell.present(ctx), json_presence_map);
+    // Whole-map equality, with the KEY SET routed through the tracker so the
+    // completeness of the comparison is visible from outside this site
+    // (`#lzsubblockkeyset`).
+    const PresenceMap present = cell.present(ctx);
+    std::set<std::string> present_peers;
+    for (const auto& entry : present)
+      present_peers.insert(std::to_string(entry.first));
+    expected.assert_key_set_with("present", present_peers, [&](const lazily_test::Json& want) {
+      return present == json_presence_map(want);
+    });
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "present")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("present", !was);
     });
   }
 
@@ -159,8 +178,8 @@ TEST(test_ephemeral) {
     expected.assert_key("value", cell.value(ctx), lazily_test::json_optional_string);
     const bool was = ctx.is_set(observed);
     (void)ctx.get(observed);
-    expected.assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "value")) == !was;
+    expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("value", !was);
     });
   }
 }

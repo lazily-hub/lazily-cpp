@@ -188,7 +188,11 @@ void replay(const std::string& name, const std::string& flavor) {
     // `invalidates` nests under `expected`. A runner that looked for it at step
     // level would find nothing and check nothing, which is exactly the bug that
     // silently disabled lazily-rs's map assertion.
-    exp.assert_key_with_if_present("invalidates", [&](const Json& inv) {
+    //
+    // Descended into (`#lzsubblockkeyset`): the child tracker owns each reader
+    // name, so a reader the fixture grows fails by name rather than being
+    // skipped by a probe table that never heard of it.
+    exp.with_sub_if_present("invalidates", [&](lazily_test::AssertionKeys& inv) {
       const struct {
         const char* key;
         bool still_valid;
@@ -197,19 +201,16 @@ void replay(const std::string& name, const std::string& flavor) {
           {"is_empty", r.empty.is_valid()}, {"is_full", r.full.is_valid()},
           {"closed", r.closed.is_valid()},
       };
-      bool ok = true;
       for (const auto& probe : probes) {
-        const Json* want = inv.find(probe.key);
-        if (want == nullptr) continue;
-        const bool got = invalidated(probe.still_valid);
-        if (got != want->boolean) {
+        inv.assert_key_with_if_present(probe.key, [&](const Json& want) {
+          const bool got = invalidated(probe.still_valid);
+          if (got == want.boolean) return true;
           fail(label, i,
                std::string("invalidates.") + probe.key + " = " + (got ? "true" : "false") +
-                   ", fixture says " + (want->boolean ? "true" : "false"));
-          ok = false;
-        }
+                   ", fixture says " + (want.boolean ? "true" : "false"));
+          return false;
+        });
       }
-      return ok;
     });
 
     // `returns`

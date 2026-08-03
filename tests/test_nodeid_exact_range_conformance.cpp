@@ -277,13 +277,14 @@ static void test_nodeid_exact_range_is_replayed() {
     // the corpus retire one silently. Asserted in both directions against the
     // outcomes whose per-scenario comparison against `result.ok` really passed
     // (`#lznullformblind`).
-    block.assert_key_with("outcomes", [&](const lazily_test::Json& want) {
-      REQUIRE(want.is_object(), "assertions.outcomes is a glossary object");
-      std::set<std::string> declared;
-      for (const auto& kv : want.object)
-        declared.insert(kv.first);
-      return declared == outcomes_validated;
-    });
+    // The glossary is an OBJECT, and its sub-values are prose glosses -- so what
+    // carries the obligation is its KEY SET, and it goes through the tracker's
+    // key-set entry point rather than a hand-rolled set built inside a lambda
+    // (`#lzsubblockkeyset`). Both directions: an outcome the corpus retires and
+    // an outcome this run reached that the corpus never named are each a
+    // failure, and neither can be reached by a site that forgot to compare the
+    // names -- `finish()` refuses an object-valued key consumed any other way.
+    block.assert_key_set("outcomes", outcomes_validated);
     block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
                                   "about the frames under test");
     block.finish();

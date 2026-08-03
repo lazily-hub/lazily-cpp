@@ -110,8 +110,8 @@ static void run(Context& ctx, const std::vector<Step>& steps, const Computed<Opt
 
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    step.keys->assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    step.keys->with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("output", !was_cached);
     });
   }
 }
@@ -228,8 +228,8 @@ TEST(probabilistic_sample) {
     s.keys->assert_key("output", output, lazily_test::json_optional_string);
     const bool was_cached = ctx.is_set(observed);
     (void)ctx.get(observed);
-    s.keys->assert_key_with("invalidates", [&](const lazily_test::Json& want) {
-      return lazily_test::json_bool(lazily_test::json_member(want, "output")) == !was_cached;
+    s.keys->with_sub("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      invalidates.assert_key("output", !was_cached);
     });
   }
 

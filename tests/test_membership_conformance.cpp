@@ -84,26 +84,29 @@ TEST(test_membership_lifecycle) {
     }
 
     // Per-peer state.
-    expected.assert_key_with("states", [&](const lazily_test::Json& states) {
-      assert(states.is_object());
-      for (const auto& want : states.object) {
-        const auto state = lazily_test::json_string(*want.second);
-        // Fail closed (#lzscenariobodyskip). This ended in a bare
-        // `: PeerState::Left`, so any unrecognised spelling silently became the
-        // Left expectation instead of failing.
-        PeerState want_state = PeerState::Left;
-        if (state == "Alive")
-          want_state = PeerState::Alive;
-        else if (state == "Suspect")
-          want_state = PeerState::Suspect;
-        else if (state == "Dead")
-          want_state = PeerState::Dead;
-        else
-          REQUIRE(state == "Left", "unknown peer state in fixture: " + state);
-        const auto got = m.state(std::stoull(want.first));
-        if (!got || *got != want_state) return false;
+    // Descended into (`#lzsubblockkeyset`): the child tracker owns each peer id
+    // under `states`, so a peer the fixture grows is compared rather than
+    // walked past by a hand-written loop nothing checks the shape of.
+    expected.with_sub("states", [&](lazily_test::AssertionKeys& states) {
+      for (const auto& peer : states.keys()) {
+        states.assert_key_with(peer, [&](const lazily_test::Json& want) {
+          const auto state = lazily_test::json_string(want);
+          // Fail closed (#lzscenariobodyskip). This ended in a bare
+          // `: PeerState::Left`, so any unrecognised spelling silently became
+          // the Left expectation instead of failing.
+          PeerState want_state = PeerState::Left;
+          if (state == "Alive")
+            want_state = PeerState::Alive;
+          else if (state == "Suspect")
+            want_state = PeerState::Suspect;
+          else if (state == "Dead")
+            want_state = PeerState::Dead;
+          else
+            REQUIRE(state == "Left", "unknown peer state in fixture: " + state);
+          const auto got = m.state(std::stoull(peer));
+          return got && *got == want_state;
+        });
       }
-      return true;
     });
     // Alive set (the reactive PeerSet).
     expected.assert_key("alive_set", m.peer_set(ctx), [](const lazily_test::Json& value) {

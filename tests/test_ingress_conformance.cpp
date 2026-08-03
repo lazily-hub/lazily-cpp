@@ -306,74 +306,99 @@ template <typename M> void materialize(M& model, const std::vector<Key>& keys) {
 
 template <typename M>
 void assert_state(M& model, lazily_test::AssertionKeys& expected, const std::string& where) {
-  expected.assert_key_with("scopes", [&](const Json& scopes) {
-    REQUIRE(scopes.is_object(), where + ": expected.scopes is not an object");
-    for (const auto& entry : scopes.object) {
-      const Key key = entry.first;
-      const Json& want = *entry.second;
+  // Descended into rather than walked by hand (`#lzsubblockkeyset`). Every
+  // level of this block is an object, so every level gets its own child
+  // tracker: a scope the fixture grows, a per-scope projection it grows, or an
+  // authority/retry field it grows all fail by name instead of being compared
+  // by nothing.
+  expected.with_sub("scopes", [&](lazily_test::AssertionKeys& scopes) {
+    for (const auto& name : scopes.keys()) {
+      const Key key = name;
       const auto view = model.view(key);
       REQUIRE(view.has_value(), where + ": scope " + key + " absent");
-      REQUIRE(view->lifecycle == lifecycle_of(json_string(member(want, "lifecycle", where))),
-              where + ": " + key + " lifecycle");
-      REQUIRE(view->generation == json_u64(member(want, "generation", where)),
-              where + ": " + key + " generation");
-      REQUIRE(view->delivered_through ==
-                  json_optional_u64(member(want, "delivered_through", where)),
-              where + ": " + key + " watermark");
-      REQUIRE(view->buffered == static_cast<std::size_t>(json_u64(member(want, "buffered", where))),
-              where + ": " + key + " buffered");
-      REQUIRE(static_cast<std::uint64_t>(view->consecutive_errors) ==
-                  json_u64(member(want, "consecutive_errors", where)),
-              where + ": " + key + " consecutive errors");
-      REQUIRE(model.value(key) == json_optional_u64(member(want, "window", where)),
-              where + ": " + key + " window");
-      REQUIRE(model.readiness(key) == readiness_of(json_string(member(want, "readiness", where))),
-              where + ": " + key + " readiness");
+      scopes.with_sub(name, [&](lazily_test::AssertionKeys& scope) {
+        scope.assert_key_with("lifecycle", [&](const Json& want) {
+          return view->lifecycle == lifecycle_of(json_string(want));
+        });
+        scope.assert_key_with("generation",
+                              [&](const Json& want) { return view->generation == json_u64(want); });
+        scope.assert_key_with("delivered_through", [&](const Json& want) {
+          return view->delivered_through == json_optional_u64(want);
+        });
+        scope.assert_key_with("buffered", [&](const Json& want) {
+          return view->buffered == static_cast<std::size_t>(json_u64(want));
+        });
+        scope.assert_key_with("consecutive_errors", [&](const Json& want) {
+          return static_cast<std::uint64_t>(view->consecutive_errors) == json_u64(want);
+        });
+        scope.assert_key_with("window", [&](const Json& want) {
+          return model.value(key) == json_optional_u64(want);
+        });
+        scope.assert_key_with("readiness", [&](const Json& want) {
+          return model.readiness(key) == readiness_of(json_string(want));
+        });
 
-      const Json& want_authority = member(want, "authority", where);
-      const auto authority = model.authority(key);
-      if (want_authority.is_null()) {
-        REQUIRE(!authority.has_value(), where + ": " + key + " must claim no authority");
-      } else {
-        REQUIRE(authority.has_value(), where + ": " + key + " authority absent");
-        REQUIRE(authority->generation == json_u64(member(want_authority, "generation", where)),
-                where + ": " + key + " authority generation");
-        REQUIRE(authority->delivered_through ==
-                    json_optional_u64(member(want_authority, "delivered_through", where)),
-                where + ": " + key + " authority watermark");
-        REQUIRE(authority->stamped_at == json_u64(member(want_authority, "stamped_at", where)),
-                where + ": " + key + " authority stamp");
-      }
+        const auto authority = model.authority(key);
+        if (scope.value_is_object("authority")) {
+          REQUIRE(authority.has_value(), where + ": " + key + " authority absent");
+          scope.with_sub("authority", [&](lazily_test::AssertionKeys& want_authority) {
+            want_authority.assert_key_with("generation", [&](const Json& want) {
+              return authority->generation == json_u64(want);
+            });
+            want_authority.assert_key_with("delivered_through", [&](const Json& want) {
+              return authority->delivered_through == json_optional_u64(want);
+            });
+            want_authority.assert_key_with("stamped_at", [&](const Json& want) {
+              return authority->stamped_at == json_u64(want);
+            });
+          });
+        } else {
+          scope.assert_key_with("authority", [&](const Json& want) {
+            REQUIRE(want.is_null(),
+                    where + ": " + key + " authority is neither null nor an object");
+            return !authority.has_value();
+          });
+        }
 
-      const Json& want_retry = member(want, "retry", where);
-      const auto retry = model.retry(key);
-      if (want_retry.is_null()) {
-        REQUIRE(!retry.has_value(), where + ": " + key + " must have no backoff");
-      } else {
-        REQUIRE(retry.has_value(), where + ": " + key + " retry absent");
-        REQUIRE(static_cast<std::uint64_t>(retry->attempt) ==
-                    json_u64(member(want_retry, "attempt", where)),
-                where + ": " + key + " retry attempt");
-        REQUIRE(retry->backoff == json_u64(member(want_retry, "backoff", where)),
-                where + ": " + key + " retry backoff");
-        REQUIRE(retry->resume_from == json_u64(member(want_retry, "resume_from", where)),
-                where + ": " + key + " retry resume_from");
-      }
+        const auto retry = model.retry(key);
+        if (scope.value_is_object("retry")) {
+          REQUIRE(retry.has_value(), where + ": " + key + " retry absent");
+          scope.with_sub("retry", [&](lazily_test::AssertionKeys& want_retry) {
+            want_retry.assert_key_with("attempt", [&](const Json& want) {
+              return static_cast<std::uint64_t>(retry->attempt) == json_u64(want);
+            });
+            want_retry.assert_key_with(
+                "backoff", [&](const Json& want) { return retry->backoff == json_u64(want); });
+            want_retry.assert_key_with("resume_from", [&](const Json& want) {
+              return retry->resume_from == json_u64(want);
+            });
+          });
+        } else {
+          scope.assert_key_with("retry", [&](const Json& want) {
+            REQUIRE(want.is_null(), where + ": " + key + " retry is neither null nor an object");
+            return !retry.has_value();
+          });
+        }
+      });
     }
-    return true;
   });
 
-  expected.assert_key_with("receipts", [&](const Json& receipts) {
-    REQUIRE(static_cast<std::uint64_t>(model.accepted_len()) ==
-                json_u64(member(receipts, "accepted", where)),
-            where + ": accepted receipts");
-    REQUIRE(static_cast<std::uint64_t>(model.dropped_len()) ==
-                json_u64(member(receipts, "dropped", where)),
-            where + ": dropped receipts");
-    REQUIRE(static_cast<std::uint64_t>(model.errors_len()) ==
-                json_u64(member(receipts, "error", where)),
-            where + ": error receipts");
-    return true;
+  expected.with_sub("receipts", [&](lazily_test::AssertionKeys& receipts) {
+    receipts.assert_key_with("accepted", [&](const Json& want) {
+      REQUIRE(static_cast<std::uint64_t>(model.accepted_len()) == json_u64(want),
+              where + ": accepted receipts");
+      return true;
+    });
+    receipts.assert_key_with("dropped", [&](const Json& want) {
+      REQUIRE(static_cast<std::uint64_t>(model.dropped_len()) == json_u64(want),
+              where + ": dropped receipts");
+      return true;
+    });
+    receipts.assert_key_with("error", [&](const Json& want) {
+      REQUIRE(static_cast<std::uint64_t>(model.errors_len()) == json_u64(want),
+              where + ": error receipts");
+      return true;
+    });
   });
 }
 
@@ -382,38 +407,47 @@ void assert_state(M& model, lazily_test::AssertionKeys& expected, const std::str
 /// shell that over-invalidates fails just as loudly as one that under-.
 void assert_invalidation(lazily_test::AssertionKeys& expected, const ValiditySnapshot& before,
                          const ValiditySnapshot& after, const std::string& where) {
-  expected.assert_key_with("invalidates", [&](const Json& want) {
+  expected.with_sub("invalidates", [&](lazily_test::AssertionKeys& want) {
     static const char* kKinds[4] = {"value", "readiness", "authority", "retry"};
-    const Json& want_scopes = member(want, "scopes", where);
-    REQUIRE(want_scopes.is_object(), where + ": invalidates.scopes is not an object");
-    for (const auto& entry : want_scopes.object) {
-      const Key key = entry.first;
-      const auto before_it = before.scopes.find(key);
-      const auto after_it = after.scopes.find(key);
-      REQUIRE(before_it != before.scopes.end() && after_it != after.scopes.end(),
-              where + ": key " + key +
-                  " was never probed -- an unprobed reader would pass a `false` "
-                  "expectation for free");
-      for (std::size_t slot = 0; slot < 4; ++slot) {
-        const bool expected = json_bool(member(*entry.second, kKinds[slot], where));
-        const bool invalidated = before_it->second[slot] && !after_it->second[slot];
-        REQUIRE(invalidated == expected,
-                where + ": " + key + "." + kKinds[slot] +
-                    " invalidation mismatch (was valid=" + std::to_string(before_it->second[slot]) +
-                    ", now valid=" + std::to_string(after_it->second[slot]) + ", expected " +
-                    (expected ? "true" : "false") + ")");
+    want.with_sub("scopes", [&](lazily_test::AssertionKeys& want_scopes) {
+      for (const auto& name : want_scopes.keys()) {
+        const Key key = name;
+        const auto before_it = before.scopes.find(key);
+        const auto after_it = after.scopes.find(key);
+        REQUIRE(before_it != before.scopes.end() && after_it != after.scopes.end(),
+                where + ": key " + key +
+                    " was never probed -- an unprobed reader would pass a `false` "
+                    "expectation for free");
+        want_scopes.with_sub(name, [&](lazily_test::AssertionKeys& want_scope) {
+          for (std::size_t slot = 0; slot < 4; ++slot) {
+            want_scope.assert_key_with(kKinds[slot], [&](const Json& want_kind) {
+              const bool expected = json_bool(want_kind);
+              const bool invalidated = before_it->second[slot] && !after_it->second[slot];
+              REQUIRE(invalidated == expected,
+                      where + ": " + key + "." + kKinds[slot] +
+                          " invalidation mismatch (was valid=" +
+                          std::to_string(before_it->second[slot]) +
+                          ", now valid=" + std::to_string(after_it->second[slot]) + ", expected " +
+                          (expected ? "true" : "false") + ")");
+              return true;
+            });
+          }
+        });
       }
-    }
+    });
     static const char* kChannels[3] = {"accepted", "dropped", "error"};
-    const Json& want_receipts = member(want, "receipts", where);
-    for (std::size_t slot = 0; slot < 3; ++slot) {
-      const bool expected = json_bool(member(want_receipts, kChannels[slot], where));
-      const bool invalidated = before.receipts[slot] && !after.receipts[slot];
-      REQUIRE(invalidated == expected, where + ": receipts." + kChannels[slot] +
-                                           " invalidation mismatch (expected " +
-                                           (expected ? "true" : "false") + ")");
-    }
-    return true;
+    want.with_sub("receipts", [&](lazily_test::AssertionKeys& want_receipts) {
+      for (std::size_t slot = 0; slot < 3; ++slot) {
+        want_receipts.assert_key_with(kChannels[slot], [&](const Json& want_channel) {
+          const bool expected = json_bool(want_channel);
+          const bool invalidated = before.receipts[slot] && !after.receipts[slot];
+          REQUIRE(invalidated == expected, where + ": receipts." + kChannels[slot] +
+                                               " invalidation mismatch (expected " +
+                                               (expected ? "true" : "false") + ")");
+          return true;
+        });
+      }
+    });
   });
 }
 
