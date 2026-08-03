@@ -104,25 +104,55 @@ struct ProseDischarge {
 
 struct ProseLedger {
   std::map<std::string, std::set<std::string>> asserted;     // fixture -> keys asserted anywhere
+  std::map<std::string, std::set<std::string>> present;      // fixture -> keys any block CARRIES
   std::map<std::string, std::set<std::string>> declared;     // fixture -> assertions.prose
   std::map<std::string, std::vector<ProseDischarge>> claims; // fixture -> pending discharges
+  // Rule 8. Derived FROM THE CORPUS at the moment a fixture is opened, never
+  // from a count kept by hand: rules 1-7 are all satisfied over an empty
+  // population, so a fixture that is opened and then never replayed passes every
+  // one of them while proving nothing. That is the vacuity `anti_vacuity`
+  // exists to name, reappearing in the guard meant to enforce it.
+  std::set<std::string> required;
   std::set<std::string> verified;
 
-  // The teardown that makes a run which NEVER verifies fail. A discharge
+  // The teardown that makes a run which never verifies fail. A discharge
   // registered and never checked has proven exactly as much as an unconsumed
   // key, so it is reported the same way -- a message naming the fixture,
   // followed by `abort()`. Never a throw: this destructor runs at exit, and in
   // the general destructor case a throw during unwinding terminates the process
   // without the diagnostic that makes the failure actionable.
+  //
+  // The LIFO hazard the clause warns about does not reach this shape. The net is
+  // not armed per block -- there is one ledger for the process, constructed by
+  // the same `AssertionKeys` seam that already owns the consumption check and
+  // destroyed at exit, strictly after every `verify_prose` call in `main` or in
+  // a test body. Nothing can register a verification later than this teardown
+  // runs.
   ~ProseLedger() {
+    for (const auto& fixture : required) {
+      if (verified.count(fixture) != 0) continue;
+      const auto claimed = claims.find(fixture);
+      const std::size_t n = claimed == claims.end() ? 0 : claimed->second.size();
+      std::cout << "FAIL: " << fixture << ": this fixture was OPENED and its `assertions` block "
+                << "declares `prose`, but verify_prose(\"" << fixture << "\") never ran (" << n
+                << " discharge(s) registered). Rules 1-7 are all satisfied over an "
+                   "empty population, so a fixture opened and never replayed passes "
+                   "every one of them while proving nothing -- and an unverified "
+                   "discharge is as bad as an unconsumed key "
+                   "(#lzprosekeyconvention rule 8)"
+                << std::endl;
+      std::abort();
+    }
+    // A discharge registered against a fixture nothing declared required -- the
+    // fixture id in `verify_prose` disagreeing with the one its blocks were
+    // named with, say -- still must not pass silently.
     for (const auto& kv : claims) {
       if (kv.second.empty() || verified.count(kv.first) != 0) continue;
       std::cout << "FAIL: " << kv.first << ": " << kv.second.size()
                 << " prose discharge(s) were registered (first: '" << kv.second.front().key
                 << "') but verify_prose(\"" << kv.first
                 << "\") was never called, so the claim that they are carried by "
-                   "executable keys was never checked against the run. An "
-                   "unverified discharge is as bad as an unconsumed key "
+                   "executable keys was never checked against the run "
                    "(#lzprosekeyconvention)"
                 << std::endl;
       std::abort();
@@ -133,6 +163,32 @@ struct ProseLedger {
 inline ProseLedger& prose_ledger() {
   static ProseLedger ledger;
   return ledger;
+}
+
+// Rule 8's corpus half. Called from the fixture READER, so the requirement is
+// derived from the bytes on disk rather than from a list a runner maintains: a
+// fixture that grows an `assertions.prose` array upstream starts requiring
+// verification here without anyone editing this binding.
+inline void declare_prose_requirement(const std::string& fixture_id, const std::string& text) {
+  // Cheap gate first -- every fixture in the corpus passes through here, and
+  // most carry no `prose` at all.
+  if (text.find("\"prose\"") == std::string::npos) return;
+  const auto parsed = parse_json(text);
+  const Json* assertions = parsed->find("assertions");
+  if (assertions == nullptr || !assertions->is_object()) return;
+  const Json* prose = assertions->find("prose");
+  if (prose == nullptr || prose->type != Json::Type::Array) return;
+  prose_ledger().required.insert(fixture_id);
+}
+
+// The names that may never appear on the right-hand side of a discharge. Rule
+// 7 covers the block's own declaration PLUS `prose` itself, which never
+// self-lists: without the second half a discharge could name the declaration
+// that the key is a paragraph, and rule 4's own comparison marks `prose`
+// asserted, so rule 6 would wave it through. A paragraph discharged by the
+// statement that it is a paragraph proves nothing.
+inline bool is_prose_name(const std::set<std::string>& declared, const std::string& name) {
+  return name == "prose" || declared.count(name) != 0;
 }
 
 // Every conformance runner names its blocks `<fixture id> <block path>` --
@@ -409,10 +465,11 @@ public:
     claim.block = where_;
     claim.key = key;
     for (const char* name : discharged_by) {
-      if (prose_declared_.count(name) != 0) {
+      if (is_prose_name(prose_declared_, name)) {
         std::cout << "FAIL: " << where_ << ": prose key '" << key << "' is discharged by '" << name
-                  << "', which is itself declared prose. A paragraph cannot carry "
-                     "another paragraph's obligation (#lzprosekeyconvention rule 7)"
+                  << "', which is itself declared prose (or is `prose`, the "
+                     "declaration that it is). A paragraph cannot carry another "
+                     "paragraph's obligation (#lzprosekeyconvention rule 7)"
                   << std::endl;
         std::abort();
       }
@@ -436,9 +493,15 @@ public:
     // Publish this block's assertions to the fixture ledger BEFORE any verdict,
     // so a discharge naming a key asserted here is checkable from a block that
     // has already gone out of scope.
-    if (!asserted_.empty()) {
-      auto& fixture_asserted = prose_ledger().asserted[fixture_];
-      fixture_asserted.insert(asserted_.begin(), asserted_.end());
+    {
+      auto& ledger = prose_ledger();
+      ledger.asserted[fixture_].insert(asserted_.begin(), asserted_.end());
+      // Every key this block CARRIES, so a discharge naming a key the fixture
+      // does not have at all is reported as a rotted discharge rather than as a
+      // plain rule-6 miss -- the same distinction the stale-excuse check draws.
+      auto& fixture_present = ledger.present[fixture_];
+      for (const auto& kv : object_->object)
+        fixture_present.insert(kv.first);
     }
     for (const auto& kv : object_->object) {
       const std::string& key = kv.first;
@@ -583,8 +646,9 @@ inline void verify_prose(const std::string& fixture) {
               << std::endl;
     std::abort();
   }
-  const std::set<std::string>& declared = declared_it->second;
-  const std::set<std::string>& asserted = ledger.asserted[fixture];
+  const std::set<std::string> declared = declared_it->second;
+  const std::set<std::string> asserted = ledger.asserted[fixture];
+  const std::set<std::string> present = ledger.present[fixture];
 
   for (const auto& key : declared) {
     if (asserted.count(key) != 0) {
@@ -600,16 +664,32 @@ inline void verify_prose(const std::string& fixture) {
   std::set<std::string> discharged;
   for (const auto& claim : ledger.claims[fixture]) {
     for (const auto& name : claim.names) {
-      if (declared.count(name) != 0) {
+      if (is_prose_name(declared, name)) {
         std::cout << "FAIL: " << claim.block << ": prose key '" << claim.key
                   << "' is discharged by '" << name
-                  << "', which is itself declared prose (#lzprosekeyconvention rule 7)"
+                  << "', which is itself declared prose (or is `prose`, the "
+                     "declaration that it is) (#lzprosekeyconvention rule 7)"
+                  << std::endl;
+        std::abort();
+      }
+      // A discharge naming a key no block of the fixture CARRIES is a distinct
+      // failure from one naming a key that is carried and not asserted: the
+      // discharge has rotted against a fixture that moved on, exactly as a stale
+      // excuse has.
+      if (present.count(name) == 0) {
+        std::cout << "FAIL: " << claim.block << ": prose key '" << claim.key
+                  << "' is discharged by '" << name
+                  << "', which no block of this fixture carries at all. The "
+                     "discharge is stale -- rewrite it against the keys the "
+                     "fixture actually has (#lzprosekeyconvention rule 6)"
                   << std::endl;
         std::abort();
       }
       // THE rule. The excuse is falsifiable because the ledger can check it:
       // "`epoch_disambiguation` is discharged by `frame_epoch` and `blob_epoch`"
       // is a claim about the run; "`epoch_disambiguation` is prose" is not.
+      // ASSERTED, not merely satisfied: an excused key discharges nothing,
+      // because an excuse is precisely the absence of a comparison.
       if (asserted.count(name) == 0) {
         std::cout << "FAIL: " << claim.block << ": prose key '" << claim.key
                   << "' is discharged by '" << name
@@ -637,6 +717,13 @@ inline void verify_prose(const std::string& fixture) {
     std::abort();
   }
   ledger.verified.insert(fixture);
+  // A "run" is ONE TEST, not one process: the ledger is cleared at its
+  // verification so a discharge in a later test cannot be satisfied by an
+  // assertion collocated in an earlier one.
+  ledger.claims.erase(fixture);
+  ledger.asserted.erase(fixture);
+  ledger.present.erase(fixture);
+  ledger.declared.erase(fixture);
 }
 
 // Adapter so an existing `json_member(expected, "key")` call site records

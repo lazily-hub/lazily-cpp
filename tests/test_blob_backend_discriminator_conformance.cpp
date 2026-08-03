@@ -518,6 +518,14 @@ static void test_blob_backend_discriminator_is_replayed() {
     // point at the keys that carry them.
     block.prose_key("clause", {"decoded_backend", "rejected", "rejection_is_decode_error",
                                "error_names_token", "reencoded_backend_field_present"});
+    // PROXY. `wire_encoding` is a claim about how the CORPUS carries its bytes —
+    // raw text and hex rather than a pre-parsed object, because the enum in
+    // `schemas/defs.json` would reject the reject frames — and no assertion a
+    // RUN makes can observe that directly. The honest stand-ins are the form and
+    // kind vocabularies: `backend_forms` is satisfied only by the seven shapes
+    // this runner read out of the raw frames, and `omitted` / `null` /
+    // `non_string` are exactly the shapes a re-serialized pre-parsed object
+    // could not have carried.
     block.prose_key("wire_encoding", {"backend_forms", "decoded_backend", "rejection_kind"});
     block.prose_key("backend_form_vocabulary", {"backends", "backend_forms", "decoded_backend"});
     block.prose_key("reject_obligation",
@@ -537,8 +545,11 @@ static void test_blob_backend_discriminator_is_replayed() {
     // a complete vocabulary (`backends`), and a full replay (`scenario_count`).
     block.prose_key("anti_vacuity", {"decoded_backend", "reencoded_backend_field_present",
                                      "backends", "scenario_count"});
-    // resolve_wrong_backend: an unknown kind is refused rather than normalized,
-    // so a decoded backend is always the one on the wire.
+    // PROXY. `theorem` names a Lean proof in another repository
+    // (lazily-formal / docs/zero-copy-transport.md); a run here can only prove
+    // its CONSEQUENCE. These three are that consequence: an unknown kind is
+    // refused rather than normalized, so a decoded backend is always the one the
+    // wire carried and no descriptor is ever routed to another backend's table.
     block.prose_key("theorem", {"decoded_backend", "rejected", "rejection_is_decode_error"});
 
     block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "

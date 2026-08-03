@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -71,6 +72,51 @@ static IpcMessage decode_scenario(const lazily_test::Json& scenario) {
   return IpcMessage{};
 }
 
+// Walk to the node the scenario's `field` names, in a frame held schema-lessly.
+// Shared by the re-encode reader and the raw-wire reader below, so both ask the
+// same question of the same shape.
+static const JsonValue& frame_node(const JsonValue& frame, const lazily_test::Json& scenario,
+                                   const std::string& what) {
+  const std::string field = lazily_test::json_string(lazily_test::json_member(scenario, "field"));
+  // Fail closed (#lzscenariobodyskip). `field` fell through to the Delta arm for
+  // ANY spelling that was not `snapshot`, so a renamed or misspelled field
+  // silently re-encoded and asserted the node_add frame while the scenario was
+  // still booked as replayed.
+  REQUIRE(field == "snapshot" || field == "node_add", "unknown nodekey field in fixture: " + field);
+  if (field == "snapshot") {
+    const JsonValue* body = frame.find("Snapshot");
+    REQUIRE(body != nullptr, what + " carries a Snapshot envelope");
+    return body->find("nodes")->array.at(0);
+  }
+  const JsonValue* body = frame.find("Delta");
+  REQUIRE(body != nullptr, what + " carries a Delta envelope");
+  return *body->find("ops")->array.at(0).find("NodeAdd");
+}
+
+// THE FORM ON THE WIRE, read BEFORE the decoder runs.
+//
+// Without this control the `omitted` and `null` families of this fixture are
+// indistinguishable in a runner: every `expect` key is identical for the two,
+// and the typed `std::optional<NodeKey>` collapses them the instant the value is
+// decoded. Four `null` scenarios would then be four `omitted` ones wearing a
+// different id, and `assertions.key_forms` would be satisfied by a list of
+// literals. Reading the raw slot is what makes the two forms separate facts —
+// the same control the sibling blob-backend runner already applies to `backend`.
+static std::string wire_key_form(const lazily_test::Json& scenario) {
+  const std::string codec = lazily_test::json_string(lazily_test::json_member(scenario, "codec"));
+  REQUIRE(codec == "json" || codec == "msgpack", "scenario names an unknown codec: " + codec);
+  const JsonValue frame =
+      codec == "msgpack"
+          ? msgpack_to_json(hex_to_bytes(
+                lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex"))))
+          : json_parse(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")));
+  const JsonValue& node = frame_node(frame, scenario, "the scenario's own wire");
+  const JsonValue* slot = node.find("key");
+  if (slot == nullptr) return "omitted";
+  if (slot->is_null()) return "null";
+  return "present";
+}
+
 // Re-encode under the scenario's own codec and read the field set back
 // SCHEMA-LESSLY. The typed `std::optional<NodeKey>` cannot tell "field absent"
 // from "field present and null", which is the whole distinction under test.
@@ -85,20 +131,7 @@ static const JsonValue& reencoded_node(const lazily_test::Json& scenario, const 
   } else {
     owner = json_parse(encode_json(message));
   }
-  const std::string field = lazily_test::json_string(lazily_test::json_member(scenario, "field"));
-  // Fail closed (#lzscenariobodyskip). `field` fell through to the Delta arm for
-  // ANY spelling that was not `snapshot`, so a renamed or misspelled field
-  // silently re-encoded and asserted the node_add frame while the scenario was
-  // still booked as replayed.
-  REQUIRE(field == "snapshot" || field == "node_add", "unknown nodekey field in fixture: " + field);
-  if (field == "snapshot") {
-    const JsonValue* body = owner.find("Snapshot");
-    REQUIRE(body != nullptr, "re-encoded frame carries a Snapshot envelope");
-    return body->find("nodes")->array.at(0);
-  }
-  const JsonValue* body = owner.find("Delta");
-  REQUIRE(body != nullptr, "re-encoded frame carries a Delta envelope");
-  return *body->find("ops")->array.at(0).find("NodeAdd");
+  return frame_node(owner, scenario, "re-encoded frame");
 }
 
 static std::optional<std::string> decoded_key(const lazily_test::Json& scenario,
@@ -128,54 +161,14 @@ static void test_nodekey_null_leniency_is_replayed() {
 
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*fx, "scenarios"));
 
-  {
-    lazily_test::AssertionKeys block(std::string(kFixtureId) + " assertions",
-                                     lazily_test::json_member(*fx, "assertions"));
-    block.assert_key("required_of_binding", std::string("MUST"));
-    block.assert_key("scenario_count", static_cast<int64_t>(scenarios.size()));
-    block.assert_key_with("codecs", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
-             lazily_test::json_string(*list[1]) == "msgpack";
-    });
-    block.assert_key_with("fields", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "snapshot" &&
-             lazily_test::json_string(*list[1]) == "node_add";
-    });
-    block.assert_key_with("key_forms", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      return list.size() == 3 && lazily_test::json_string(*list[0]) == "omitted" &&
-             lazily_test::json_string(*list[1]) == "null" &&
-             lazily_test::json_string(*list[2]) == "present";
-    });
-    // The four paragraphs the corpus declares in `assertions.prose`, each
-    // DISCHARGED by naming the executable keys this fixture's run asserts
-    // (`#lzprosekeyconvention`). `verify_prose` below refuses a name no block of
-    // this replay actually asserted, which is what makes the naming falsifiable
-    // where the free-text reason it replaces was not.
-    //
-    // The clause has two halves and needs both keys: `decoded_key` is the
-    // decoder accepting omitted and explicit-null alike and constructing a key
-    // from neither, `reencoded_key_field_present` is the encoder still emitting
-    // the OMITTED form. `reencode_obligation` is the second half alone — the
-    // paragraph says so by name. `wire_encoding` is discharged by the keys that
-    // can only be satisfied by decoding the scenario's own bytes: `key_forms`
-    // pins the three wire shapes and `decoded_key` reads each back.
-    block.prose_key("clause", {"decoded_key", "reencoded_key_field_present"});
-    block.prose_key("wire_encoding", {"key_forms", "decoded_key"});
-    block.prose_key("reencode_obligation", {"reencoded_key_field_present"});
-    block.prose_key("anti_vacuity", {"decoded_key", "key_forms", "scenario_count"});
-    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
-                                  "about the frames under test");
-    block.finish();
-  }
-
   // Anti-vacuity in both directions. A runner that never decodes reports
   // "absent" for everything and satisfies all eight omitted/null scenarios; the
   // `present` count is what only a real decode can produce.
   std::size_t replayed = 0;
   std::size_t keys_decoded = 0;
+  std::set<std::string> forms_seen; // read off each scenario's own wire
+  std::set<std::string> fields_seen;
+  std::set<std::string> codecs_seen;
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
@@ -183,6 +176,18 @@ static void test_nodekey_null_leniency_is_replayed() {
     const auto& scenario = sv.replay();
     const std::string id = sv.id();
     ++replayed;
+    fields_seen.insert(lazily_test::json_string(lazily_test::json_member(scenario, "field")));
+    codecs_seen.insert(lazily_test::json_string(lazily_test::json_member(scenario, "codec")));
+
+    // The label and the bytes must agree before either is trusted, and the
+    // reading happens BEFORE the decode that would collapse omitted into null.
+    const std::string form =
+        lazily_test::json_string(lazily_test::json_member(scenario, "key_form"));
+    const std::string on_wire = wire_key_form(scenario);
+    REQUIRE(form == on_wire, id + ": scenario declares key_form '" + form +
+                                 "' but its own wire carries '" + on_wire +
+                                 "' — the label and the bytes disagree");
+    forms_seen.insert(on_wire);
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
@@ -232,6 +237,73 @@ static void test_nodekey_null_leniency_is_replayed() {
   REQUIRE(keys_decoded == 4,
           "only the `present` scenarios carry a key; a runner reporting absent for everything "
           "satisfies the null cases trivially");
+
+  // The assertion block is evaluated AFTER the replay. `scenario_count` against
+  // `scenarios.size()` would be the fixture compared to itself — green over a
+  // runner that decodes nothing, which is precisely the vacuity
+  // `assertions.anti_vacuity` exists to name — so it is compared against the
+  // scenarios this run actually reached, and `key_forms` against the forms read
+  // off their wires.
+  {
+    lazily_test::AssertionKeys block(std::string(kFixtureId) + " assertions",
+                                     lazily_test::json_member(*fx, "assertions"));
+    block.assert_key("required_of_binding", std::string("MUST"));
+    block.assert_key("scenario_count", static_cast<int64_t>(replayed));
+    block.assert_key_with("codecs", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
+             lazily_test::json_string(*list[1]) == "msgpack" && codecs_seen.size() == 2;
+    });
+    block.assert_key_with("fields", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      std::set<std::string> declared;
+      for (const auto& element : list)
+        declared.insert(lazily_test::json_string(*element));
+      return list.size() == 2 && lazily_test::json_string(*list[0]) == "snapshot" &&
+             lazily_test::json_string(*list[1]) == "node_add" && declared == fields_seen;
+    });
+    // Both directions, against the RAW WIRE rather than a list of literals:
+    // every declared form was carried by a scenario whose own bytes this runner
+    // read back before decoding, and no scenario carried a form the block does
+    // not declare. A literal comparison here is green over a runner that never
+    // opens a frame, and it cannot see `null` collapsing into `omitted`.
+    block.assert_key_with("key_forms", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      const char* const expected[] = {"omitted", "null", "present"};
+      if (list.size() != 3) return false;
+      std::set<std::string> declared;
+      for (std::size_t i = 0; i < list.size(); ++i) {
+        if (lazily_test::json_string(*list[i]) != expected[i]) return false;
+        declared.insert(expected[i]);
+      }
+      return declared == forms_seen;
+    });
+
+    // The four paragraphs the corpus declares in `assertions.prose`, each
+    // DISCHARGED by naming the executable keys this fixture's run asserts
+    // (`#lzprosekeyconvention`). `verify_prose` below refuses a name no block of
+    // this replay actually asserted, which is what makes the naming falsifiable
+    // where the free-text reason it replaces was not.
+    //
+    // The clause has two halves and needs both keys: `decoded_key` is the
+    // decoder accepting omitted and explicit-null alike and constructing a key
+    // from neither, `reencoded_key_field_present` is the encoder still emitting
+    // the OMITTED form. `reencode_obligation` is the second half alone — the
+    // paragraph says so by name.
+    block.prose_key("clause", {"decoded_key", "reencoded_key_field_present"});
+    // PROXY. `wire_encoding` is a claim about how the CORPUS carries its bytes,
+    // which no assertion a run makes can observe directly. `key_forms` is the
+    // closest executable stand-in: it is now satisfied only by the three wire
+    // shapes this runner read out of the raw frames, so a runner that
+    // re-serialized a pre-parsed object — collapsing `null` into `omitted`
+    // before anything looked — cannot satisfy it.
+    block.prose_key("wire_encoding", {"key_forms", "decoded_key"});
+    block.prose_key("reencode_obligation", {"reencoded_key_field_present"});
+    block.prose_key("anti_vacuity", {"decoded_key", "key_forms", "scenario_count"});
+    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
+                                  "about the frames under test");
+    block.finish();
+  }
 
   // Checks every discharge above against what this run asserted. The ledger's
   // teardown fails a run that omits this call.

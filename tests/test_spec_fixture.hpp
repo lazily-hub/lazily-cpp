@@ -60,6 +60,7 @@
 #include <utility>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 
@@ -337,6 +338,11 @@ inline std::string spec_fixture_text(const std::string& area, const std::string&
   loaded_fixtures().insert(fixture_id);
   std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
   declare_fixture_scenarios(fixture_id, text);
+  // Rule 8 (`#lzprosekeyconvention`). A fixture whose `assertions` block
+  // declares `prose` must reach `verify_prose`, and the requirement is derived
+  // HERE -- from the bytes just read -- rather than from a list a runner keeps.
+  // Opening a fixture and never replaying it satisfies rules 1-7 vacuously.
+  declare_prose_requirement(fixture_id, text);
   return text;
 }
 

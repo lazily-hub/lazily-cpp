@@ -121,51 +121,22 @@ static void test_nodeid_exact_range_is_replayed() {
 
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*fx, "scenarios"));
 
-  {
-    lazily_test::AssertionKeys block(std::string(kFixtureId) + " assertions",
-                                     lazily_test::json_member(*fx, "assertions"));
-    block.assert_key("required_of_binding", std::string("MUST"));
-    block.assert_key("scenario_count", static_cast<int64_t>(scenarios.size()));
-    block.assert_key_with("codecs", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
-             lazily_test::json_string(*list[1]) == "msgpack";
-    });
-    // The three paragraphs the corpus declares in `assertions.prose`, each
-    // DISCHARGED by naming the executable keys this fixture's run asserts
-    // (`#lzprosekeyconvention`). The naming is checked: `verify_prose` below
-    // refuses a name no block of this replay actually asserted.
-    //
-    // `outcome` and `node_id_decimal` between them carry all three. The clause
-    // is "represent it exactly or refuse": `outcome` is the accept/refuse
-    // verdict checked against the identifier's representability, and
-    // `node_id_decimal` is the DECIMAL rendering — which is also what the
-    // `wire_encoding` paragraph exists to require, since a JSON-number
-    // expectation would have been rounded by the fixture's own parser before any
-    // comparison. `scenario_count` adds the anti-vacuity half: the two `exact`
-    // controls were replayed, not skipped.
-    block.prose_key("clause", {"outcome", "node_id_decimal"});
-    block.prose_key("wire_encoding", {"node_id_decimal", "outcome"});
-    block.prose_key("anti_vacuity", {"node_id_decimal", "outcome", "scenario_count"});
-    block.excuse_keys({"outcomes", "generator"},
-                      "the corpus-wide outcome vocabulary and the emitting script; neither is a "
-                      "fact about the frames under test, and the per-scenario `outcome` key is "
-                      "asserted against each frame below");
-    block.finish();
-  }
-
   // Anti-vacuity. `exact_or_reject` is satisfied by a runner that decodes
   // nothing and calls everything refused — and lazily-cpp really does refuse
   // part of this corpus, so a broken runner resembles a working one. The two
   // counters, pinned at the end, are what separate them.
   std::size_t accepted = 0;
   std::size_t refused = 0;
+  std::size_t replayed = 0;
+  std::set<std::string> codecs_seen;
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
     // that stops short of replaying stops being booked.
     const auto& scenario = sv.replay();
     const std::string id = sv.id();
+    ++replayed;
+    codecs_seen.insert(lazily_test::json_string(lazily_test::json_member(scenario, "codec")));
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
@@ -231,6 +202,46 @@ static void test_nodeid_exact_range_is_replayed() {
   // refusing, and a decoder that stopped decoding, are each a failure here.
   REQUIRE(accepted == 4, "lazily-cpp decodes the four scenarios inside [0, 2^63)");
   REQUIRE(refused == 2, "lazily-cpp refuses both u64::MAX identifiers");
+
+  // The assertion block is evaluated AFTER the replay. `scenario_count` against
+  // `scenarios.size()` would be the fixture compared to itself — green over a
+  // runner that decodes nothing, the exact vacuity `assertions.anti_vacuity`
+  // exists to name — so it is compared against the scenarios this run reached,
+  // and `codecs` against the codecs it really drove.
+  {
+    lazily_test::AssertionKeys block(std::string(kFixtureId) + " assertions",
+                                     lazily_test::json_member(*fx, "assertions"));
+    block.assert_key("required_of_binding", std::string("MUST"));
+    block.assert_key("scenario_count", static_cast<int64_t>(replayed));
+    block.assert_key_with("codecs", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
+             lazily_test::json_string(*list[1]) == "msgpack" && codecs_seen.size() == 2;
+    });
+    // The three paragraphs the corpus declares in `assertions.prose`, each
+    // DISCHARGED by naming the executable keys this fixture's run asserts
+    // (`#lzprosekeyconvention`). The naming is checked: `verify_prose` below
+    // refuses a name no block of this replay actually asserted.
+    //
+    // The clause is "represent it exactly or refuse": `outcome` is the
+    // accept/refuse verdict, checked against the identifier's representability
+    // rather than taken on the fixture's word, and `node_id_decimal` is the
+    // decimal rendering that makes a neighbouring identifier visible.
+    block.prose_key("clause", {"outcome", "node_id_decimal"});
+    // PROXY. `wire_encoding` is a claim about how the CORPUS carries its bytes —
+    // raw text and hex, and an expectation that is a decimal STRING — which no
+    // assertion a run makes can observe directly. `node_id_decimal` is the
+    // closest executable stand-in: it is the string expectation the paragraph
+    // exists to require, and a runner comparing JSON numbers would have had the
+    // fixture's own parser round 2^53+1 before any comparison happened.
+    block.prose_key("wire_encoding", {"node_id_decimal", "outcome"});
+    block.prose_key("anti_vacuity", {"node_id_decimal", "outcome", "scenario_count"});
+    block.excuse_keys({"outcomes", "generator"},
+                      "the corpus-wide outcome vocabulary and the emitting script; neither is a "
+                      "fact about the frames under test, and the per-scenario `outcome` key is "
+                      "asserted against each frame above");
+    block.finish();
+  }
 
   // Checks every discharge above against what this run asserted. The ledger's
   // teardown fails a run that omits this call.
