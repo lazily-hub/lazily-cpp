@@ -169,14 +169,22 @@ static std::string wire_backend_form(const lazily_test::Json& scenario) {
 // against it, so it can no longer be satisfied by counting the scenarios' own
 // `codec` labels, which is the fixture describing itself (`#lznullformblind`).
 static IpcMessage decode_scenario(const lazily_test::Json& scenario,
+                                  lazily_test::AssertionKeys& expect,
                                   std::set<std::string>& decoders_entered) {
   const std::string codec = scenario_codec(scenario);
   try {
-    IpcMessage message =
-        codec == "json"
-            ? decode_json(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")))
-            : decode_msgpack(hex_to_bytes(lazily_test::json_string(
-                  lazily_test::json_member(scenario, "wire_msgpack_hex"))));
+    IpcMessage message;
+    if (codec == "json") {
+      const std::string raw =
+          lazily_test::json_string(lazily_test::json_member(scenario, "wire_json"));
+      expect.assert_key("wire_input_fnv1a64", lazily_test::fnv1a64_hex(raw));
+      message = decode_json(raw);
+    } else {
+      const std::vector<uint8_t> raw = hex_to_bytes(
+          lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex")));
+      expect.assert_key("wire_input_fnv1a64", lazily_test::fnv1a64_hex(raw));
+      message = decode_msgpack(raw);
+    }
     decoders_entered.insert(codec);
     return message;
   } catch (...) {
@@ -314,7 +322,7 @@ static void test_blob_backend_discriminator_is_replayed() {
       bool threw_runtime_error = false;
       bool threw_logic_error = false;
       try {
-        (void)decode_scenario(scenario, decoders_entered);
+        (void)decode_scenario(scenario, expect, decoders_entered);
       } catch (const std::logic_error& e) {
         // Caught FIRST and reported separately. `std::invalid_argument` and
         // `std::out_of_range` are logic_errors, so they escape the
@@ -397,7 +405,7 @@ static void test_blob_backend_discriminator_is_replayed() {
     // reddened could not be attributed to the frame that reddened it.
     IpcMessage message;
     try {
-      message = decode_scenario(scenario, decoders_entered);
+      message = decode_scenario(scenario, expect, decoders_entered);
     } catch (const std::exception& e) {
       REQUIRE(false, id + ": accept scenario was refused: " + e.what());
     }
@@ -568,15 +576,9 @@ static void test_blob_backend_discriminator_is_replayed() {
     // point at the keys that carry them.
     block.prose_key("clause", {"decoded_backend", "rejected", "rejection_is_decode_error",
                                "error_names_token", "reencoded_backend_field_present"});
-    // PROXY. `wire_encoding` is a claim about how the CORPUS carries its bytes —
-    // raw text and hex rather than a pre-parsed object, because the enum in
-    // `schemas/defs.json` would reject the reject frames — and no assertion a
-    // RUN makes can observe that directly. The honest stand-ins are the form and
-    // kind vocabularies: `backend_forms` is satisfied only by the seven shapes
-    // this runner read out of the raw frames, and `omitted` / `null` /
-    // `non_string` are exactly the shapes a re-serialized pre-parsed object
-    // could not have carried.
-    block.prose_key("wire_encoding", {"backend_forms", "decoded_backend", "rejection_kind"});
+    // Executable proof that the exact raw text / decoded-hex byte buffer reaches
+    // the library decoder rather than a reconstructed proxy.
+    block.prose_key("wire_encoding", {"wire_input_fnv1a64"});
     block.prose_key("backend_form_vocabulary", {"backends", "backend_forms", "decoded_backend"});
     block.prose_key("reject_obligation",
                     {"error_names_token", "rejection_is_decode_error", "rejection_kind"});

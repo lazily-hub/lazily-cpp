@@ -67,17 +67,22 @@ static std::vector<uint8_t> json_bytes(const lazily_test::Json& value) {
 // decoders ran; a set built from the label is a set built from the fixture, and
 // it is green over a runner that decodes nothing.
 static IpcMessage decode_scenario(const lazily_test::Json& scenario,
+                                  lazily_test::AssertionKeys& expect,
                                   std::set<std::string>& decoders_entered) {
   const std::string codec = lazily_test::json_string(lazily_test::json_member(scenario, "codec"));
   if (codec == "json") {
-    IpcMessage message =
-        decode_json(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")));
+    const std::string raw =
+        lazily_test::json_string(lazily_test::json_member(scenario, "wire_json"));
+    expect.assert_key("wire_input_fnv1a64", lazily_test::fnv1a64_hex(raw));
+    IpcMessage message = decode_json(raw);
     decoders_entered.insert("json");
     return message;
   }
   if (codec == "msgpack") {
-    IpcMessage message = decode_msgpack(hex_to_bytes(
-        lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex"))));
+    const std::vector<uint8_t> raw = hex_to_bytes(
+        lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex")));
+    expect.assert_key("wire_input_fnv1a64", lazily_test::fnv1a64_hex(raw));
+    IpcMessage message = decode_msgpack(raw);
     decoders_entered.insert("msgpack");
     return message;
   }
@@ -249,7 +254,7 @@ static void test_nodekey_null_leniency_is_replayed() {
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
 
-    const IpcMessage message = decode_scenario(scenario, decoders_entered);
+    const IpcMessage message = decode_scenario(scenario, expect, decoders_entered);
     const auto key = decoded_key(scenario, message, fields_decoded);
     if (key) ++keys_decoded;
 
@@ -354,13 +359,9 @@ static void test_nodekey_null_leniency_is_replayed() {
     // the OMITTED form. `reencode_obligation` is the second half alone — the
     // paragraph says so by name.
     block.prose_key("clause", {"decoded_key", "reencoded_key_field_present"});
-    // PROXY. `wire_encoding` is a claim about how the CORPUS carries its bytes,
-    // which no assertion a run makes can observe directly. `key_forms` is the
-    // closest executable stand-in: it is now satisfied only by the three wire
-    // shapes this runner read out of the raw frames, so a runner that
-    // re-serialized a pre-parsed object — collapsing `null` into `omitted`
-    // before anything looked — cannot satisfy it.
-    block.prose_key("wire_encoding", {"key_forms", "decoded_key"});
+    // Executable proof that the exact raw text / decoded-hex byte buffer reaches
+    // the library decoder rather than a reconstructed proxy.
+    block.prose_key("wire_encoding", {"wire_input_fnv1a64"});
     block.prose_key("reencode_obligation", {"reencoded_key_field_present"});
     block.prose_key("anti_vacuity", {"decoded_key", "key_forms", "scenario_count"});
     block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "

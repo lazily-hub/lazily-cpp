@@ -128,6 +128,31 @@
 
 namespace lazily_test {
 
+inline std::string fnv1a64_hex(const uint8_t* bytes, std::size_t size) {
+  constexpr uint64_t kOffset = UINT64_C(0xcbf29ce484222325);
+  constexpr uint64_t kPrime = UINT64_C(0x100000001b3);
+  uint64_t hash = kOffset;
+  for (std::size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= kPrime;
+  }
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string out(16, '0');
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    out[out.size() - i - 1] = kHex[hash & 0xf];
+    hash >>= 4;
+  }
+  return out;
+}
+
+inline std::string fnv1a64_hex(const std::string& bytes) {
+  return fnv1a64_hex(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+}
+
+inline std::string fnv1a64_hex(const std::vector<uint8_t>& bytes) {
+  return fnv1a64_hex(bytes.data(), bytes.size());
+}
+
 // Prose keys that carry no assertion and are documentation only.
 inline const std::set<std::string>& assertion_narrative_keys() {
   static const std::set<std::string> keys = {"note", "notes", "comment", "description", "why"};

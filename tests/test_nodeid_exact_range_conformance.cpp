@@ -99,6 +99,7 @@ struct DecodeResult {
 // it can no longer be satisfied by counting the scenarios' own `codec` labels,
 // which is the fixture describing itself (`#lznullformblind`).
 static DecodeResult decode_scenario(const lazily_test::Json& scenario,
+                                    lazily_test::AssertionKeys& expect,
                                     std::set<std::string>& decoders_entered) {
   const std::string codec = lazily_test::json_string(lazily_test::json_member(scenario, "codec"));
   REQUIRE(codec == "json" || codec == "msgpack", "scenario names an unknown codec: " + codec);
@@ -106,13 +107,17 @@ static DecodeResult decode_scenario(const lazily_test::Json& scenario,
     if (codec == "json") {
       // The raw TEXT through the codec's own entry point, so the parse that
       // would round is inside the code under test.
-      DecodeResult result{true, decode_json(lazily_test::json_string(
-                                    lazily_test::json_member(scenario, "wire_json")))};
+      const std::string raw =
+          lazily_test::json_string(lazily_test::json_member(scenario, "wire_json"));
+      expect.assert_key("wire_input_fnv1a64", lazily_test::fnv1a64_hex(raw));
+      DecodeResult result{true, decode_json(raw)};
       decoders_entered.insert("json");
       return result;
     }
-    DecodeResult result{true, decode_msgpack(hex_to_bytes(lazily_test::json_string(
-                                  lazily_test::json_member(scenario, "wire_msgpack_hex"))))};
+    const std::vector<uint8_t> raw = hex_to_bytes(
+        lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex")));
+    expect.assert_key("wire_input_fnv1a64", lazily_test::fnv1a64_hex(raw));
+    DecodeResult result{true, decode_msgpack(raw)};
     decoders_entered.insert("msgpack");
     return result;
   } catch (const std::runtime_error&) {
@@ -162,7 +167,7 @@ static void test_nodeid_exact_range_is_replayed() {
     const uint64_t expected = std::stoull(decimal);
     const bool representable = expected <= kMaxExactNodeId;
 
-    const DecodeResult result = decode_scenario(scenario, decoders_entered);
+    const DecodeResult result = decode_scenario(scenario, expect, decoders_entered);
 
     // `outcome` is the corpus-wide statement of what a decoder may do, and it is
     // asserted against WHAT THIS DECODER DID (`#lznullformblind`).
@@ -263,13 +268,9 @@ static void test_nodeid_exact_range_is_replayed() {
     // rather than taken on the fixture's word, and `node_id_decimal` is the
     // decimal rendering that makes a neighbouring identifier visible.
     block.prose_key("clause", {"outcome", "node_id_decimal"});
-    // PROXY. `wire_encoding` is a claim about how the CORPUS carries its bytes —
-    // raw text and hex, and an expectation that is a decimal STRING — which no
-    // assertion a run makes can observe directly. `node_id_decimal` is the
-    // closest executable stand-in: it is the string expectation the paragraph
-    // exists to require, and a runner comparing JSON numbers would have had the
-    // fixture's own parser round 2^53+1 before any comparison happened.
-    block.prose_key("wire_encoding", {"node_id_decimal", "outcome"});
+    // Executable proof that the exact raw text / decoded-hex byte buffer reaches
+    // the library decoder rather than a reconstructed proxy.
+    block.prose_key("wire_encoding", {"wire_input_fnv1a64"});
     block.prose_key("anti_vacuity", {"node_id_decimal", "outcome", "scenario_count"});
     // `outcomes` is the corpus's glossary of verdict names. It used to be
     // EXCUSED as "not a fact about the frames under test" -- but it is: the names
