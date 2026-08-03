@@ -10,11 +10,15 @@
 //   outbox_replay_after_crash.json — DurableOutbox at-least-once replay + send-failure retain
 //   liveness_orset_lww.json      — OR-set / LWW liveness cells + derived aggregate
 //
-// The scenarios are transcribed by hand, the same fixture-mirroring pattern the
-// other conformance tests use.
+// The multi-epoch scenarios below are replayed from the canonical fixture. The
+// remaining sections predate the fixture runner and are tracked independently
+// in the conformance coverage ledger.
 
 #include <lazily/lazily.hpp>
 
+#include "test_assertion_keys.hpp"
+#include "test_json.hpp"
+#include "test_spec_fixture.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -22,6 +26,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -82,6 +87,90 @@ static Delta mk_delta(Epoch base, Epoch epoch, std::vector<DeltaOp> ops) {
 }
 static NodeSnapshot node_snap(NodeId n, std::vector<uint8_t> b) {
   return NodeSnapshot{n, "u64", NodeStatePayload{std::move(b)}, std::nullopt};
+}
+
+static std::string fixture_json(const lazily_test::Json& value) {
+  using Json = lazily_test::Json;
+  switch (value.type) {
+  case Json::Type::Null:
+    return "null";
+  case Json::Type::Bool:
+    return value.boolean ? "true" : "false";
+  case Json::Type::Number:
+    return value.number_token;
+  case Json::Type::String: {
+    std::string out = "\"";
+    for (const char ch : value.str) {
+      switch (ch) {
+      case '\\':
+        out += "\\\\";
+        break;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        out += ch;
+      }
+    }
+    return out + "\"";
+  }
+  case Json::Type::Array: {
+    std::string out = "[";
+    for (std::size_t i = 0; i < value.array.size(); ++i) {
+      if (i != 0) out += ",";
+      out += fixture_json(*value.array[i]);
+    }
+    return out + "]";
+  }
+  case Json::Type::Object: {
+    std::string out = "{";
+    for (std::size_t i = 0; i < value.object.size(); ++i) {
+      if (i != 0) out += ",";
+      lazily_test::Json key;
+      key.type = Json::Type::String;
+      key.str = value.object[i].first;
+      out += fixture_json(key) + ":" + fixture_json(*value.object[i].second);
+    }
+    return out + "}";
+  }
+  }
+  REQUIRE(false, "unknown fixture JSON node");
+  return {};
+}
+
+static Delta fixture_delta(const lazily_test::Json& body) {
+  const IpcMessage message = decode_json("{\"Delta\":" + fixture_json(body) + "}");
+  REQUIRE(std::holds_alternative<IpcMessageDelta>(message),
+          "fixture delta did not decode as Delta");
+  return std::get<IpcMessageDelta>(message).value;
+}
+
+static std::string sync_action(const ResyncAction& action) {
+  if (action.is_apply()) return "Apply";
+  if (action.is_request_snapshot()) return "RequestSnapshot";
+  return "Ignore";
+}
+
+static void require_fixture_keys(const lazily_test::Json& object,
+                                 std::initializer_list<const char*> expected,
+                                 const std::string& where) {
+  REQUIRE(object.is_object(), where + ": expected object");
+  std::set<std::string> actual;
+  for (const auto& entry : object.object)
+    actual.insert(entry.first);
+  std::set<std::string> want;
+  for (const char* key : expected)
+    want.insert(key);
+  REQUIRE(actual == want, where + ": fixture object keys changed");
 }
 
 // ── resync_gap_converge.json ─────────────────────────────────────────────────
@@ -187,46 +276,81 @@ TEST(test_conformance_idempotent_duplicate_head_ignored) {
 
 // ── multi_epoch_delta.json ───────────────────────────────────────────────────
 
-// span_3_applies_equal_to_unit_fold: one span-3 delta reaches the same graph and
-// last_epoch as three unit deltas carrying the same ops in order.
-TEST(test_conformance_multi_epoch_apply_eq_fold) {
-  Delta span3 = mk_delta(40, 43, {cellset(1, {10}), cellset(2, {20}), slotvalue(3, {30})});
+TEST(test_conformance_multi_epoch_fixture_replay) {
+  constexpr const char* fixture_id = "reliable-sync/multi_epoch_delta.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("reliable-sync", "multi_epoch_delta.json"));
+  require_fixture_keys(
+      *root,
+      {"description", "protocol_version", "kind", "model", "assertions", "scenarios", "wire"},
+      fixture_id);
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*root, "protocol_version")) == 1,
+          "multi-epoch protocol_version");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "kind")) == "ReliableSync",
+          "multi-epoch kind");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "model")) == "MultiEpochDelta",
+          "multi-epoch model");
 
-  // assertions block
-  assert(span3.base_epoch == 40);
-  assert(span3.epoch == 43);
-  assert(span3.epoch - span3.base_epoch == 3); // span
-  assert(span3.epoch > span3.base_epoch + 1);  // is_multi_epoch
-  assert(span3.ops.size() == 3);               // op_count
+  const IpcMessage wire = decode_json(fixture_json(lazily_test::json_member(*root, "wire")));
+  REQUIRE(std::holds_alternative<IpcMessageDelta>(wire), "multi-epoch wire must be Delta");
+  const Delta& root_delta = std::get<IpcMessageDelta>(wire).value;
+  lazily_test::AssertionKeys assertions(std::string(fixture_id) + " assertions",
+                                        lazily_test::json_member(*root, "assertions"));
+  assertions.assert_key("base_epoch", root_delta.base_epoch);
+  assertions.assert_key("epoch", root_delta.epoch);
+  assertions.assert_key("span", root_delta.epoch - root_delta.base_epoch);
+  assertions.assert_key("is_multi_epoch", root_delta.epoch > root_delta.base_epoch + 1);
+  assertions.assert_key("op_count", root_delta.ops.size());
 
-  ResyncCoordinator coord(40);
-  GraphModel batch;
-  auto act = coord.ingest_delta(span3);
-  assert(act.is_apply());
-  batch.apply_delta(span3);
-  assert(coord.last_epoch() == 43); // atomic advance
+  const auto& raw_scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (const auto& view : lazily_test::scenario_views(fixture_id, raw_scenarios)) {
+    const auto& scenario = view.replay();
+    const auto& delta_json = lazily_test::json_member(scenario, "delta");
+    const Delta delta = fixture_delta(delta_json);
+    const Epoch start =
+        lazily_test::json_u64(lazily_test::json_member(scenario, "receiver_last_epoch"));
+    ResyncCoordinator coordinator(start);
+    GraphModel batch;
+    const ResyncAction action = coordinator.ingest_delta(delta);
+    if (action.is_apply()) batch.apply_delta(delta);
 
-  // Equivalent unit fold.
-  ResyncCoordinator unit_coord(40);
-  GraphModel unit;
-  for (const auto& d : {mk_delta(40, 41, {cellset(1, {10})}), mk_delta(41, 42, {cellset(2, {20})}),
-                        mk_delta(42, 43, {slotvalue(3, {30})})}) {
-    auto a = unit_coord.ingest_delta(d);
-    assert(a.is_apply());
-    unit.apply_delta(d);
+    lazily_test::AssertionKeys expected(std::string(fixture_id) + " " + view.id() + " expect",
+                                        lazily_test::json_member(scenario, "expect"));
+    expected.assert_key("action", sync_action(action));
+    expected.assert_key("applied", action.is_apply());
+    expected.assert_key("receiver_last_epoch_after", coordinator.last_epoch());
+
+    if (view.id() == "span_3_applies_equal_to_unit_fold") {
+      require_fixture_keys(scenario,
+                           {"id", "name", "description", "receiver_last_epoch", "delta",
+                            "equivalent_unit_fold", "expect"},
+                           std::string(fixture_id) + " " + view.id());
+      ResyncCoordinator unit_coordinator(start);
+      GraphModel unit;
+      std::vector<Epoch> cursors;
+      for (const auto& unit_json :
+           lazily_test::json_array(lazily_test::json_member(scenario, "equivalent_unit_fold"))) {
+        const Delta one = fixture_delta(*unit_json);
+        const auto unit_action = unit_coordinator.ingest_delta(one);
+        REQUIRE(unit_action.is_apply(), "equivalent unit fold must apply");
+        unit.apply_delta(one);
+        cursors.push_back(unit_coordinator.last_epoch());
+      }
+      const bool fold_equivalent =
+          unit.nodes == batch.nodes && unit_coordinator.last_epoch() == coordinator.last_epoch();
+      expected.assert_key("fold_equivalent", fold_equivalent);
+      const bool atomic_advance =
+          action.is_apply() && coordinator.last_epoch() == delta.epoch && cursors.size() > 1;
+      expected.assert_key("atomic_advance", atomic_advance);
+    } else if (view.id() == "gap_rule_unchanged_under_span") {
+      require_fixture_keys(scenario,
+                           {"id", "name", "description", "receiver_last_epoch", "delta", "expect"},
+                           std::string(fixture_id) + " " + view.id());
+      expected.assert_key("request_from", action.from_epoch);
+    } else {
+      REQUIRE(false, std::string(fixture_id) + ": unknown scenario " + view.id());
+    }
   }
-  assert(unit_coord.last_epoch() == 43);
-  assert(batch.nodes == unit.nodes); // fold_equivalent
-}
-
-// gap_rule_unchanged_under_span: a span-3 delta whose base_epoch != last_epoch is
-// still a gap; the span does not relax gap detection.
-TEST(test_conformance_multi_epoch_gap_rule_unchanged) {
-  ResyncCoordinator coord(39);
-  auto act = coord.ingest_delta(mk_delta(40, 43, {}));
-  assert(act.is_request_snapshot());
-  assert(act.from_epoch == 39);
-  assert(coord.last_epoch() == 39); // unchanged
 }
 
 // ── outbox_replay_after_crash.json ───────────────────────────────────────────
@@ -489,5 +613,6 @@ TEST(test_sync_driver_full_duplex_resync) {
 int main() {
   // Static initializers above ran every TEST; report the tally.
   std::printf("test_reliable_sync: %d/%d passed\n", test_passed, test_count);
+  REQUIRE_FIXTURES_LOADED(1);
   return test_passed == test_count ? 0 : 1;
 }

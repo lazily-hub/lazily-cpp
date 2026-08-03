@@ -77,7 +77,7 @@ fi
 # that holds an unknown `backend` token REFUSED rather than normalized to `shm`;
 # keep the floor aligned so deleting a runner cannot hide behind older aggregate
 # growth.
-MIN_FIXTURES="${MIN_FIXTURES:-118}"
+MIN_FIXTURES="${MIN_FIXTURES:-119}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -143,7 +143,6 @@ KNOWN_UNCOVERED=(
   "reliable-sync/idempotent_redelivery.json"
   "reliable-sync/liveness_lease_eviction.json"
   "reliable-sync/liveness_orset_lww.json"
-  "reliable-sync/multi_epoch_delta.json"
   "reliable-sync/outbox_replay_after_crash.json"
   "reliable-sync/resync_gap_converge.json"
 )
@@ -170,25 +169,6 @@ excuse_scenario() {
   SCENARIO_EXCUSES+=("${fixture}"$'\t'"${id}"$'\t'"${reason}")
 }
 
-# reliable-sync/outbox_store_protocol.json — tests/test_outbox_store.cpp opens
-# the fixture only to assert the four scenario names still exist upstream, then
-# drives the store from hand-written constants. A transcription is not a replay:
-# every value it checks is one somebody typed, so the fixture cannot disprove
-# it. Converting the runner is tracked as its own item; excused here rather than
-# recorded as replayed, because recording it would be the false claim.
-excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "unordered_puts_replay_in_epoch_order" \
-  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
-excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "ack_cursor_is_monotone_and_prune_safe" \
-  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
-excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "restart_reloads_cursor_and_unacked_suffix" \
-  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
-excuse_scenario "reliable-sync/outbox_store_protocol.json" \
-  "stale_handle_cannot_regress_cursor" \
-  "hand-transcribed in test_outbox_store.cpp; the runner greps the fixture text instead of replaying its steps"
-
 # Minimum DISTINCT scenarios replayed, the per-scenario twin of MIN_FIXTURES.
 # Without it a ledger that stopped recording entirely would leave the
 # declared-vs-replayed comparison vacuously satisfied on both sides.
@@ -196,12 +176,11 @@ excuse_scenario "reliable-sync/outbox_store_protocol.json" \
 # The suite replays 113. The floor sat at 83 while the run replayed 107, so a
 # quarter of the ledger could have stopped recording without this check noticing
 # — a slack floor is a floor that has stopped guarding. Pulled up to the actual
-# figure, matching how MIN_FIXTURES is kept. The last +6 came from fixture v2 of
-# codec/blob_backend_discriminator.json, which grew from four backend forms to
-# seven (`in_process`, an explicit null and a non-string `backend`) across both
-# codecs. Raise this when replays are added; NEVER lower it to make a red build
-# green.
-MIN_SCENARIOS="${MIN_SCENARIOS:-113}"
+# figure, matching how MIN_FIXTURES is kept. The current +6 comes from converting
+# multi_epoch_delta.json's two scenarios and outbox_store_protocol.json's four
+# scenarios from hand transcriptions/excuses into actual fixture-driven replays.
+# Raise this when replays are added; NEVER lower it to make a red build green.
+MIN_SCENARIOS="${MIN_SCENARIOS:-119}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2

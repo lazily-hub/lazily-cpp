@@ -6,6 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -14,8 +17,32 @@ using namespace lazily;
 
 static IpcMessage frame(Epoch epoch) { return IpcMessageDelta{Delta{epoch - 1, epoch, {}}}; }
 
-static std::string fixture_text() {
-  return lazily_test::spec_fixture_text("reliable-sync", "outbox_store_protocol.json");
+static std::vector<Epoch> json_epochs(const lazily_test::Json& value) {
+  std::vector<Epoch> out;
+  for (const auto& item : lazily_test::json_array(value))
+    out.push_back(lazily_test::json_u64(*item));
+  return out;
+}
+
+static std::vector<Epoch> replay_epochs(const std::vector<std::pair<Epoch, IpcMessage>>& replay) {
+  std::vector<Epoch> out;
+  out.reserve(replay.size());
+  for (const auto& entry : replay)
+    out.push_back(entry.first);
+  return out;
+}
+
+static void require_fixture_keys(const lazily_test::Json& object,
+                                 std::initializer_list<const char*> expected,
+                                 const std::string& where) {
+  REQUIRE(object.is_object(), where + ": expected object");
+  std::set<std::string> actual;
+  for (const auto& entry : object.object)
+    actual.insert(entry.first);
+  std::set<std::string> want;
+  for (const char* key : expected)
+    want.insert(key);
+  REQUIRE(actual == want, where + ": fixture object keys changed");
 }
 
 struct TempJournal {
@@ -36,79 +63,104 @@ struct TempJournal {
   }
 };
 
-// The four scenarios of `outbox_store_protocol.json` are transcribed below by
-// hand rather than replayed from the fixture's own steps: this runner reads the
-// bytes only to assert the scenario names still exist upstream. The scenario
-// ledger therefore declares them and they are excused, with that reason, in
-// scripts/check-conformance-coverage.sh. Converting this runner to a real
-// replay is tracked separately as the transcribed-runners item.
 int main() {
   static_assert(is_outbox_store_v<InMemoryStore>, "in-memory byte store contract");
   static_assert(is_outbox_store_v<FileOutboxStore>, "file byte store contract");
-  const auto fixture = fixture_text();
-  assert(fixture.find("\"model\": \"OutboxStore\"") != std::string::npos);
-  assert(fixture.find("unordered_puts_replay_in_epoch_order") != std::string::npos);
-  assert(fixture.find("ack_cursor_is_monotone_and_prune_safe") != std::string::npos);
-  assert(fixture.find("restart_reloads_cursor_and_unacked_suffix") != std::string::npos);
-  assert(fixture.find("stale_handle_cannot_regress_cursor") != std::string::npos);
+  constexpr const char* fixture_id = "reliable-sync/outbox_store_protocol.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("reliable-sync", "outbox_store_protocol.json"));
+  require_fixture_keys(*root, {"description", "protocol_version", "kind", "model", "scenarios"},
+                       fixture_id);
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*root, "protocol_version")) == 1,
+          "outbox-store protocol_version");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "kind")) == "ReliableSync",
+          "outbox-store kind");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "model")) == "OutboxStore",
+          "outbox-store model");
 
-  InMemoryOutbox outbox;
-  outbox.append(3, frame(3));
-  outbox.append(1, frame(1));
-  outbox.append(2, frame(2));
-  assert((outbox.retained_epochs() == std::vector<Epoch>{1, 2, 3}));
-  const auto ordered = outbox.replay_from(0);
-  assert(ordered.size() == 3);
-  assert(ordered[0].first == 1 && ordered[1].first == 2 && ordered[2].first == 3);
+  const auto& raw_scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (const auto& view : lazily_test::scenario_views(fixture_id, raw_scenarios)) {
+    const auto& scenario = view.replay();
+    const std::string where = std::string(fixture_id) + " " + view.id();
+    lazily_test::AssertionKeys expected(where + " expect",
+                                        lazily_test::json_member(scenario, "expect"));
 
-  InMemoryOutbox monotone;
-  for (Epoch epoch = 1; epoch <= 4; ++epoch)
-    monotone.append(epoch, frame(epoch));
-  monotone.ack_through(2);
-  monotone.ack_through(1);
-  monotone.ack_through(3);
-  assert(monotone.acked_through() == 3);
-  assert((monotone.retained_epochs() == std::vector<Epoch>{4}));
-  assert(monotone.replay_from(0).front().first == 4);
+    if (scenario.has("open_handles")) {
+      require_fixture_keys(
+          scenario, {"id", "name", "open_handles", "save_cursor", "restart", "expect"}, where);
+      TempJournal journal(view.id());
+      std::map<std::string, std::unique_ptr<FileOutbox>> handles;
+      for (const auto& handle :
+           lazily_test::json_array(lazily_test::json_member(scenario, "open_handles"))) {
+        const std::string name = lazily_test::json_string(*handle);
+        handles.emplace(name, std::make_unique<FileOutbox>(FileOutboxStore(journal.file)));
+      }
+      for (const auto& save :
+           lazily_test::json_array(lazily_test::json_member(scenario, "save_cursor"))) {
+        const std::string name =
+            lazily_test::json_string(lazily_test::json_member(*save, "handle"));
+        const Epoch epoch = lazily_test::json_u64(lazily_test::json_member(*save, "epoch"));
+        REQUIRE(handles.count(name) == 1, where + ": save_cursor names an unopened handle");
+        handles.at(name)->ack_through(epoch);
+      }
+      REQUIRE(lazily_test::json_bool(lazily_test::json_member(scenario, "restart")),
+              where + ": stale-handle scenario requires restart");
+      FileOutbox reopened{FileOutboxStore(journal.file)};
+      expected.assert_key("loaded_cursor", reopened.acked_through());
+      continue;
+    }
 
-  InMemoryOutbox before_restart;
-  for (Epoch epoch = 10; epoch <= 12; ++epoch)
-    before_restart.append(epoch, frame(epoch));
-  before_restart.ack_through(10);
-  auto memory_store = std::move(before_restart).into_store();
-  InMemoryOutbox after_restart(std::move(memory_store));
-  assert(after_restart.acked_through() == 10);
-  assert((after_restart.retained_epochs() == std::vector<Epoch>{11, 12}));
+    InMemoryOutbox outbox;
+    const auto put_epochs = json_epochs(lazily_test::json_member(scenario, "put_epochs"));
+    for (const Epoch epoch : put_epochs)
+      outbox.append(epoch, frame(epoch));
+    if (const auto* ack = scenario.find("ack_through"))
+      for (const Epoch epoch : json_epochs(*ack))
+        outbox.ack_through(epoch);
 
-  TempJournal restart_journal("restart");
-  {
-    FileOutbox durable{FileOutboxStore(restart_journal.file)};
-    durable.append(10, frame(10));
-    durable.append(11, frame(11));
-    durable.append(12, frame(12));
-    durable.ack_through(10);
+    if (const auto* scan_after = scenario.find("scan_after")) {
+      require_fixture_keys(scenario, {"id", "name", "put_epochs", "scan_after", "expect"}, where);
+      expected.assert_key("epochs",
+                          replay_epochs(outbox.replay_from(lazily_test::json_u64(*scan_after))),
+                          json_epochs);
+    } else if (scenario.has("restart")) {
+      require_fixture_keys(scenario,
+                           {"id", "name", "put_epochs", "ack_through", "restart", "expect"}, where);
+      REQUIRE(lazily_test::json_bool(lazily_test::json_member(scenario, "restart")),
+              where + ": restart scenario must request a reopen");
+      auto memory_store = std::move(outbox).into_store();
+      InMemoryOutbox reopened_memory(std::move(memory_store));
+
+      TempJournal journal(view.id());
+      {
+        FileOutbox durable{FileOutboxStore(journal.file)};
+        for (const Epoch epoch : put_epochs)
+          durable.append(epoch, frame(epoch));
+        for (const Epoch epoch : json_epochs(lazily_test::json_member(scenario, "ack_through")))
+          durable.ack_through(epoch);
+      }
+      FileOutbox reopened_file{FileOutboxStore(journal.file)};
+      REQUIRE(reopened_file.acked_through() == reopened_memory.acked_through(),
+              where + ": file and memory cursors disagree");
+      REQUIRE(reopened_file.retained_epochs() == reopened_memory.retained_epochs(),
+              where + ": file and memory retained suffixes disagree");
+      REQUIRE(replay_epochs(reopened_file.replay_from(0)) ==
+                  replay_epochs(reopened_memory.replay_from(0)),
+              where + ": file and memory replay suffixes disagree");
+
+      expected.assert_key("loaded_cursor", reopened_memory.acked_through());
+      expected.assert_key("retained", reopened_memory.retained_epochs(), json_epochs);
+      expected.assert_key("replay", replay_epochs(reopened_memory.replay_from(0)), json_epochs);
+    } else {
+      require_fixture_keys(scenario, {"id", "name", "put_epochs", "ack_through", "expect"}, where);
+      expected.assert_key("cursor", outbox.acked_through());
+      expected.assert_key("retained", outbox.retained_epochs(), json_epochs);
+      expected.assert_key("replay_from_zero", replay_epochs(outbox.replay_from(0)), json_epochs);
+    }
   }
-  {
-    FileOutbox reopened{FileOutboxStore(restart_journal.file)};
-    assert(reopened.acked_through() == 10);
-    assert((reopened.retained_epochs() == std::vector<Epoch>{11, 12}));
-    const auto replay = reopened.replay_from(0);
-    assert(replay.size() == 2 && replay[0].first == 11 && replay[1].first == 12);
-  }
-
-  // Regression: two handles opened before either acknowledgement must serialize
-  // their cursor as max(existing, incoming). The late stale writer cannot turn
-  // persisted 9 back into 3, and its own protocol view refreshes to 9.
-  TempJournal stale_journal("stale");
-  FileOutbox current{FileOutboxStore(stale_journal.file)};
-  FileOutbox stale{FileOutboxStore(stale_journal.file)};
-  current.ack_through(9);
-  stale.ack_through(3);
-  assert(stale.acked_through() == 9);
-  FileOutbox stale_reopened{FileOutboxStore(stale_journal.file)};
-  assert(stale_reopened.acked_through() == 9);
 
   // Independent handles also produce whole, ordered records under contention.
+  TempJournal stale_journal("race");
   FileOutboxStore high(stale_journal.file);
   FileOutboxStore low(stale_journal.file);
   std::thread high_writer([&]() { high.save_cursor(25); });
