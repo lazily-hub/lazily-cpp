@@ -17,6 +17,34 @@
 // the verification only probabilistically repairs it. This runner is what holds
 // the corrected behaviour.
 //
+// FIXTURE v2 (14 scenarios, seven wire shapes x two codecs) adds four facts v1
+// declared or implied without carrying, and this runner holds each one:
+//
+//   * `in_process` — the THIRD declared backend. A binding that knows only
+//     {shm, arrow} refuses it, NAMING the token, and passes every v1 scenario
+//     while implementing a smaller enum than the clause declares. The guard is
+//     not a scenario count: it is the SET DIFFERENCE asserted under
+//     `backend_form_vocabulary` below — every backend in `assertions.backends`
+//     must appear as the `decoded_backend` of some accept scenario.
+//   * an explicit `null` — the ABSENT form (`#lzkeynullstrict`), not a
+//     present-unknown one. It decodes as `shm` and does NOT survive a round
+//     trip. Those frames are deliberately schema-INVALID: the enum in
+//     `schemas/defs.json` binds the ENCODER, and the decoder's leniency is the
+//     separate fact under test.
+//   * a NON-STRING `backend` — refused, and refused through the family callers
+//     guard a decode with. In C++ that means `std::runtime_error` and
+//     specifically NOT `std::invalid_argument`, which derives from
+//     `std::logic_error` and so escapes `catch (const std::runtime_error&)`.
+//     That is the same hierarchy trap `#lzspecdecoderbound` pinned when a
+//     `std::out_of_range` from `std::stoll` walked past every decode guard.
+//     `expect.rejection_is_decode_error` is the assertion that pins it, and it
+//     is a DIFFERENT fact from `expect.rejected`: an `invalid_argument` still
+//     refuses the frame, it just refuses it past the handler.
+//   * `expect.epoch` is GONE, split into `frame_epoch` (9, the Delta envelope's)
+//     and `blob_epoch` (5, the descriptor's). v1 carried 9 in both, so a runner
+//     reading either satisfied the one key. This runner asserts each against its
+//     own source and REFUSES a fixture that reintroduces the merged key.
+//
 // The wire is carried as RAW TEXT / HEX in the fixture and decoded from that
 // form. `schemas/defs.json` closes `backend` to an enum, so the reject frames
 // are schema-INVALID by design and cannot be carried as parsed objects; a runner
@@ -25,12 +53,15 @@
 // Both codecs are replayed. In this binding they are NOT independent
 // implementations — `decode_msgpack` bridges MessagePack into the same JsonValue
 // DOM `decode_json` produces and then calls the one `json_to_ipc_message`, so
-// the ShmBlobRef reader is shared. That is stated rather than assumed: the
-// codec.hpp PRIVATE framing has its own hand-written ShmBlobRef reader (the
-// divergence that let an invalid NodeKey through msgpack while json refused it),
-// and this runner drives the SPEC wires, where the sharing is deliberate. The
-// msgpack scenarios still prove the MessagePack->DOM bridge preserves the field,
-// which is a distinct failure from the DOM reader's verdict.
+// the ShmBlobRef reader is shared and the msgpack half of a scenario pair yields
+// ONE discriminator verdict, not a second independent one. That is stated rather
+// than assumed, and it is what `assertions.anti_vacuity` asks a binding with a
+// shared decode path to record: a fully green run here must not be read as two
+// implementations agreeing. It is still not vacuous — the codec.hpp PRIVATE
+// framing has its own hand-written ShmBlobRef reader (the divergence that let an
+// invalid NodeKey through msgpack while json refused it), the msgpack scenarios
+// prove the MessagePack->DOM bridge preserves (and drops) the field, and the
+// re-encode half goes through each codec's OWN writer.
 //
 // Plain functions called from `main` rather than the usual self-registering TEST
 // macro: that macro builds its names by token pasting, and the coined-id hook
@@ -46,6 +77,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -79,6 +112,51 @@ static std::string scenario_codec(const lazily_test::Json& scenario) {
   return codec;
 }
 
+// The scenario's wire, in the codec-neutral DOM both decoders feed. Used to read
+// the frame back SCHEMA-LESSLY, which the typed ShmBlobRef cannot do: it cannot
+// tell "field omitted" from "field written as shm", nor "explicit null" from
+// either.
+static JsonValue wire_dom(const lazily_test::Json& scenario) {
+  if (scenario_codec(scenario) == "json")
+    return json_parse(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")));
+  return msgpack_to_json(hex_to_bytes(
+      lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex"))));
+}
+
+// Walk to the SharedBlob descriptor of a frame held schema-lessly. Shared by the
+// wire reader and the re-encode reader so both ask the same question of the same
+// shape.
+static const JsonValue& dom_blob(const JsonValue& frame, const std::string& what) {
+  const JsonValue* body = frame.find("Delta");
+  REQUIRE(body != nullptr, what + " carries a Delta envelope");
+  const JsonValue* ops = body->find("ops");
+  REQUIRE(ops != nullptr && !ops->array.empty(), what + " carries its ops");
+  const JsonValue* slot = ops->array.at(0).find("SlotValue");
+  REQUIRE(slot != nullptr, what + " op is externally tagged SlotValue");
+  const JsonValue* payload = slot->find("payload");
+  REQUIRE(payload != nullptr, what + " SlotValue carries a payload");
+  const JsonValue* blob = payload->find("SharedBlob");
+  REQUIRE(blob != nullptr, what + " payload is externally tagged SharedBlob");
+  return *blob;
+}
+
+// The shape `backend` arrives in, read from the SCENARIO'S OWN BYTES rather than
+// from its `backend_form` label. That is what makes `backend_form` (and, through
+// it, `rejection_kind`) checkable at all: the fixture's label and the fixture's
+// wire are two claims, and this runner is only entitled to trust them once it has
+// seen them agree. It also proves the MessagePack->DOM bridge preserves the
+// distinctions the clause turns on — an absent entry, a nil, and an integer are
+// three different things and a bridge that flattened any pair of them would pass
+// every typed assertion below.
+static std::string wire_backend_form(const lazily_test::Json& scenario) {
+  const JsonValue frame = wire_dom(scenario);
+  const JsonValue* field = dom_blob(frame, "scenario wire").find("backend");
+  if (field == nullptr) return "omitted";
+  if (field->is_null()) return "null";
+  if (!field->is_string()) return "non_string";
+  return field->as_string();
+}
+
 // Decode STRICTLY from the raw wire the fixture carries. Nothing is re-encoded
 // on the way in.
 static IpcMessage decode_scenario(const lazily_test::Json& scenario) {
@@ -88,13 +166,22 @@ static IpcMessage decode_scenario(const lazily_test::Json& scenario) {
       lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex"))));
 }
 
-// The decoded `SharedBlob` descriptor carried by the fixture's single
-// `SlotValue` op. Every intermediate step is checked rather than assumed, so a
-// frame that decoded into some other shape fails here instead of silently
-// providing a default-constructed ShmBlobRef whose `backend` is `Shm` — which
-// would satisfy the omitted/shm scenarios without a decode.
-static const ShmBlobRef& decoded_blob(const lazily_test::Json& scenario, const IpcMessage& message,
-                                      NodeId& node_out) {
+// What an accept scenario yields, with the two epochs kept APART. `frame_epoch`
+// is the Delta envelope's (it orders deltas) and `blob_epoch` is the ShmBlobRef
+// descriptor's (the arena incarnation the blob was written into). v1 carried 9
+// in both and one `expect.epoch`, so reading the wrong one was invisible.
+struct DecodedScenario {
+  const ShmBlobRef* blob = nullptr;
+  NodeId node = 0;
+  Epoch frame_epoch = 0;
+};
+
+// Every intermediate step is checked rather than assumed, so a frame that decoded
+// into some other shape fails here instead of silently providing a
+// default-constructed ShmBlobRef whose `backend` is `Shm` — which would satisfy
+// the omitted/null/shm scenarios without a decode.
+static DecodedScenario decoded_scenario(const lazily_test::Json& scenario,
+                                        const IpcMessage& message) {
   const std::string variant =
       lazily_test::json_string(lazily_test::json_member(scenario, "variant"));
   REQUIRE(variant == "Delta", "fixture declares the Delta variant, got: " + variant);
@@ -105,34 +192,27 @@ static const ShmBlobRef& decoded_blob(const lazily_test::Json& scenario, const I
   REQUIRE(op != nullptr, "the scenario frame's op is a SlotValue");
   const auto* blob = std::get_if<IpcValueSharedBlob>(&op->payload);
   REQUIRE(blob != nullptr, "the SlotValue payload is a SharedBlob descriptor");
-  node_out = op->node;
-  return blob->blob;
+  DecodedScenario out;
+  out.blob = &blob->blob;
+  out.node = op->node;
+  out.frame_epoch = envelope->value.epoch;
+  return out;
 }
 
 // Re-encode under the scenario's OWN codec and read the descriptor's field set
-// back SCHEMA-LESSLY. The typed `BlobBackendKind` cannot tell "field omitted"
-// from "field written as shm", which is the encoder half of the clause.
-static const JsonValue& reencoded_blob(const lazily_test::Json& scenario, const IpcMessage& message,
-                                       JsonValue& owner) {
+// back schema-lessly.
+static JsonValue reencoded_frame(const lazily_test::Json& scenario, const IpcMessage& message) {
   if (scenario_codec(scenario) == "msgpack") {
     // Through the msgpack ENCODER specifically. Asserting the json output for
     // both codecs would miss an encoder that writes the field on one wire only
     // — the `#lzmsgpackparity` class of defect.
-    owner = msgpack_to_json(encode_msgpack(message));
-  } else {
-    owner = json_parse(encode_json(message));
+    return msgpack_to_json(encode_msgpack(message));
   }
-  const JsonValue* body = owner.find("Delta");
-  REQUIRE(body != nullptr, "re-encoded frame carries a Delta envelope");
-  const JsonValue* ops = body->find("ops");
-  REQUIRE(ops != nullptr && !ops->array.empty(), "re-encoded frame carries its ops");
-  const JsonValue* slot = ops->array.at(0).find("SlotValue");
-  REQUIRE(slot != nullptr, "re-encoded op is externally tagged SlotValue");
-  const JsonValue* payload = slot->find("payload");
-  REQUIRE(payload != nullptr, "re-encoded SlotValue carries a payload");
-  const JsonValue* blob = payload->find("SharedBlob");
-  REQUIRE(blob != nullptr, "re-encoded payload is externally tagged SharedBlob");
-  return *blob;
+  return json_parse(encode_json(message));
+}
+
+static bool contains(const std::set<std::string>& set, const std::string& value) {
+  return set.count(value) != 0;
 }
 
 static void test_blob_backend_discriminator_is_replayed() {
@@ -145,52 +225,22 @@ static void test_blob_backend_discriminator_is_replayed() {
 
   const auto& scenarios = lazily_test::json_array(lazily_test::json_member(*fx, "scenarios"));
 
-  {
-    lazily_test::AssertionKeys block(std::string(kFixtureId) + " assertions",
-                                     lazily_test::json_member(*fx, "assertions"));
-    block.assert_key("required_of_binding", std::string("MUST"));
-    block.assert_key("scenario_count", static_cast<int64_t>(scenarios.size()));
-    block.assert_key_with("codecs", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
-             lazily_test::json_string(*list[1]) == "msgpack";
-    });
-    // The enum this binding closes `backend` to. If the corpus grows a fourth
-    // backend, this fails here rather than in a reject scenario, which is the
-    // signal that a spec change (not a corrupt producer) arrived.
-    block.assert_key_with("backends", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      if (list.size() != 3) return false;
-      const char* const expected[] = {"shm", "arrow", "in_process"};
-      for (std::size_t i = 0; i < list.size(); ++i) {
-        if (lazily_test::json_string(*list[i]) != expected[i]) return false;
-        // Every named backend is a token this decoder actually speaks.
-        if (std::string(blob_backend_kind_str(blob_backend_kind_from_str(
-                lazily_test::json_string(*list[i])))) != lazily_test::json_string(*list[i]))
-          return false;
-      }
-      return true;
-    });
-    block.assert_key_with("outcomes", [](const lazily_test::Json& want) {
-      const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "accept" &&
-             lazily_test::json_string(*list[1]) == "reject";
-    });
-    block.excuse_keys(
-        {"clause", "wire_encoding", "reject_obligation", "anti_vacuity", "theorem", "generator"},
-        "prose: it states WHY the fixture is shaped this way; the behaviour it "
-        "describes is asserted by the per-scenario decode, refusal and re-encode "
-        "below");
-    block.finish();
-  }
-
-  // Anti-vacuity ledger, three counters for the three ways to pass without
-  // implementing the clause (the fixture's own `anti_vacuity` note).
+  // Anti-vacuity ledger. The counters are the three controls the fixture names;
+  // the SETS are what the vocabulary-completeness assertion needs, and no count
+  // substitutes for them — v1 shipped a complete-looking eight scenarios while
+  // one declared backend never appeared on any wire.
   std::size_t replayed = 0;
   std::size_t accepted = 0;
   std::size_t rejected = 0;
-  std::size_t non_shm_decoded = 0;       // only `arrow` can produce this
-  std::size_t backend_field_written = 0; // only `arrow` may produce this
+  std::size_t non_shm_decoded = 0;       // only `arrow` and `in_process` can move this
+  std::size_t backend_field_written = 0; // only `arrow` and `in_process` may move this
+  std::size_t null_form_replayed = 0;
+  std::size_t non_string_form_replayed = 0;
+  std::size_t epochs_differed = 0;
+  std::set<std::string> codecs_seen;
+  std::set<std::string> forms_seen;
+  std::set<std::string> rejection_kinds_seen;
+  std::set<std::string> decoded_backends; // the vocabulary this run actually PROVED
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body that
@@ -198,18 +248,37 @@ static void test_blob_backend_discriminator_is_replayed() {
     const auto& scenario = sv.replay();
     const std::string id = sv.id();
     ++replayed;
+    codecs_seen.insert(scenario_codec(scenario));
 
     const std::string outcome =
         lazily_test::json_string(lazily_test::json_member(scenario, "outcome"));
     REQUIRE(outcome == "accept" || outcome == "reject",
             "scenario names an unknown outcome: " + outcome);
 
+    // The label and the bytes must agree before either is trusted.
+    const std::string form =
+        lazily_test::json_string(lazily_test::json_member(scenario, "backend_form"));
+    const std::string on_wire = wire_backend_form(scenario);
+    REQUIRE(form == on_wire, id + ": scenario declares backend_form '" + form +
+                                 "' but its own wire carries '" + on_wire +
+                                 "' — the label and the bytes disagree");
+    forms_seen.insert(form);
+
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
+
+    // v2 REMOVED `expect.epoch` rather than redefining it, precisely so a runner
+    // still reading it fails loudly instead of silently reading the other epoch.
+    // This is that failure, made explicit rather than left to the
+    // consumed-but-not-asserted path.
+    REQUIRE(expect.find("epoch") == nullptr,
+            id + ": `expect.epoch` is ambiguous between the frame and the descriptor and was "
+                 "removed in fixture v2 — assert `frame_epoch` and `blob_epoch` separately");
 
     if (outcome == "reject") {
       ++rejected;
       std::string message;
+      bool threw_any = false;
       bool threw_runtime_error = false;
       bool threw_logic_error = false;
       try {
@@ -220,23 +289,66 @@ static void test_blob_backend_discriminator_is_replayed() {
         // `catch (const std::runtime_error&)` every decode caller uses — the
         // regression `#lzspecdecoderbound` pinned for NodeId. A refusal of that
         // family is not a refusal callers see.
+        threw_any = true;
         threw_logic_error = true;
         message = e.what();
       } catch (const std::runtime_error& e) {
+        threw_any = true;
         threw_runtime_error = true;
         message = e.what();
       }
-      REQUIRE(!threw_logic_error,
-              id + ": refusal escaped as a std::logic_error, outside the std::runtime_error "
-                   "callers guard a decode with");
-      expect.assert_key("rejected", threw_runtime_error);
+
+      // Two DIFFERENT facts. `rejected` asks whether the frame was refused at
+      // all; `rejection_is_decode_error` asks whether the refusal arrived
+      // through the family callers guard a decode with. A `std::invalid_argument`
+      // satisfies the first and fails the second, which is the whole point of
+      // the second key.
+      expect.assert_key("rejected", threw_any);
+      expect.assert_key_with("rejection_is_decode_error", [&](const lazily_test::Json& want) {
+        if (!lazily_test::json_bool(want)) return !threw_runtime_error;
+        REQUIRE(!threw_logic_error,
+                id + ": refusal escaped as a std::logic_error (" + message +
+                    "), outside the std::runtime_error family callers guard a decode with");
+        return threw_runtime_error;
+      });
+
+      // Which of the two refusals this is — derived from the scenario's own
+      // bytes, not taken on the fixture's word.
+      const std::string kind_from_wire = (on_wire == "non_string") ? "non_string" : "unknown_token";
+      if (kind_from_wire == "unknown_token") {
+        bool speaks_it = true;
+        try {
+          (void)blob_backend_kind_from_str(on_wire);
+        } catch (const std::runtime_error&) {
+          speaks_it = false;
+        }
+        REQUIRE(!speaks_it, id + ": a reject scenario carries the token '" + on_wire +
+                                "', which this decoder speaks — it cannot be an unknown token");
+      }
+      std::string kind;
+      expect.assert_key_with("rejection_kind", [&](const lazily_test::Json& want) {
+        kind = lazily_test::json_string(want);
+        return kind == kind_from_wire;
+      });
+      rejection_kinds_seen.insert(kind);
+      if (kind == "non_string") ++non_string_form_replayed;
+
       // The refusal must be FOR THE STATED REASON. A decoder that refused
       // because it mis-parsed `checksum` satisfies a bare is-error assertion
-      // while implementing none of the clause.
-      expect.assert_key_with("error_names_token", [&](const lazily_test::Json& want) {
-        const std::string token = lazily_test::json_string(want);
-        return threw_runtime_error && message.find(token) != std::string::npos;
-      });
+      // while implementing none of the clause. There is no token to name on the
+      // non-string form, and requiring the field name there would pin a message
+      // format no codec's native type error carries.
+      const bool names_token = expect.assert_key_with_if_present(
+          "error_names_token", [&](const lazily_test::Json& want) {
+            const std::string token = lazily_test::json_string(want);
+            return threw_runtime_error && token == on_wire &&
+                   message.find(token) != std::string::npos;
+          });
+      REQUIRE(names_token == (kind == "unknown_token"),
+              id +
+                  ": `error_names_token` is carried by exactly the unknown-token refusals; "
+                  "kind='" +
+                  kind + "'");
       expect.finish();
       continue;
     }
@@ -252,53 +364,199 @@ static void test_blob_backend_discriminator_is_replayed() {
     } catch (const std::exception& e) {
       REQUIRE(false, id + ": accept scenario was refused: " + e.what());
     }
-    NodeId node = 0;
-    const ShmBlobRef& blob = decoded_blob(scenario, message, node);
+    const DecodedScenario decoded = decoded_scenario(scenario, message);
+    const ShmBlobRef& blob = *decoded.blob;
     if (blob.backend != BlobBackendKind::Shm) ++non_shm_decoded;
 
     expect.assert_key_with("decoded_backend", [&](const lazily_test::Json& want) {
-      return lazily_test::json_string(want) == blob_backend_kind_str(blob.backend);
+      const std::string got = blob_backend_kind_str(blob.backend);
+      decoded_backends.insert(got);
+      return lazily_test::json_string(want) == got;
     });
-    expect.assert_key("node", static_cast<int64_t>(node));
+    expect.assert_key("node", static_cast<int64_t>(decoded.node));
     expect.assert_key("offset", blob.offset);
     expect.assert_key("len", blob.len);
     expect.assert_key("generation", blob.generation);
-    expect.assert_key("epoch", blob.epoch);
+    // The two epochs, each against ITS OWN source. Reading the frame's where the
+    // descriptor's is expected is the defect v1 could not express.
+    expect.assert_key("frame_epoch", static_cast<int64_t>(decoded.frame_epoch));
+    expect.assert_key("blob_epoch", blob.epoch);
+    if (static_cast<int64_t>(decoded.frame_epoch) != blob.epoch) ++epochs_differed;
     expect.assert_key("checksum", blob.checksum);
 
     // The encoder half: `backend` is OMITTED when the value is `Shm`, so a
     // descriptor that predates the field round-trips byte-identically, and it is
-    // WRITTEN when it is not.
-    JsonValue owner;
-    const JsonValue* encoded_ptr = nullptr;
+    // WRITTEN when it is not. Presence is STRICT — a re-encoded explicit null
+    // would be a `backend` entry on the wire, and the null scenarios say the
+    // re-encoded frame carries none.
+    JsonValue reencoded;
     try {
-      encoded_ptr = &reencoded_blob(scenario, message, owner);
+      reencoded = reencoded_frame(scenario, message);
     } catch (const std::exception& e) {
       REQUIRE(false, id + ": re-encode under its own codec failed: " + e.what());
     }
-    REQUIRE(encoded_ptr != nullptr, id + ": re-encode produced no descriptor");
-    const JsonValue& encoded = *encoded_ptr;
-    const JsonValue* field = encoded.find("backend");
-    const bool present = field != nullptr && !field->is_null();
-    if (present) ++backend_field_written;
+    const JsonValue* field = dom_blob(reencoded, "re-encoded frame").find("backend");
+    const bool present = field != nullptr;
+    if (present) {
+      REQUIRE(field->is_string(),
+              id + ": a re-encoded `backend` entry must be a token, not " + json_write(*field));
+      ++backend_field_written;
+    }
     expect.assert_key("reencoded_backend_field_present", present);
+
+    if (form == "null") {
+      ++null_form_replayed;
+      // The null form's whole claim, stated where it is easy to read: it is the
+      // ABSENT form, so it decodes as `shm` AND does not survive the round trip.
+      REQUIRE(blob.backend == BlobBackendKind::Shm,
+              id + ": an explicit null `backend` is the ABSENT form and decodes as `shm` "
+                   "(#lzkeynullstrict)");
+      REQUIRE(!present, id + ": the null does not survive a round trip — a conforming encoder "
+                             "omits `backend` when the value is `shm`");
+    }
     expect.finish();
   }
 
-  REQUIRE(replayed == 8, "four backend forms x two codecs");
-  REQUIRE(accepted == 6, "omitted, explicit shm and arrow, on both codecs");
-  REQUIRE(rejected == 2, "the unknown token, on both codecs");
+  // The assertion block is evaluated AFTER the replay, because the assertions it
+  // carries are about the run: `backend_form_vocabulary` is a set difference
+  // against what the decode actually produced, and a count could never reach it.
+  {
+    lazily_test::AssertionKeys block(std::string(kFixtureId) + " assertions",
+                                     lazily_test::json_member(*fx, "assertions"));
+    block.assert_key("required_of_binding", std::string("MUST"));
+    block.assert_key("scenario_count", static_cast<int64_t>(replayed));
+    block.assert_key_with("codecs", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      if (list.size() != 2 || lazily_test::json_string(*list[0]) != "json" ||
+          lazily_test::json_string(*list[1]) != "msgpack")
+        return false;
+      // Both were actually driven, so a runner that quietly skipped one wire
+      // cannot satisfy the key by naming it.
+      return codecs_seen.size() == 2 && contains(codecs_seen, "json") &&
+             contains(codecs_seen, "msgpack");
+    });
+
+    // The enum this binding closes `backend` to. If the corpus grows a fourth
+    // backend, this fails here rather than in a reject scenario, which is the
+    // signal that a spec change (not a corrupt producer) arrived.
+    std::set<std::string> declared_backends;
+    block.assert_key_with("backends", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      if (list.size() != 3) return false;
+      const char* const expected[] = {"shm", "arrow", "in_process"};
+      for (std::size_t i = 0; i < list.size(); ++i) {
+        const std::string name = lazily_test::json_string(*list[i]);
+        if (name != expected[i]) return false;
+        // Every named backend is a token this decoder actually speaks.
+        if (std::string(blob_backend_kind_str(blob_backend_kind_from_str(name))) != name)
+          return false;
+        declared_backends.insert(name);
+      }
+      return true;
+    });
+
+    // THE VOCABULARY GUARD. `arrow` proves the discriminator is READ; this
+    // proves the enum is COMPLETE. It is a set difference between what the
+    // fixture declares and what the run decoded, and it is the assertion that
+    // would have caught v1 — where `in_process` was declared in
+    // `assertions.backends`, carried by no scenario, and a binding that refused
+    // the token (conformingly, by the letter of the clause) passed all eight.
+    block.assert_key_with("backend_form_vocabulary", [&](const lazily_test::Json& want) {
+      const std::string prose = lazily_test::json_string(want);
+      for (const auto& backend : declared_backends) {
+        if (!contains(decoded_backends, backend)) {
+          std::cout << "FAIL: backend '" << backend
+                    << "' is declared in assertions.backends but no accept scenario decoded to "
+                       "it — the vocabulary is incomplete (this is the v1 hole)"
+                    << std::endl;
+          return false;
+        }
+        // ... and the prose that states the rule still names it, so a backend
+        // added upstream without a sentence here is caught too.
+        if (prose.find(backend) == std::string::npos) return false;
+      }
+      return true;
+    });
+
+    block.assert_key_with("backend_forms", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      const char* const expected[] = {"omitted", "shm",        "arrow", "in_process",
+                                      "null",    "non_string", "rdma"};
+      if (list.size() != sizeof(expected) / sizeof(expected[0])) return false;
+      std::set<std::string> declared;
+      for (std::size_t i = 0; i < list.size(); ++i) {
+        if (lazily_test::json_string(*list[i]) != expected[i]) return false;
+        declared.insert(expected[i]);
+      }
+      // Both directions: every declared form was carried by a scenario whose own
+      // bytes this runner read back, and no scenario carried a form the block
+      // does not declare.
+      return declared == forms_seen;
+    });
+
+    block.assert_key_with("rejection_kinds", [&](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      if (list.size() != 2 || lazily_test::json_string(*list[0]) != "unknown_token" ||
+          lazily_test::json_string(*list[1]) != "non_string")
+        return false;
+      return rejection_kinds_seen ==
+             std::set<std::string>{std::string("unknown_token"), std::string("non_string")};
+    });
+
+    block.assert_key_with("outcomes", [](const lazily_test::Json& want) {
+      const auto& list = lazily_test::json_array(want);
+      return list.size() == 2 && lazily_test::json_string(*list[0]) == "accept" &&
+             lazily_test::json_string(*list[1]) == "reject";
+    });
+
+    // The three prose keys v2 added each state a rule this run EXECUTED, so each
+    // is asserted against the run rather than excused as narrative.
+    block.assert_key_with("null_form", [&](const lazily_test::Json& want) {
+      // The claim: null is the absent form. Both null scenarios decoded as `shm`
+      // and re-encoded without a `backend` entry, checked at the call site above;
+      // this is the ledger that they were reached at all.
+      return null_form_replayed == 2 && !lazily_test::json_string(want).empty();
+    });
+    block.assert_key_with("non_string_form", [&](const lazily_test::Json& want) {
+      // The claim: a present non-string is refused through the decode-error
+      // family. Both non-string scenarios were classified from their own bytes
+      // and asserted `rejection_is_decode_error` above.
+      return non_string_form_replayed == 2 && !lazily_test::json_string(want).empty();
+    });
+    block.assert_key_with("epoch_disambiguation", [&](const lazily_test::Json& want) {
+      // The claim: the two epochs are DIFFERENT numbers, so reading one where
+      // the other belongs is now visible. Every accept scenario proved it.
+      return epochs_differed == accepted && !lazily_test::json_string(want).empty();
+    });
+
+    block.excuse_keys(
+        {"clause", "wire_encoding", "reject_obligation", "anti_vacuity", "theorem", "generator"},
+        "prose: it states WHY the fixture is shaped this way; the behaviour it "
+        "describes is asserted by the per-scenario decode, refusal and re-encode "
+        "above");
+    block.finish();
+  }
+
+  REQUIRE(replayed == 14, "seven backend forms x two codecs");
+  REQUIRE(accepted == 10, "omitted, explicit shm, arrow, in_process and null, on both codecs");
+  REQUIRE(rejected == 4, "the unknown token and the non-string, on both codecs");
   // Control (2) from the fixture: a decoder that hardcodes `Shm` and ignores the
-  // field passes every omitted/shm scenario. Only `arrow` can move this counter,
-  // and the fixture carries exactly one arrow scenario per codec.
-  REQUIRE(non_shm_decoded == 2,
-          "only the `arrow` scenarios decode to a non-shm backend; a decoder that hardcodes "
-          "`Shm` satisfies the omitted and explicit-shm cases trivially");
+  // field passes every omitted/null/shm scenario. Only `arrow` and `in_process`
+  // can move this counter.
+  REQUIRE(non_shm_decoded == 4,
+          "only the `arrow` and `in_process` scenarios decode to a non-shm backend; a decoder "
+          "that hardcodes `Shm` satisfies the omitted, null and explicit-shm cases trivially");
   // Control (3): an encoder that echoes the received token back out writes the
-  // field on the explicit-shm scenarios too.
-  REQUIRE(backend_field_written == 2,
-          "only the `arrow` scenarios re-encode a `backend` field; an encoder that echoes what "
-          "it received writes it on the explicit-shm scenarios as well");
+  // field on the explicit-shm and null scenarios too.
+  REQUIRE(backend_field_written == 4,
+          "only the `arrow` and `in_process` scenarios re-encode a `backend` field; an encoder "
+          "that echoes what it received writes it on the explicit-shm and null scenarios as well");
+  // Control (4): the vocabulary is complete. Asserted as a set difference under
+  // `backend_form_vocabulary` above; restated here so the count and the set are
+  // visibly different claims.
+  REQUIRE(decoded_backends.size() == 3,
+          "all three declared backends appear as a decoded_backend; a scenario count cannot "
+          "reach this fact");
 }
 
 int main() {

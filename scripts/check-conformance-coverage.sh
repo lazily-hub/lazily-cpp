@@ -192,7 +192,16 @@ excuse_scenario "reliable-sync/outbox_store_protocol.json" \
 # Minimum DISTINCT scenarios replayed, the per-scenario twin of MIN_FIXTURES.
 # Without it a ledger that stopped recording entirely would leave the
 # declared-vs-replayed comparison vacuously satisfied on both sides.
-MIN_SCENARIOS="${MIN_SCENARIOS:-83}"
+#
+# The suite replays 113. The floor sat at 83 while the run replayed 107, so a
+# quarter of the ledger could have stopped recording without this check noticing
+# — a slack floor is a floor that has stopped guarding. Pulled up to the actual
+# figure, matching how MIN_FIXTURES is kept. The last +6 came from fixture v2 of
+# codec/blob_backend_discriminator.json, which grew from four backend forms to
+# seven (`in_process`, an explicit null and a non-string `backend`) across both
+# codecs. Raise this when replays are added; NEVER lower it to make a red build
+# green.
+MIN_SCENARIOS="${MIN_SCENARIOS:-113}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2

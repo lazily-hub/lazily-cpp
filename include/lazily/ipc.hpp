@@ -101,6 +101,21 @@ inline const char* blob_backend_kind_str(BlobBackendKind k) {
 // by the callers, which never reach this function when the field is missing:
 // `ShmBlobRef::backend` default-initialises to `Shm`.
 //
+// An EXPLICIT NULL is the absent form, not a present-unknown one, and also never
+// reaches this function: `json_to_shm_blob_ref` routes `null` to `Shm` alongside
+// the missing field (§ NodeKey, `#lzkeynullstrict`). A serde-style peer that did
+// not apply `skip_serializing_if` to an optional field emits `null` where a
+// conforming encoder omits, so refusing it would be stricter than the reference
+// implementation on a frame the reference implementation produces. The encoder
+// half is unaffected — the round trip drops the null, because `backend` is
+// written only when the value is not `Shm`.
+//
+// A PRESENT NON-STRING never reaches this function either: `JsonValue::as_string`
+// refuses it first, and it refuses with `std::runtime_error` ("json: expected a
+// string"), the same family as the unknown-token refusal below, so one
+// `catch (const std::runtime_error&)` at the decode boundary handles both. That
+// is load-bearing rather than incidental — see the hierarchy note below.
+//
 // That asymmetry is the whole clause. `backend` is optional and a conforming
 // encoder OMITS it when the value is `Shm`, so absence is the
 // forward-compatibility channel — it carries every descriptor minted before the
