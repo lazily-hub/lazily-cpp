@@ -24,8 +24,11 @@
 //     {shm, arrow} refuses it, NAMING the token, and passes every v1 scenario
 //     while implementing a smaller enum than the clause declares. The guard is
 //     not a scenario count: it is the SET DIFFERENCE asserted under
-//     `backend_form_vocabulary` below — every backend in `assertions.backends`
-//     must appear as the `decoded_backend` of some accept scenario.
+//     `assertions.backends` below — every backend that list declares must appear
+//     as the `decoded_backend` of some accept scenario. It sits on `backends`
+//     rather than on the `backend_form_vocabulary` paragraph that states it in
+//     English, because a check hung off a paragraph pins the paragraph
+//     (`#lzprosekeyconvention`).
 //   * an explicit `null` — the ABSENT form (`#lzkeynullstrict`), not a
 //     present-unknown one. It decodes as `shm` and does NOT survive a round
 //     trip. Those frames are deliberately schema-INVALID: the enum in
@@ -436,9 +439,19 @@ static void test_blob_backend_discriminator_is_replayed() {
              contains(codecs_seen, "msgpack");
     });
 
-    // The enum this binding closes `backend` to. If the corpus grows a fourth
-    // backend, this fails here rather than in a reject scenario, which is the
-    // signal that a spec change (not a corrupt producer) arrived.
+    // The enum this binding closes `backend` to, AND the vocabulary guard.
+    // If the corpus grows a fourth backend, this fails here rather than in a
+    // reject scenario, which is the signal that a spec change (not a corrupt
+    // producer) arrived.
+    //
+    // `arrow` proves the discriminator is READ; the set difference below proves
+    // the enum is COMPLETE. It is the assertion that would have caught v1 —
+    // where `in_process` was declared in `assertions.backends`, carried by no
+    // scenario, and a binding that refused the token (conformingly, by the
+    // letter of the clause) passed all eight. It lives on `backends`, whose
+    // value is the list it compares against; `backend_form_vocabulary` only
+    // states the rule in English, and a tally compared against a paragraph
+    // would redden on a copy-edit and stay green on a regression.
     std::set<std::string> declared_backends;
     block.assert_key_with("backends", [&](const lazily_test::Json& want) {
       const auto& list = lazily_test::json_array(want);
@@ -452,17 +465,6 @@ static void test_blob_backend_discriminator_is_replayed() {
           return false;
         declared_backends.insert(name);
       }
-      return true;
-    });
-
-    // THE VOCABULARY GUARD. `arrow` proves the discriminator is READ; this
-    // proves the enum is COMPLETE. It is a set difference between what the
-    // fixture declares and what the run decoded, and it is the assertion that
-    // would have caught v1 — where `in_process` was declared in
-    // `assertions.backends`, carried by no scenario, and a binding that refused
-    // the token (conformingly, by the letter of the clause) passed all eight.
-    block.assert_key_with("backend_form_vocabulary", [&](const lazily_test::Json& want) {
-      const std::string prose = lazily_test::json_string(want);
       for (const auto& backend : declared_backends) {
         if (!contains(decoded_backends, backend)) {
           std::cout << "FAIL: backend '" << backend
@@ -471,9 +473,6 @@ static void test_blob_backend_discriminator_is_replayed() {
                     << std::endl;
           return false;
         }
-        // ... and the prose that states the rule still names it, so a backend
-        // added upstream without a sentence here is caught too.
-        if (prose.find(backend) == std::string::npos) return false;
       }
       return true;
     });
@@ -509,33 +508,47 @@ static void test_blob_backend_discriminator_is_replayed() {
              lazily_test::json_string(*list[1]) == "reject";
     });
 
-    // The three prose keys v2 added each state a rule this run EXECUTED, so each
-    // is asserted against the run rather than excused as narrative.
-    block.assert_key_with("null_form", [&](const lazily_test::Json& want) {
-      // The claim: null is the absent form. Both null scenarios decoded as `shm`
-      // and re-encoded without a `backend` entry, checked at the call site above;
-      // this is the ledger that they were reached at all.
-      return null_form_replayed == 2 && !lazily_test::json_string(want).empty();
-    });
-    block.assert_key_with("non_string_form", [&](const lazily_test::Json& want) {
-      // The claim: a present non-string is refused through the decode-error
-      // family. Both non-string scenarios were classified from their own bytes
-      // and asserted `rejection_is_decode_error` above.
-      return non_string_form_replayed == 2 && !lazily_test::json_string(want).empty();
-    });
-    block.assert_key_with("epoch_disambiguation", [&](const lazily_test::Json& want) {
-      // The claim: the two epochs are DIFFERENT numbers, so reading one where
-      // the other belongs is now visible. Every accept scenario proved it.
-      return epochs_differed == accepted && !lazily_test::json_string(want).empty();
-    });
+    // The nine paragraphs the corpus declares in `assertions.prose`. Each is
+    // DISCHARGED by naming the executable keys this run really asserted, never
+    // asserted and never excused (`#lzprosekeyconvention`). Four of them —
+    // `backend_form_vocabulary`, `null_form`, `non_string_form`,
+    // `epoch_disambiguation` — used to be compared against tallies from this
+    // run, which passed on any non-empty paragraph: that pinned wording, not
+    // behaviour. The tallies survive as run controls below; the obligations now
+    // point at the keys that carry them.
+    block.prose_key("clause", {"decoded_backend", "rejected", "rejection_is_decode_error",
+                               "error_names_token", "reencoded_backend_field_present"});
+    block.prose_key("wire_encoding", {"backend_forms", "decoded_backend", "rejection_kind"});
+    block.prose_key("backend_form_vocabulary", {"backends", "backend_forms", "decoded_backend"});
+    block.prose_key("reject_obligation",
+                    {"error_names_token", "rejection_is_decode_error", "rejection_kind"});
+    // Null is the ABSENT form: it decodes as `shm` (`decoded_backend`) and does
+    // not survive the round trip (`reencoded_backend_field_present`), on a form
+    // `backend_forms` proves was carried.
+    block.prose_key("null_form",
+                    {"decoded_backend", "reencoded_backend_field_present", "backend_forms"});
+    // A present non-string is refused, and the refusal arrives through the
+    // family every caller guards a decode with.
+    block.prose_key("non_string_form", {"rejected", "rejection_is_decode_error", "rejection_kind"});
+    // The two epochs are separate facts, asserted against separate sources.
+    block.prose_key("epoch_disambiguation", {"frame_epoch", "blob_epoch"});
+    // The four controls, in order: a real decode and a read discriminator
+    // (`decoded_backend`), the encoder half (`reencoded_backend_field_present`),
+    // a complete vocabulary (`backends`), and a full replay (`scenario_count`).
+    block.prose_key("anti_vacuity", {"decoded_backend", "reencoded_backend_field_present",
+                                     "backends", "scenario_count"});
+    // resolve_wrong_backend: an unknown kind is refused rather than normalized,
+    // so a decoded backend is always the one on the wire.
+    block.prose_key("theorem", {"decoded_backend", "rejected", "rejection_is_decode_error"});
 
-    block.excuse_keys(
-        {"clause", "wire_encoding", "reject_obligation", "anti_vacuity", "theorem", "generator"},
-        "prose: it states WHY the fixture is shaped this way; the behaviour it "
-        "describes is asserted by the per-scenario decode, refusal and re-encode "
-        "above");
+    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
+                                  "about the frames under test");
     block.finish();
   }
+
+  // Verifies every discharge above against what this fixture's run asserted.
+  // The ledger's own teardown fails a run that omits this call.
+  lazily_test::verify_prose(kFixtureId);
 
   REQUIRE(replayed == 14, "seven backend forms x two codecs");
   REQUIRE(accepted == 10, "omitted, explicit shm, arrow, in_process and null, on both codecs");
@@ -552,11 +565,25 @@ static void test_blob_backend_discriminator_is_replayed() {
           "only the `arrow` and `in_process` scenarios re-encode a `backend` field; an encoder "
           "that echoes what it received writes it on the explicit-shm and null scenarios as well");
   // Control (4): the vocabulary is complete. Asserted as a set difference under
-  // `backend_form_vocabulary` above; restated here so the count and the set are
-  // visibly different claims.
+  // `backends` above; restated here so the count and the set are visibly
+  // different claims.
   REQUIRE(decoded_backends.size() == 3,
           "all three declared backends appear as a decoded_backend; a scenario count cannot "
           "reach this fact");
+  // The three ledgers the `null_form`, `non_string_form` and
+  // `epoch_disambiguation` paragraphs used to be compared against. They are real
+  // evidence — that the scenarios stating each rule were REACHED — so they stay,
+  // as controls over the run. What changed is what they are compared to: a
+  // number the runner knows, not a paragraph whose only property under test was
+  // being non-empty.
+  REQUIRE(null_form_replayed == 2,
+          "both null-form scenarios were reached; each decoded as `shm` and re-encoded without a "
+          "`backend` entry at its own call site");
+  REQUIRE(non_string_form_replayed == 2,
+          "both non-string scenarios were reached and classified from their own bytes");
+  REQUIRE(epochs_differed == accepted,
+          "every accept scenario carries a frame epoch and a descriptor epoch that DIFFER, so a "
+          "runner reading one where the other belongs is now visible");
 }
 
 int main() {

@@ -241,6 +241,11 @@ TEST(test_json_codec_fixture_block) {
   assertions.assert_key("required_of_binding", std::string("MUST"));
   assertions.assert_key("role", std::string("reference"));
   assertions.assert_key("scenario_count", static_cast<int64_t>(scenario_count));
+  // `note` is declared prose by the corpus (`#lzprosekeyconvention`), so the
+  // by-name annotation exemption does not reach it: it states an obligation.
+  // The obligation is that ROLE and BYTE-CANONICALITY stay distinct senses, and
+  // the two keys it names are the ones asserted separately just above.
+  assertions.prose_key("note", {"role", "byte_canonical"});
   assertions.finish();
 }
 
@@ -419,6 +424,17 @@ TEST(test_msgpack_codec_fixture_block) {
   assertions.assert_key("required_of_binding", std::string("MUST"));
   assertions.assert_key("role", std::string("cross_language_binary_default"));
   assertions.assert_key("scenario_count", static_cast<int64_t>(scenario_count));
+  // `note` is declared prose by the corpus (`#lzprosekeyconvention`), so the
+  // by-name annotation exemption does not reach it. Its obligation — a frame is
+  // a MAP KEYED BY FIELD NAME, not a positional array, which is what keeps
+  // omit-when-absent uniform across the two codecs — is carried by
+  // `encoded_body_field_names` (asserted in the round-trip test below, which is
+  // why verification is fixture-scoped and happens in `main`), by
+  // `round_trip_equals_source` for the decoded values this fixture pins in place
+  // of golden bytes, and by `byte_canonical` for the property that forced that
+  // choice.
+  assertions.prose_key("note",
+                       {"byte_canonical", "encoded_body_field_names", "round_trip_equals_source"});
   assertions.finish();
 }
 
@@ -645,6 +661,13 @@ TEST(test_msgpack_codec_rejects_malformed_frames) {
 }
 
 int main() {
+  // Every TEST above runs during static initialisation, so both fixtures'
+  // replays are finished here. Prose verification is FIXTURE-scoped rather than
+  // block-scoped precisely for this shape: the msgpack `note` is discharged by
+  // `encoded_body_field_names`, asserted in a different test from the
+  // `assertions` block that declared the paragraph.
+  lazily_test::verify_prose(kFixtureId);
+  lazily_test::verify_prose(kMsgpackFixtureId);
   REQUIRE_FIXTURES_LOADED(2);
   return test_count == test_passed ? 0 : 1;
 }

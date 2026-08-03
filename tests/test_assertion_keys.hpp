@@ -38,6 +38,17 @@
 // an *optional* assertion is still a declaration that this runner knows about
 // the key. `finish()` then aborts, naming the fixture and the offending key.
 //
+// A fourth kind of key needs neither path: a PROSE key, whose value is an
+// English paragraph stating an obligation and carrying nothing a runner can
+// compare against observed behaviour (`#lzprosekeyconvention`). The corpus --
+// never the binding -- declares which keys those are, in `assertions.prose`.
+// Such a key is DISCHARGED: `prose_key(key, {...})` names the executable
+// assertion keys that carry its obligation, and the ledger below checks that
+// the run really asserted them. Asserting a paragraph (or a tally derived from
+// one) pins wording rather than behaviour -- a copy-edit reddens the run and a
+// library regression does not -- and excusing it with free text is the
+// unfalsifiable default the convention exists to remove. Both now fail.
+//
 // Usage:
 //   lazily_test::AssertionKeys keys("presence.json#3 expected", expected);
 //   keys.assert_key("present", cell.present(ctx), json_presence_map);
@@ -46,7 +57,9 @@
 //     return json_bool(json_member(v, "present")) == !was;
 //   });
 //   keys.excuse_key("mode", "selects the strategy driven above, not a value");
+//   keys.prose_key("clause", {"backends", "scenario_count"});
 //   keys.finish();
+//   lazily_test::verify_prose("codec/blob_backend_discriminator.json");
 
 #ifndef LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
 #define LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
@@ -69,6 +82,67 @@ namespace lazily_test {
 inline const std::set<std::string>& assertion_narrative_keys() {
   static const std::set<std::string> keys = {"note", "notes", "comment", "description", "why"};
   return keys;
+}
+
+// -- the prose ledger (`#lzprosekeyconvention`) ---------------------------
+//
+// Fixture-scoped, not block-scoped, because an obligation stated in
+// `assertions` is routinely carried by a per-scenario `expect` key:
+// `epoch_disambiguation` is discharged by `expect.frame_epoch` and
+// `expect.blob_epoch`, asserted long after the `assertions` block itself went
+// out of scope. A named key is therefore matched BY NAME in any block of that
+// fixture, and the check happens when the replay is finished.
+
+// One claim: "`epoch_disambiguation` is carried by `frame_epoch`, `blob_epoch`".
+// Unlike "`epoch_disambiguation` is prose", that is a statement about the run,
+// so the ledger can falsify it.
+struct ProseDischarge {
+  std::string block;              // the `where_` of the block that claimed it
+  std::string key;                // the prose key being discharged
+  std::vector<std::string> names; // the executable keys said to carry it
+};
+
+struct ProseLedger {
+  std::map<std::string, std::set<std::string>> asserted;     // fixture -> keys asserted anywhere
+  std::map<std::string, std::set<std::string>> declared;     // fixture -> assertions.prose
+  std::map<std::string, std::vector<ProseDischarge>> claims; // fixture -> pending discharges
+  std::set<std::string> verified;
+
+  // The teardown that makes a run which NEVER verifies fail. A discharge
+  // registered and never checked has proven exactly as much as an unconsumed
+  // key, so it is reported the same way -- a message naming the fixture,
+  // followed by `abort()`. Never a throw: this destructor runs at exit, and in
+  // the general destructor case a throw during unwinding terminates the process
+  // without the diagnostic that makes the failure actionable.
+  ~ProseLedger() {
+    for (const auto& kv : claims) {
+      if (kv.second.empty() || verified.count(kv.first) != 0) continue;
+      std::cout << "FAIL: " << kv.first << ": " << kv.second.size()
+                << " prose discharge(s) were registered (first: '" << kv.second.front().key
+                << "') but verify_prose(\"" << kv.first
+                << "\") was never called, so the claim that they are carried by "
+                   "executable keys was never checked against the run. An "
+                   "unverified discharge is as bad as an unconsumed key "
+                   "(#lzprosekeyconvention)"
+                << std::endl;
+      std::abort();
+    }
+  }
+};
+
+inline ProseLedger& prose_ledger() {
+  static ProseLedger ledger;
+  return ledger;
+}
+
+// Every conformance runner names its blocks `<fixture id> <block path>` --
+// `codec/blob_backend_discriminator.json scenarios[3].expect` -- so the leading
+// token says which fixture's ledger this block contributes to. One rule, one
+// place, rather than a fixture argument threaded through every existing call
+// site.
+inline std::string fixture_of(const std::string& where) {
+  const std::size_t space = where.find(' ');
+  return space == std::string::npos ? where : where.substr(0, space);
 }
 
 // Compact rendering of a fixture value, so a failure names what the corpus
@@ -139,6 +213,16 @@ public:
       : where_(std::move(where)), object_(&object) {
     REQUIRE(object.is_object(), "assertion block must be a JSON object");
     consumed_ = assertion_narrative_keys();
+    fixture_ = fixture_of(where_);
+    // The corpus decides which keys are paragraphs; this binding does not. Read
+    // WITHOUT consuming -- `prose` is consumed by the discharge-set comparison
+    // in `verify_prose`, which is what makes a forgotten key fail rather than
+    // vanish.
+    if (const Json* prose = object_->find("prose")) {
+      for (const auto& name : json_array(*prose))
+        prose_declared_.insert(json_string(*name));
+      prose_ledger().declared[fixture_] = prose_declared_;
+    }
   }
 
   // Non-copyable: the consumed set is the point, and a copy would split it.
@@ -283,6 +367,63 @@ public:
       excuse_key(key, reason);
   }
 
+  // -- prose keys (`#lzprosekeyconvention`) -------------------------------
+
+  // Discharge `key` -- a paragraph the corpus declared in `assertions.prose` --
+  // by naming the executable assertion keys that carry its obligation. The
+  // naming is a claim about THIS FIXTURE'S RUN, verified by `verify_prose`:
+  // every named key must have reached an `assert_key*` call in some block of
+  // the same fixture.
+  //
+  // Checked here, where the call site is still on the stack:
+  //   rule 3 -- a key the corpus did not declare prose cannot be discharged;
+  //   rule 5 -- a discharge naming nothing discharges nothing;
+  //   rule 7 -- a paragraph cannot be discharged by another paragraph.
+  void prose_key(const std::string& key, std::initializer_list<const char*> discharged_by) {
+    if (object_->find("prose") == nullptr) {
+      std::cout << "FAIL: " << where_ << ": prose_key('" << key
+                << "') but this block carries no `prose` array. Which keys are "
+                   "paragraphs is declared BY THE CORPUS -- a binding that "
+                   "decides for itself is the drift this convention removes "
+                   "(#lzprosekeyconvention)"
+                << std::endl;
+      std::abort();
+    }
+    if (prose_declared_.count(key) == 0) {
+      std::cout << "FAIL: " << where_ << ": assertion key '" << key
+                << "' is discharged as prose but the fixture does not list it in "
+                   "`assertions.prose`. A key carrying a comparable value must be "
+                   "asserted, not discharged (#lzprosekeyconvention rule 3)"
+                << std::endl;
+      std::abort();
+    }
+    if (discharged_by.size() == 0) {
+      std::cout << "FAIL: " << where_ << ": prose key '" << key
+                << "' is discharged by NO executable key. A discharge naming "
+                   "nothing is the free-text excuse under another name "
+                   "(#lzprosekeyconvention rule 5)"
+                << std::endl;
+      std::abort();
+    }
+    ProseDischarge claim;
+    claim.block = where_;
+    claim.key = key;
+    for (const char* name : discharged_by) {
+      if (prose_declared_.count(name) != 0) {
+        std::cout << "FAIL: " << where_ << ": prose key '" << key << "' is discharged by '" << name
+                  << "', which is itself declared prose. A paragraph cannot carry "
+                     "another paragraph's obligation (#lzprosekeyconvention rule 7)"
+                  << std::endl;
+        std::abort();
+      }
+      claim.names.emplace_back(name);
+    }
+    consumed_.insert(key);
+    discharged_.insert(key);
+    prose_discharged_any_ = true;
+    prose_ledger().claims[fixture_].push_back(std::move(claim));
+  }
+
   // -- verification -------------------------------------------------------
 
   // Abort when the fixture carried an assertion key this runner never asked
@@ -292,8 +433,66 @@ public:
   void finish() {
     if (finished_) return;
     finished_ = true;
+    // Publish this block's assertions to the fixture ledger BEFORE any verdict,
+    // so a discharge naming a key asserted here is checkable from a block that
+    // has already gone out of scope.
+    if (!asserted_.empty()) {
+      auto& fixture_asserted = prose_ledger().asserted[fixture_];
+      fixture_asserted.insert(asserted_.begin(), asserted_.end());
+    }
     for (const auto& kv : object_->object) {
       const std::string& key = kv.first;
+      if (key == "prose" && !prose_declared_.empty()) {
+        // `prose` is consumed and asserted by the discharged-set comparison in
+        // `verify_prose`, which the ledger's teardown makes mandatory. A block
+        // that declares paragraphs and discharges none never gets there.
+        if (!prose_discharged_any_) {
+          std::cout << "FAIL: " << where_
+                    << ": the fixture declares `assertions.prose` but this runner "
+                       "discharged no prose key. Replaying a fixture without "
+                       "discharging its paragraphs reports green while the "
+                       "obligations they state are checked by nothing -- name the "
+                       "executable keys via prose_key (#lzprosekeyconvention)"
+                    << std::endl;
+          std::abort();
+        }
+        continue;
+      }
+      // A declared paragraph outranks the by-name annotation exemption: an
+      // `assertions.note` the corpus declared prose is an obligation, and a
+      // reserved name is exactly the place no runner can be made to discharge
+      // one.
+      if (prose_declared_.count(key) != 0) {
+        if (asserted_.count(key) != 0) {
+          std::cout << "FAIL: " << where_ << ": prose key '" << key
+                    << "' was ASSERTED. Comparing an English paragraph -- or a "
+                       "tally derived from one -- against observed behaviour pins "
+                       "wording, not behaviour: a copy-edit reddens the run and a "
+                       "library regression does not. Discharge it via prose_key "
+                       "(#lzprosekeyconvention rule 1)"
+                    << std::endl;
+          std::abort();
+        }
+        if (excused_.count(key) != 0) {
+          std::cout << "FAIL: " << where_ << ": prose key '" << key << "' was excused (\""
+                    << excused_.at(key)
+                    << "\"). A free-text reason is unfalsifiable and is "
+                       "indistinguishable from the undocumented default this "
+                       "convention removes -- discharge it by naming the "
+                       "executable keys instead (#lzprosekeyconvention rule 2)"
+                    << std::endl;
+          std::abort();
+        }
+        if (discharged_.count(key) == 0) {
+          std::cout << "FAIL: " << where_ << ": assertion key '" << key
+                    << "' is declared in `assertions.prose` but this runner "
+                       "discharged nothing for it. A forgotten paragraph must fail "
+                       "rather than vanish (#lzprosekeyconvention rule 4)"
+                    << std::endl;
+          std::abort();
+        }
+        continue;
+      }
       if (assertion_narrative_keys().count(key) != 0) continue;
       if (consumed_.count(key) == 0) {
         std::cout << "FAIL: " << where_ << ": assertion key '" << key
@@ -352,12 +551,93 @@ private:
   }
 
   std::string where_;
+  std::string fixture_;
   const Json* object_;
   std::set<std::string> consumed_;
   std::set<std::string> asserted_;
   std::map<std::string, std::string> excused_;
+  std::set<std::string> prose_declared_;
+  std::set<std::string> discharged_;
+  bool prose_discharged_any_ = false;
   bool finished_ = false;
 };
+
+// Fixture-end verification of the prose ledger (`#lzprosekeyconvention`). Call
+// it once the fixture's replay is finished and every block has gone out of
+// scope; the ledger's own teardown fails a run that never does.
+//
+// Checked here, because only a finished run knows what it asserted:
+//   rule 1 -- a declared paragraph asserted by ANY block of this fixture;
+//   rule 6 -- a discharge naming a key this fixture's run did not assert;
+//   rule 4 -- the discharged set against `assertions.prose` itself. That
+//             comparison is what consumes and asserts the `prose` key.
+inline void verify_prose(const std::string& fixture) {
+  auto& ledger = prose_ledger();
+  const auto declared_it = ledger.declared.find(fixture);
+  if (declared_it == ledger.declared.end()) {
+    std::cout << "FAIL: " << fixture
+              << ": verify_prose was called but no block of this fixture read an "
+                 "`assertions.prose` array. Either the assertion block was never "
+                 "built, or the fixture id does not match the one its blocks were "
+                 "named with (#lzprosekeyconvention)"
+              << std::endl;
+    std::abort();
+  }
+  const std::set<std::string>& declared = declared_it->second;
+  const std::set<std::string>& asserted = ledger.asserted[fixture];
+
+  for (const auto& key : declared) {
+    if (asserted.count(key) != 0) {
+      std::cout << "FAIL: " << fixture << ": prose key '" << key
+                << "' reached an assert_key* call somewhere in this fixture's "
+                   "replay. A paragraph is discharged, never asserted "
+                   "(#lzprosekeyconvention rule 1)"
+                << std::endl;
+      std::abort();
+    }
+  }
+
+  std::set<std::string> discharged;
+  for (const auto& claim : ledger.claims[fixture]) {
+    for (const auto& name : claim.names) {
+      if (declared.count(name) != 0) {
+        std::cout << "FAIL: " << claim.block << ": prose key '" << claim.key
+                  << "' is discharged by '" << name
+                  << "', which is itself declared prose (#lzprosekeyconvention rule 7)"
+                  << std::endl;
+        std::abort();
+      }
+      // THE rule. The excuse is falsifiable because the ledger can check it:
+      // "`epoch_disambiguation` is discharged by `frame_epoch` and `blob_epoch`"
+      // is a claim about the run; "`epoch_disambiguation` is prose" is not.
+      if (asserted.count(name) == 0) {
+        std::cout << "FAIL: " << claim.block << ": prose key '" << claim.key
+                  << "' is discharged by '" << name
+                  << "', which this fixture's run never asserted. The obligation "
+                     "the paragraph states is carried by nothing "
+                     "(#lzprosekeyconvention rule 6)"
+                  << std::endl;
+        std::abort();
+      }
+    }
+    discharged.insert(claim.key);
+  }
+
+  if (discharged != declared) {
+    std::string missing;
+    for (const auto& key : declared)
+      if (discharged.count(key) == 0) missing += (missing.empty() ? "" : ", ") + key;
+    std::string extra;
+    for (const auto& key : discharged)
+      if (declared.count(key) == 0) extra += (extra.empty() ? "" : ", ") + key;
+    std::cout << "FAIL: " << fixture << ": the discharged prose set differs from `assertions.prose`"
+              << (missing.empty() ? "" : " -- declared but never discharged: " + missing)
+              << (extra.empty() ? "" : " -- discharged but not declared: " + extra)
+              << " (#lzprosekeyconvention rule 4)" << std::endl;
+    std::abort();
+  }
+  ledger.verified.insert(fixture);
+}
 
 // Adapter so an existing `json_member(expected, "key")` call site records
 // consumption unchanged. This is a RUNG 2 read: the value still has to reach an

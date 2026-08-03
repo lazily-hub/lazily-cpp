@@ -131,9 +131,26 @@ static void test_nodeid_exact_range_is_replayed() {
       return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
              lazily_test::json_string(*list[1]) == "msgpack";
     });
-    block.excuse_keys({"clause", "wire_encoding", "outcomes", "anti_vacuity", "generator"},
-                      "prose: it states WHY the fixture is shaped this way; the behaviour it "
-                      "describes is asserted by the per-scenario decode below");
+    // The three paragraphs the corpus declares in `assertions.prose`, each
+    // DISCHARGED by naming the executable keys this fixture's run asserts
+    // (`#lzprosekeyconvention`). The naming is checked: `verify_prose` below
+    // refuses a name no block of this replay actually asserted.
+    //
+    // `outcome` and `node_id_decimal` between them carry all three. The clause
+    // is "represent it exactly or refuse": `outcome` is the accept/refuse
+    // verdict checked against the identifier's representability, and
+    // `node_id_decimal` is the DECIMAL rendering — which is also what the
+    // `wire_encoding` paragraph exists to require, since a JSON-number
+    // expectation would have been rounded by the fixture's own parser before any
+    // comparison. `scenario_count` adds the anti-vacuity half: the two `exact`
+    // controls were replayed, not skipped.
+    block.prose_key("clause", {"outcome", "node_id_decimal"});
+    block.prose_key("wire_encoding", {"node_id_decimal", "outcome"});
+    block.prose_key("anti_vacuity", {"node_id_decimal", "outcome", "scenario_count"});
+    block.excuse_keys({"outcomes", "generator"},
+                      "the corpus-wide outcome vocabulary and the emitting script; neither is a "
+                      "fact about the frames under test, and the per-scenario `outcome` key is "
+                      "asserted against each frame below");
     block.finish();
   }
 
@@ -214,6 +231,10 @@ static void test_nodeid_exact_range_is_replayed() {
   // refusing, and a decoder that stopped decoding, are each a failure here.
   REQUIRE(accepted == 4, "lazily-cpp decodes the four scenarios inside [0, 2^63)");
   REQUIRE(refused == 2, "lazily-cpp refuses both u64::MAX identifiers");
+
+  // Checks every discharge above against what this run asserted. The ledger's
+  // teardown fails a run that omits this call.
+  lazily_test::verify_prose(kFixtureId);
 }
 
 // The regression the audit turned up, isolated from the corpus replay above.

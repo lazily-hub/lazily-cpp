@@ -149,10 +149,25 @@ static void test_nodekey_null_leniency_is_replayed() {
              lazily_test::json_string(*list[1]) == "null" &&
              lazily_test::json_string(*list[2]) == "present";
     });
-    block.excuse_keys(
-        {"clause", "wire_encoding", "reencode_obligation", "anti_vacuity", "generator"},
-        "prose: it states WHY the fixture is shaped this way; the behaviour it describes is "
-        "asserted by the per-scenario decode and re-encode below");
+    // The four paragraphs the corpus declares in `assertions.prose`, each
+    // DISCHARGED by naming the executable keys this fixture's run asserts
+    // (`#lzprosekeyconvention`). `verify_prose` below refuses a name no block of
+    // this replay actually asserted, which is what makes the naming falsifiable
+    // where the free-text reason it replaces was not.
+    //
+    // The clause has two halves and needs both keys: `decoded_key` is the
+    // decoder accepting omitted and explicit-null alike and constructing a key
+    // from neither, `reencoded_key_field_present` is the encoder still emitting
+    // the OMITTED form. `reencode_obligation` is the second half alone — the
+    // paragraph says so by name. `wire_encoding` is discharged by the keys that
+    // can only be satisfied by decoding the scenario's own bytes: `key_forms`
+    // pins the three wire shapes and `decoded_key` reads each back.
+    block.prose_key("clause", {"decoded_key", "reencoded_key_field_present"});
+    block.prose_key("wire_encoding", {"key_forms", "decoded_key"});
+    block.prose_key("reencode_obligation", {"reencoded_key_field_present"});
+    block.prose_key("anti_vacuity", {"decoded_key", "key_forms", "scenario_count"});
+    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
+                                  "about the frames under test");
     block.finish();
   }
 
@@ -217,6 +232,10 @@ static void test_nodekey_null_leniency_is_replayed() {
   REQUIRE(keys_decoded == 4,
           "only the `present` scenarios carry a key; a runner reporting absent for everything "
           "satisfies the null cases trivially");
+
+  // Checks every discharge above against what this run asserted. The ledger's
+  // teardown fails a run that omits this call.
+  lazily_test::verify_prose(kFixtureId);
 }
 
 int main() {
