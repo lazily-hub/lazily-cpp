@@ -143,6 +143,9 @@ static void test_nodeid_exact_range_is_replayed() {
   // Booked inside `decode_scenario`'s dispatch arms, never from the scenarios'
   // own `codec` labels (`#lznullformblind`).
   std::set<std::string> decoders_entered;
+  // The verdict NAMES whose per-scenario comparison against the real decode
+  // passed -- what `assertions.outcomes` is measured against.
+  std::set<std::string> outcomes_validated;
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
@@ -173,11 +176,17 @@ static void test_nodeid_exact_range_is_replayed() {
     expect.assert_key_with("outcome", [&](const lazily_test::Json& want) {
       const std::string outcome = lazily_test::json_string(want);
       // `exact` admits ONE verdict: the frame decoded.
-      if (outcome == "exact") return result.ok;
+      if (outcome == "exact") {
+        if (!result.ok) return false;
+        outcomes_validated.insert(outcome);
+        return true;
+      }
       // `exact_or_reject` admits either, but not either arbitrarily — this
       // binding must accept exactly the identifiers it can represent.
       if (outcome != "exact_or_reject") return false;
-      return result.ok == representable;
+      if (result.ok != representable) return false;
+      outcomes_validated.insert(outcome);
+      return true;
     });
 
     if (!result.ok) {
@@ -219,12 +228,6 @@ static void test_nodeid_exact_range_is_replayed() {
     expect.assert_key("root_id_decimal", std::to_string(snapshot->roots.front()));
     expect.finish();
   }
-
-  // Four scenarios (2^53-1 and 2^53+1, in both codecs) are inside int64_t; the
-  // two at u64::MAX are not. Pinning both halves means a parser that stopped
-  // refusing, and a decoder that stopped decoding, are each a failure here.
-  REQUIRE(accepted == 4, "lazily-cpp decodes the four scenarios inside [0, 2^63)");
-  REQUIRE(refused == 2, "lazily-cpp refuses both u64::MAX identifiers");
 
   // The assertion block is evaluated AFTER the replay. `scenario_count` against
   // `scenarios.size()` would be the fixture compared to itself — green over a
@@ -268,16 +271,36 @@ static void test_nodeid_exact_range_is_replayed() {
     // fixture's own parser round 2^53+1 before any comparison happened.
     block.prose_key("wire_encoding", {"node_id_decimal", "outcome"});
     block.prose_key("anti_vacuity", {"node_id_decimal", "outcome", "scenario_count"});
-    block.excuse_keys({"outcomes", "generator"},
-                      "the corpus-wide outcome vocabulary and the emitting script; neither is a "
-                      "fact about the frames under test, and the per-scenario `outcome` key is "
-                      "asserted against each frame above");
+    // `outcomes` is the corpus's glossary of verdict names. It used to be
+    // EXCUSED as "not a fact about the frames under test" -- but it is: the names
+    // it defines are exactly the verdicts this run reached, and the excuse let
+    // the corpus retire one silently. Asserted in both directions against the
+    // outcomes whose per-scenario comparison against `result.ok` really passed
+    // (`#lznullformblind`).
+    block.assert_key_with("outcomes", [&](const lazily_test::Json& want) {
+      REQUIRE(want.is_object(), "assertions.outcomes is a glossary object");
+      std::set<std::string> declared;
+      for (const auto& kv : want.object)
+        declared.insert(kv.first);
+      return declared == outcomes_validated;
+    });
+    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
+                                  "about the frames under test");
     block.finish();
   }
 
   // Checks every discharge above against what this run asserted. The ledger's
   // teardown fails a run that omits this call.
   lazily_test::verify_prose(kFixtureId);
+
+  // Runner-side floors sit BELOW the fixture's own block: a floor above it
+  // aborts on exactly the input `scenario_count` exists to catch
+  // (`#lznullformblind`). Four scenarios (2^53-1 and 2^53+1, in both codecs) are
+  // inside int64_t; the two at u64::MAX are not. Pinning both halves means a
+  // parser that stopped refusing, and a decoder that stopped decoding, are each
+  // a failure here.
+  REQUIRE(accepted == 4, "lazily-cpp decodes the four scenarios inside [0, 2^63)");
+  REQUIRE(refused == 2, "lazily-cpp refuses both u64::MAX identifiers");
 }
 
 // The regression the audit turned up, isolated from the corpus replay above.

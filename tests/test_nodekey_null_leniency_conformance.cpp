@@ -290,11 +290,6 @@ static void test_nodekey_null_leniency_is_replayed() {
     expect.finish();
   }
 
-  REQUIRE(replayed == 12, "two fields x three key forms x two codecs");
-  REQUIRE(keys_decoded == 4,
-          "only the `present` scenarios carry a key; a runner reporting absent for everything "
-          "satisfies the null cases trivially");
-
   // The assertion block is evaluated AFTER the replay. `scenario_count` against
   // `scenarios.size()` would be the fixture compared to itself — green over a
   // runner that decodes nothing, which is precisely the vacuity
@@ -376,6 +371,17 @@ static void test_nodekey_null_leniency_is_replayed() {
   // Checks every discharge above against what this run asserted. The ledger's
   // teardown fails a run that omits this call.
   lazily_test::verify_prose(kFixtureId);
+
+  // The runner-side floors sit BELOW the fixture's own block, not above it
+  // (`#lznullformblind`). A hand-maintained `replayed == 12` ahead of
+  // `assertions.scenario_count` aborts on exactly the input that key exists to
+  // catch, making the corpus assertion unreachable for the only run that would
+  // falsify it. The exact count is the corpus's to state; what stays here is the
+  // control the corpus does NOT carry.
+  REQUIRE(replayed > 0, "the replay loop entered no scenario at all");
+  REQUIRE(keys_decoded == 4,
+          "only the `present` scenarios carry a key; a runner reporting absent for everything "
+          "satisfies the null cases trivially");
 }
 
 int main() {

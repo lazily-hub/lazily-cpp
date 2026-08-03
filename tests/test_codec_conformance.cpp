@@ -329,13 +329,18 @@ TEST(test_json_frames_round_trip) {
     expect.finish();
     ++replayed;
   }
-  REQUIRE(replayed == 3, "one scenario per IpcMessage variant");
-
   // The tally the `assertions` block — a different, and EARLIER, `TEST` — is
   // compared against (`#lznullformblind`). Deleting this loop leaves the fact
   // unrecorded, and reading an unrecorded fact aborts, so `scenario_count` can
   // no longer pass over a runner that decodes nothing.
+  //
+  // Recorded BEFORE the floor below, and the floor demoted to "something ran".
+  // A hand-maintained `replayed == 3` sitting AHEAD of the fixture's own
+  // `scenario_count` aborts on exactly the input that key exists to catch, so
+  // the corpus assertion was unreachable for the only run that would falsify it.
+  // The exact number is the corpus's to state.
   lazily_test::record_run_count(kFixtureId, "scenarios_replayed", static_cast<long long>(replayed));
+  REQUIRE(replayed > 0, "the replay loop entered no scenario at all");
 }
 
 // json is byte-canonical (§ Frame codecs): one message, one byte form. The
@@ -561,12 +566,10 @@ TEST(test_msgpack_frames_round_trip) {
     expect.finish();
     ++replayed;
   }
-  REQUIRE(replayed == 3, "one scenario per IpcMessage variant");
-
-  // The tally the `assertions` block — a different, and EARLIER, `TEST` — is
-  // compared against (`#lznullformblind`).
+  // Recorded ahead of the floor, for the reason spelled out in the json half.
   lazily_test::record_run_count(kMsgpackFixtureId, "scenarios_replayed",
                                 static_cast<long long>(replayed));
+  REQUIRE(replayed > 0, "the replay loop entered no scenario at all");
 }
 
 // The variants the corpus carries no frame for, plus the two encoding rules the

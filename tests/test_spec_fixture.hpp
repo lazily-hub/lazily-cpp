@@ -343,6 +343,12 @@ inline std::string spec_fixture_text(const std::string& area, const std::string&
   // HERE -- from the bytes just read -- rather than from a list a runner keeps.
   // Opening a fixture and never replaying it satisfies rules 1-7 vacuously.
   declare_prose_requirement(fixture_id, text);
+  // Rung 0 (`#lznullformblind`). A top-level `assertions` block must be BOUND to
+  // AssertionKeys by someone. Derived here for the same reason: every rung above
+  // rung 0 is scoped to a block a runner already bound, so an unbound block is
+  // not reported as unread -- it is not reported at all.
+  if (text.find("\"assertions\"") != std::string::npos)
+    declare_assertion_block(fixture_id, *parse_json(text));
   return text;
 }
 

@@ -87,6 +87,7 @@
 #ifndef LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
 #define LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
@@ -106,6 +107,108 @@ namespace lazily_test {
 inline const std::set<std::string>& assertion_narrative_keys() {
   static const std::set<std::string> keys = {"note", "notes", "comment", "description", "why"};
   return keys;
+}
+
+// -- rung 0: the BIND ledger (`#lznullformblind`) -------------------------
+//
+// Every rung this file implements is scoped to a block a runner ALREADY BOUND.
+// The unconsumed-key guard fires for a key a bound block carries and nobody
+// read; the unasserted guard for one read and never compared; rule 8 for a
+// declared `prose` array never verified. A block NO runner ever hands to
+// `AssertionKeys` carries no keys as far as any of them is concerned, so it
+// reports nothing at all -- and its assertions are silent, however load-bearing.
+// `receipts/causal_receipts.json` sat in that hole here, its six keys read
+// through a hand-written allowlist that proved only that they were read.
+//
+// The fixture LOADER is the only door into the corpus, so it is where the
+// requirement is derived -- the same door rule 8 already uses. Every top-level
+// `assertions` object handed out must be bound by someone before exit.
+//
+// Booked BY CONTENT, not by the block's `where` label: runners spell those
+// labels inconsistently (`<id> assertions`, `<area>/<file> assertions`,
+// `__func__ expected`), and a label-keyed ledger would book a block as missing
+// while a runner really did bind it under a name the loader could not predict.
+// Two distinct fixtures with byte-identical assertion blocks would satisfy each
+// other here; that is the price of not trusting the label, and no such pair
+// exists in the corpus today.
+inline void write_canonical(const Json& value, std::string& out) {
+  switch (value.type) {
+  case Json::Type::Null:
+    out += "n";
+    return;
+  case Json::Type::Bool:
+    out += value.boolean ? "t" : "f";
+    return;
+  case Json::Type::Number:
+    out += "#" + (value.number_token.empty() ? std::to_string(value.number) : value.number_token);
+    return;
+  case Json::Type::String:
+    out += "\"" + value.str + "\"";
+    return;
+  case Json::Type::Array:
+    out += "[";
+    for (const auto& element : value.array) {
+      write_canonical(*element, out);
+      out += ",";
+    }
+    out += "]";
+    return;
+  case Json::Type::Object: {
+    // Sorted, so two parses of the same bytes agree whatever order they kept.
+    std::vector<std::pair<std::string, const Json*>> members;
+    for (const auto& kv : value.object)
+      members.emplace_back(kv.first, kv.second.get());
+    std::sort(members.begin(), members.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    out += "{";
+    for (const auto& kv : members) {
+      out += kv.first + ":";
+      write_canonical(*kv.second, out);
+      out += ",";
+    }
+    out += "}";
+    return;
+  }
+  }
+}
+
+inline std::string assertion_block_fingerprint(const Json& object) {
+  std::string out;
+  write_canonical(object, out);
+  return out;
+}
+
+struct BindLedger {
+  std::map<std::string, std::string> required; // fingerprint -> fixture id
+  std::set<std::string> bound;                 // fingerprints handed to AssertionKeys
+
+  ~BindLedger() {
+    for (const auto& kv : required) {
+      if (bound.count(kv.first) != 0) continue;
+      std::cout << "FAIL: " << kv.second
+                << ": this fixture carries a top-level `assertions` block that NO runner "
+                   "bound to AssertionKeys. Every other guard here is scoped to a bound "
+                   "block, so an unbound one is not reported as unread -- it is not "
+                   "reported at all, and every key it carries is silent however "
+                   "load-bearing. Bind it (#lznullformblind)"
+                << std::endl;
+      std::abort();
+    }
+  }
+};
+
+inline BindLedger& bind_ledger() {
+  static BindLedger ledger;
+  return ledger;
+}
+
+// Called from the fixture reader, so the requirement comes from the bytes on
+// disk rather than from a list a runner maintains.
+inline void declare_assertion_block(const std::string& fixture_id, const Json& document) {
+  if (!document.is_object()) return;
+  const Json* assertions = document.find("assertions");
+  if (assertions == nullptr || !assertions->is_object()) return;
+  bind_ledger().required.emplace(assertion_block_fingerprint(*assertions), fixture_id);
 }
 
 // -- the prose ledger (`#lzprosekeyconvention`) ---------------------------
@@ -424,6 +527,9 @@ public:
     REQUIRE(object.is_object(), "assertion block must be a JSON object");
     consumed_ = assertion_narrative_keys();
     fixture_ = fixture_of(where_);
+    // Rung 0: this block is now BOUND (`#lznullformblind`). By content, so the
+    // loader's requirement is satisfied whatever `where` this runner chose.
+    bind_ledger().bound.insert(assertion_block_fingerprint(object));
     // The corpus decides which keys are paragraphs; this binding does not. Read
     // WITHOUT consuming -- `prose` is consumed by the discharge-set comparison
     // in `verify_prose`, which is what makes a forgotten key fail rather than
