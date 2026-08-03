@@ -41,6 +41,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -92,24 +93,35 @@ struct DecodeResult {
   IpcMessage message{};
 };
 
-static DecodeResult decode_scenario(const lazily_test::Json& scenario) {
+// `decoders_entered` is booked INSIDE the dispatch arms, on a decoder call that
+// really happened — returning a message or refusing one, both of which are this
+// fixture's conforming outcomes. `assertions.codecs` is compared against it, so
+// it can no longer be satisfied by counting the scenarios' own `codec` labels,
+// which is the fixture describing itself (`#lznullformblind`).
+static DecodeResult decode_scenario(const lazily_test::Json& scenario,
+                                    std::set<std::string>& decoders_entered) {
   const std::string codec = lazily_test::json_string(lazily_test::json_member(scenario, "codec"));
+  REQUIRE(codec == "json" || codec == "msgpack", "scenario names an unknown codec: " + codec);
   try {
     if (codec == "json") {
       // The raw TEXT through the codec's own entry point, so the parse that
       // would round is inside the code under test.
-      return {true, decode_json(
-                        lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")))};
+      DecodeResult result{true, decode_json(lazily_test::json_string(
+                                    lazily_test::json_member(scenario, "wire_json")))};
+      decoders_entered.insert("json");
+      return result;
     }
-    if (codec == "msgpack") {
-      return {true, decode_msgpack(hex_to_bytes(lazily_test::json_string(
-                        lazily_test::json_member(scenario, "wire_msgpack_hex"))))};
-    }
+    DecodeResult result{true, decode_msgpack(hex_to_bytes(lazily_test::json_string(
+                                  lazily_test::json_member(scenario, "wire_msgpack_hex"))))};
+    decoders_entered.insert("msgpack");
+    return result;
   } catch (const std::runtime_error&) {
+    // Reachable only from inside an arm above, so the decoder DID run — it ran
+    // and refused, which is the conforming outcome for an identifier outside
+    // int64_t. The arm is booked on this path for that reason.
+    decoders_entered.insert(codec);
     return {false, IpcMessage{}};
   }
-  REQUIRE(false, "scenario names an unknown codec");
-  return {false, IpcMessage{}};
 }
 
 static void test_nodeid_exact_range_is_replayed() {
@@ -128,7 +140,9 @@ static void test_nodeid_exact_range_is_replayed() {
   std::size_t accepted = 0;
   std::size_t refused = 0;
   std::size_t replayed = 0;
-  std::set<std::string> codecs_seen;
+  // Booked inside `decode_scenario`'s dispatch arms, never from the scenarios'
+  // own `codec` labels (`#lznullformblind`).
+  std::set<std::string> decoders_entered;
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
@@ -136,7 +150,6 @@ static void test_nodeid_exact_range_is_replayed() {
     const auto& scenario = sv.replay();
     const std::string id = sv.id();
     ++replayed;
-    codecs_seen.insert(lazily_test::json_string(lazily_test::json_member(scenario, "codec")));
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
@@ -146,16 +159,26 @@ static void test_nodeid_exact_range_is_replayed() {
     const uint64_t expected = std::stoull(decimal);
     const bool representable = expected <= kMaxExactNodeId;
 
-    // `outcome` is the corpus-wide statement of what a decoder may do.
-    // lazily-cpp reads it as a constraint on the FIXTURE: an `exact` scenario
-    // it cannot represent would be a fixture bug, not a binding bug.
+    const DecodeResult result = decode_scenario(scenario, decoders_entered);
+
+    // `outcome` is the corpus-wide statement of what a decoder may do, and it is
+    // asserted against WHAT THIS DECODER DID (`#lznullformblind`).
+    //
+    // It used to be evaluated here as a constraint on the FIXTURE — `exact`
+    // meant "the identifier fits in int64_t" — with both sides derived from the
+    // scenario's own `node_id_decimal` and the comparison placed BEFORE the
+    // decode ran. Nothing about the run could reach it: a decoder that refused
+    // every frame, or accepted every frame, satisfied it identically. The
+    // comparison is now after the decode and against `result.ok`.
     expect.assert_key_with("outcome", [&](const lazily_test::Json& want) {
       const std::string outcome = lazily_test::json_string(want);
-      if (outcome == "exact") return representable;
-      return outcome == "exact_or_reject";
+      // `exact` admits ONE verdict: the frame decoded.
+      if (outcome == "exact") return result.ok;
+      // `exact_or_reject` admits either, but not either arbitrarily — this
+      // binding must accept exactly the identifiers it can represent.
+      if (outcome != "exact_or_reject") return false;
+      return result.ok == representable;
     });
-
-    const DecodeResult result = decode_scenario(scenario);
 
     if (!result.ok) {
       REQUIRE(!representable,
@@ -213,10 +236,19 @@ static void test_nodeid_exact_range_is_replayed() {
                                      lazily_test::json_member(*fx, "assertions"));
     block.assert_key("required_of_binding", std::string("MUST"));
     block.assert_key("scenario_count", static_cast<int64_t>(replayed));
+    // Both directions against the DECODERS THIS RUN ENTERED. The previous
+    // `codecs_seen.size() == 2` counted the scenarios' own `codec` labels, so it
+    // was satisfied by a fixture carrying two of them and said nothing about
+    // whether either decoder ran (`#lznullformblind`).
     block.assert_key_with("codecs", [&](const lazily_test::Json& want) {
       const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
-             lazily_test::json_string(*list[1]) == "msgpack" && codecs_seen.size() == 2;
+      if (list.size() != 2 || lazily_test::json_string(*list[0]) != "json" ||
+          lazily_test::json_string(*list[1]) != "msgpack")
+        return false;
+      std::set<std::string> declared;
+      for (const auto& element : list)
+        declared.insert(lazily_test::json_string(*element));
+      return declared == decoders_entered;
     });
     // The three paragraphs the corpus declares in `assertions.prose`, each
     // DISCHARGED by naming the executable keys this fixture's run asserts

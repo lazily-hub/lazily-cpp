@@ -162,11 +162,30 @@ static std::string wire_backend_form(const lazily_test::Json& scenario) {
 
 // Decode STRICTLY from the raw wire the fixture carries. Nothing is re-encoded
 // on the way in.
-static IpcMessage decode_scenario(const lazily_test::Json& scenario) {
-  if (scenario_codec(scenario) == "json")
-    return decode_json(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")));
-  return decode_msgpack(hex_to_bytes(
-      lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex"))));
+//
+// `decoders_entered` is booked INSIDE the dispatch arm, on a decoder call that
+// really happened — returning a frame or refusing one, both of which this
+// fixture's scenarios declare as outcomes. `assertions.codecs` is compared
+// against it, so it can no longer be satisfied by counting the scenarios' own
+// `codec` labels, which is the fixture describing itself (`#lznullformblind`).
+static IpcMessage decode_scenario(const lazily_test::Json& scenario,
+                                  std::set<std::string>& decoders_entered) {
+  const std::string codec = scenario_codec(scenario);
+  try {
+    IpcMessage message =
+        codec == "json"
+            ? decode_json(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")))
+            : decode_msgpack(hex_to_bytes(lazily_test::json_string(
+                  lazily_test::json_member(scenario, "wire_msgpack_hex"))));
+    decoders_entered.insert(codec);
+    return message;
+  } catch (...) {
+    // A refusal is the decoder RUNNING and saying no — the conforming outcome
+    // for the two reject forms — so the arm is booked here too, and the
+    // exception continues to the caller that asserts on it.
+    decoders_entered.insert(codec);
+    throw;
+  }
 }
 
 // What an accept scenario yields, with the two epochs kept APART. `frame_epoch`
@@ -240,10 +259,17 @@ static void test_blob_backend_discriminator_is_replayed() {
   std::size_t null_form_replayed = 0;
   std::size_t non_string_form_replayed = 0;
   std::size_t epochs_differed = 0;
-  std::set<std::string> codecs_seen;
+  // Booked inside `decode_scenario`'s dispatch arm, never from the scenarios'
+  // own `codec` labels (`#lznullformblind`).
+  std::set<std::string> decoders_entered;
   std::set<std::string> forms_seen;
   std::set<std::string> rejection_kinds_seen;
   std::set<std::string> decoded_backends; // the vocabulary this run actually PROVED
+  // The outcome each frame REACHED, not the one its scenario declared. A
+  // scenario labelled `reject` whose frame decoded anyway records nothing here,
+  // so the vocabulary cannot be satisfied by the labels alone
+  // (`#lznullformblind`).
+  std::set<std::string> outcomes_reached;
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body that
@@ -251,7 +277,6 @@ static void test_blob_backend_discriminator_is_replayed() {
     const auto& scenario = sv.replay();
     const std::string id = sv.id();
     ++replayed;
-    codecs_seen.insert(scenario_codec(scenario));
 
     const std::string outcome =
         lazily_test::json_string(lazily_test::json_member(scenario, "outcome"));
@@ -265,7 +290,11 @@ static void test_blob_backend_discriminator_is_replayed() {
     REQUIRE(form == on_wire, id + ": scenario declares backend_form '" + form +
                                  "' but its own wire carries '" + on_wire +
                                  "' — the label and the bytes disagree");
-    forms_seen.insert(form);
+    // The form read off the RAW BYTES, not the scenario's `backend_form` label.
+    // The two are pinned equal one line above, so this changes no verdict today
+    // — it changes which side the vocabulary assertion is rooted in
+    // (`#lznullformblind`).
+    forms_seen.insert(on_wire);
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
@@ -285,7 +314,7 @@ static void test_blob_backend_discriminator_is_replayed() {
       bool threw_runtime_error = false;
       bool threw_logic_error = false;
       try {
-        (void)decode_scenario(scenario);
+        (void)decode_scenario(scenario, decoders_entered);
       } catch (const std::logic_error& e) {
         // Caught FIRST and reported separately. `std::invalid_argument` and
         // `std::out_of_range` are logic_errors, so they escape the
@@ -307,6 +336,7 @@ static void test_blob_backend_discriminator_is_replayed() {
       // satisfies the first and fails the second, which is the whole point of
       // the second key.
       expect.assert_key("rejected", threw_any);
+      if (threw_any) outcomes_reached.insert("reject");
       expect.assert_key_with("rejection_is_decode_error", [&](const lazily_test::Json& want) {
         if (!lazily_test::json_bool(want)) return !threw_runtime_error;
         REQUIRE(!threw_logic_error,
@@ -333,7 +363,11 @@ static void test_blob_backend_discriminator_is_replayed() {
         kind = lazily_test::json_string(want);
         return kind == kind_from_wire;
       });
-      rejection_kinds_seen.insert(kind);
+      // The kind derived from the scenario's own BYTES, not the fixture's
+      // `rejection_kind` value that `kind` holds. The two are pinned equal by the
+      // assertion just above; the vocabulary must be rooted in the wire
+      // (`#lznullformblind`).
+      rejection_kinds_seen.insert(kind_from_wire);
       if (kind == "non_string") ++non_string_form_replayed;
 
       // The refusal must be FOR THE STATED REASON. A decoder that refused
@@ -363,11 +397,12 @@ static void test_blob_backend_discriminator_is_replayed() {
     // reddened could not be attributed to the frame that reddened it.
     IpcMessage message;
     try {
-      message = decode_scenario(scenario);
+      message = decode_scenario(scenario, decoders_entered);
     } catch (const std::exception& e) {
       REQUIRE(false, id + ": accept scenario was refused: " + e.what());
     }
     const DecodedScenario decoded = decoded_scenario(scenario, message);
+    outcomes_reached.insert("accept");
     const ShmBlobRef& blob = *decoded.blob;
     if (blob.backend != BlobBackendKind::Shm) ++non_shm_decoded;
 
@@ -433,10 +468,12 @@ static void test_blob_backend_discriminator_is_replayed() {
       if (list.size() != 2 || lazily_test::json_string(*list[0]) != "json" ||
           lazily_test::json_string(*list[1]) != "msgpack")
         return false;
-      // Both were actually driven, so a runner that quietly skipped one wire
-      // cannot satisfy the key by naming it.
-      return codecs_seen.size() == 2 && contains(codecs_seen, "json") &&
-             contains(codecs_seen, "msgpack");
+      // Both decoders were actually ENTERED, so a runner that quietly skipped one
+      // wire cannot satisfy the key by naming it — and the set is built in the
+      // dispatch arm rather than from the scenarios' `codec` labels, so a runner
+      // that decodes nothing cannot satisfy it either (`#lznullformblind`).
+      return decoders_entered.size() == 2 && contains(decoders_entered, "json") &&
+             contains(decoders_entered, "msgpack");
     });
 
     // The enum this binding closes `backend` to, AND the vocabulary guard.
@@ -502,10 +539,23 @@ static void test_blob_backend_discriminator_is_replayed() {
              std::set<std::string>{std::string("unknown_token"), std::string("non_string")};
     });
 
-    block.assert_key_with("outcomes", [](const lazily_test::Json& want) {
+    // `#lznullformblind`. This was a comparison against two runner-side string
+    // literals and nothing else — a lambda that captured nothing, which is the
+    // tell. Delete the replay loop entirely and it stayed green, which is the
+    // vacuity `anti_vacuity` two lines below exists to name. It now closes over
+    // the outcomes frames actually REACHED, in both directions: no declared
+    // outcome went unreached, and no frame reached an outcome the block does not
+    // declare. A run where every reject scenario decoded anyway records only
+    // `accept` and fails here.
+    block.assert_key_with("outcomes", [&](const lazily_test::Json& want) {
       const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "accept" &&
-             lazily_test::json_string(*list[1]) == "reject";
+      if (list.size() != 2 || lazily_test::json_string(*list[0]) != "accept" ||
+          lazily_test::json_string(*list[1]) != "reject")
+        return false;
+      std::set<std::string> declared;
+      for (const auto& element : list)
+        declared.insert(lazily_test::json_string(*element));
+      return declared == outcomes_reached;
     });
 
     // The nine paragraphs the corpus declares in `assertions.prose`. Each is
@@ -540,11 +590,15 @@ static void test_blob_backend_discriminator_is_replayed() {
     block.prose_key("non_string_form", {"rejected", "rejection_is_decode_error", "rejection_kind"});
     // The two epochs are separate facts, asserted against separate sources.
     block.prose_key("epoch_disambiguation", {"frame_epoch", "blob_epoch"});
-    // The four controls, in order: a real decode and a read discriminator
+    // The controls, in order: a real decode and a read discriminator
     // (`decoded_backend`), the encoder half (`reencoded_backend_field_present`),
-    // a complete vocabulary (`backends`), and a full replay (`scenario_count`).
+    // a complete vocabulary (`backends`), a full replay (`scenario_count`), and
+    // — added by the `#lznullformblind` sweep — BOTH verdicts really reached
+    // (`outcomes`), which until now was compared against two runner-side string
+    // literals and so was the one name in this list that a runner decoding
+    // nothing could still satisfy.
     block.prose_key("anti_vacuity", {"decoded_backend", "reencoded_backend_field_present",
-                                     "backends", "scenario_count"});
+                                     "backends", "scenario_count", "outcomes"});
     // PROXY. `theorem` names a Lean proof in another repository
     // (lazily-formal / docs/zero-copy-transport.md); a run here can only prove
     // its CONSEQUENCE. These three are that consequence: an unknown kind is

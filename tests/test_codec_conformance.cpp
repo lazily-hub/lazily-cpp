@@ -216,6 +216,44 @@ static void assert_values(lazily_test::AssertionKeys& expect, const IpcMessage& 
   }
 }
 
+// -- the fixture `assertions` block, asserted against THE RUN ------------------
+//
+// `#lznullformblind`. `scenario_count` was compared against
+// `scenarios.size()` — the fixture measured against ITSELF. Delete the replay
+// loop entirely and it still passed: the exact vacuity
+// `assertions.anti_vacuity` exists to name, sitting in the guard meant to
+// enforce it.
+//
+// The reason it was written that way is structural, and it is why the shape
+// went unnoticed here longest: the `assertions` block is a DIFFERENT `TEST`
+// from the replay, and being declared first it also RUNS first, so nothing the
+// run produced is in scope yet. `assert_key_against_run` captures the fixture's
+// value here and performs the comparison at `verify_prose` in `main`, against
+// the facts the replay records — the same fixture-scoped ledger
+// `#lzprosekeyconvention` already uses to check a discharge from a block that
+// has gone out of scope. Restructuring the tests was the alternative; carrying
+// the tally is the mechanism that already exists.
+//
+// The OTHER keys in these blocks stay fixture-vs-literal on purpose, and the
+// distinction is the point. `codec`, `role`, `self_describing`,
+// `byte_canonical` and `required_of_binding` are CORPUS DECLARATIONS a binding
+// pins by agreement, not facts a replay produces. `byte_canonical` is the
+// clearest case: it states what two conforming bindings may do with the same
+// message, so no single implementation's run can produce a comparable value —
+// this encoder is deterministic, and every observation it can make is
+// consistent with `true` even where the wire says `false`. Deferring those to a
+// run tally would not remove a vacuity, it would manufacture a wrong assertion.
+
+// The declared scenario tally, against the scenarios this run actually reached.
+// Shared by both codec blocks: the two are the same guard over two wires, and a
+// per-codec copy is where a self-comparison creeps back in.
+static void assert_scenario_count_against_run(lazily_test::AssertionKeys& block) {
+  block.assert_key_against_run("scenario_count", [](const lazily_test::Json& want,
+                                                    const lazily_test::RunFacts& run) {
+    return static_cast<long long>(lazily_test::json_u64(want)) == run.count("scenarios_replayed");
+  });
+}
+
 // -- the replay ---------------------------------------------------------------
 
 // The fixture-level `assertions` block: the codec's identity and the two
@@ -228,23 +266,28 @@ TEST(test_json_codec_fixture_block) {
           "fixture protocol_version");
   REQUIRE(lazily_test::json_string(lazily_test::json_member(*fx, "kind")) == "FrameCodecRoundTrip",
           "fixture kind");
+  // Fixture IDENTITY, not an assertion key: which of the two corpora this test
+  // opened. It says nothing about the run and is not meant to.
   REQUIRE(lazily_test::json_string(lazily_test::json_member(*fx, "codec")) == "json",
           "fixture codec field");
 
-  const auto scenario_count =
-      lazily_test::json_array(lazily_test::json_member(*fx, "scenarios")).size();
   lazily_test::AssertionKeys assertions(std::string(kFixtureId) + " assertions",
                                         lazily_test::json_member(*fx, "assertions"));
+  // Corpus declarations, pinned by agreement (see the header comment above).
   assertions.assert_key("codec", std::string("json"));
   assertions.assert_key("self_describing", true);
   assertions.assert_key("byte_canonical", true);
   assertions.assert_key("required_of_binding", std::string("MUST"));
   assertions.assert_key("role", std::string("reference"));
-  assertions.assert_key("scenario_count", static_cast<int64_t>(scenario_count));
+  // The one key here that IS a fact about the run.
+  assert_scenario_count_against_run(assertions);
   // `note` is declared prose by the corpus (`#lzprosekeyconvention`), so the
   // by-name annotation exemption does not reach it: it states an obligation.
   // The obligation is that ROLE and BYTE-CANONICALITY stay distinct senses, and
-  // the two keys it names are the ones asserted separately just above.
+  // the two keys it names are the ones asserted separately just above. Both are
+  // corpus declarations rather than run facts, which is what the paragraph is
+  // ABOUT — it asks that two declared senses not be conflated, so the keys that
+  // carry it are the declarations themselves.
   assertions.prose_key("note", {"role", "byte_canonical"});
   assertions.finish();
 }
@@ -287,6 +330,12 @@ TEST(test_json_frames_round_trip) {
     ++replayed;
   }
   REQUIRE(replayed == 3, "one scenario per IpcMessage variant");
+
+  // The tally the `assertions` block — a different, and EARLIER, `TEST` — is
+  // compared against (`#lznullformblind`). Deleting this loop leaves the fact
+  // unrecorded, and reading an unrecorded fact aborts, so `scenario_count` can
+  // no longer pass over a runner that decodes nothing.
+  lazily_test::record_run_count(kFixtureId, "scenarios_replayed", static_cast<long long>(replayed));
 }
 
 // json is byte-canonical (§ Frame codecs): one message, one byte form. The
@@ -408,13 +457,14 @@ TEST(test_msgpack_codec_fixture_block) {
           "fixture protocol_version");
   REQUIRE(lazily_test::json_string(lazily_test::json_member(*fx, "kind")) == "FrameCodecRoundTrip",
           "fixture kind");
+  // Fixture IDENTITY, not an assertion key: which of the two corpora this test
+  // opened.
   REQUIRE(lazily_test::json_string(lazily_test::json_member(*fx, "codec")) == "msgpack",
           "fixture codec field");
 
-  const auto scenario_count =
-      lazily_test::json_array(lazily_test::json_member(*fx, "scenarios")).size();
   lazily_test::AssertionKeys assertions(std::string(kMsgpackFixtureId) + " assertions",
                                         lazily_test::json_member(*fx, "assertions"));
+  // Corpus declarations, pinned by agreement (see the header comment above).
   assertions.assert_key("codec", std::string("msgpack"));
   assertions.assert_key("self_describing", true);
   // The distinction protocol.md keeps apart: `msgpack` is self-describing AND
@@ -423,7 +473,8 @@ TEST(test_msgpack_codec_fixture_block) {
   assertions.assert_key("byte_canonical", false);
   assertions.assert_key("required_of_binding", std::string("MUST"));
   assertions.assert_key("role", std::string("cross_language_binary_default"));
-  assertions.assert_key("scenario_count", static_cast<int64_t>(scenario_count));
+  // The one key here that IS a fact about the run.
+  assert_scenario_count_against_run(assertions);
   // `note` is declared prose by the corpus (`#lzprosekeyconvention`), so the
   // by-name annotation exemption does not reach it. Its obligation — a frame is
   // a MAP KEYED BY FIELD NAME, not a positional array, which is what keeps
@@ -432,7 +483,8 @@ TEST(test_msgpack_codec_fixture_block) {
   // why verification is fixture-scoped and happens in `main`), by
   // `round_trip_equals_source` for the decoded values this fixture pins in place
   // of golden bytes, and by `byte_canonical` for the property that forced that
-  // choice.
+  // choice. The first two are run facts; the third is the corpus declaration the
+  // paragraph exists to explain.
   assertions.prose_key("note",
                        {"byte_canonical", "encoded_body_field_names", "round_trip_equals_source"});
   assertions.finish();
@@ -510,6 +562,11 @@ TEST(test_msgpack_frames_round_trip) {
     ++replayed;
   }
   REQUIRE(replayed == 3, "one scenario per IpcMessage variant");
+
+  // The tally the `assertions` block — a different, and EARLIER, `TEST` — is
+  // compared against (`#lznullformblind`).
+  lazily_test::record_run_count(kMsgpackFixtureId, "scenarios_replayed",
+                                static_cast<long long>(replayed));
 }
 
 // The variants the corpus carries no frame for, plus the two encoding rules the

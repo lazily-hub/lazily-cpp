@@ -49,6 +49,25 @@
 // library regression does not -- and excusing it with free text is the
 // unfalsifiable default the convention exists to remove. Both now fail.
 //
+// A key can also be asserted and still prove nothing, which is the fifth path
+// (`#lznullformblind`). `scenario_count` compared against `scenarios.size()` is
+// the fixture measured against ITSELF; `outcomes` compared against a list of
+// runner-side literals is the fixture measured against a copy of itself the
+// binding happens to hold. Both reach `assert_key`, both mark the key asserted,
+// and both stay green over a runner that decodes nothing -- the exact vacuity
+// `assertions.anti_vacuity` exists to name, sitting inside the guard meant to
+// enforce it. The test is: DELETE THE REPLAY LOOP -- does the assertion still
+// pass? If yes it is vacuous.
+//
+// The reason it is easy to write is structural: the `assertions` block is
+// routinely a DIFFERENT `TEST` from the replay it describes, and there is
+// nothing in scope but the fixture. `assert_key_against_run` closes that gap --
+// the fixture's own value is captured where the block is read, the RUN FACT is
+// recorded where the replay produces it, and the comparison happens at
+// `verify_run_facts` once every test has run. A fact that was never recorded is
+// a failure rather than a missing optional, which is what makes deleting the
+// replay redden the assertion.
+//
 // Usage:
 //   lazily_test::AssertionKeys keys("presence.json#3 expected", expected);
 //   keys.assert_key("present", cell.present(ctx), json_presence_map);
@@ -56,15 +75,20 @@
 //   keys.assert_key_with("invalidates", [&](const Json& v) {
 //     return json_bool(json_member(v, "present")) == !was;
 //   });
+//   keys.assert_key_against_run("scenario_count", [](const Json& want, const RunFacts& run) {
+//     return static_cast<long long>(json_u64(want)) == run.count("scenarios_replayed");
+//   });
 //   keys.excuse_key("mode", "selects the strategy driven above, not a value");
 //   keys.prose_key("clause", {"backends", "scenario_count"});
 //   keys.finish();
+//   lazily_test::record_run_count("codec/x.json", "scenarios_replayed", replayed);
 //   lazily_test::verify_prose("codec/blob_backend_discriminator.json");
 
 #ifndef LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
 #define LAZILY_TESTS_TEST_ASSERTION_KEYS_HPP
 
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <iostream>
 #include <map>
@@ -263,6 +287,136 @@ inline unsigned long long parse_fixture_scalar(const Json& v, unsigned long long
   return static_cast<unsigned long long>(json_u64(v));
 }
 
+// -- the run-fact ledger (`#lznullformblind`) -----------------------------
+//
+// Fixture-scoped for the same reason the prose ledger is, and for a sharper
+// one: the block that carries `scenario_count` is usually a different `TEST`
+// from the replay that produces the tally, and static initialisation runs the
+// block FIRST. With only the fixture in scope, the assertion that gets written
+// is `scenarios.size()` -- the fixture compared to itself.
+//
+// A RUN FACT is a count or a vocabulary the replay OBSERVED, recorded where it
+// is produced and read back where the fixture declares it.
+
+// What the run produced, for one fixture.
+struct RunFacts {
+  std::string fixture;
+  std::map<std::string, long long> counts;
+  std::map<std::string, std::set<std::string>> vocabularies;
+
+  // Reading a fact the run never recorded is a FAILURE, not a zero. That is the
+  // whole mechanism: delete the replay loop and the assertion reddens here
+  // rather than passing over an empty tally.
+  long long count(const std::string& name) const {
+    const auto it = counts.find(name);
+    if (it == counts.end()) {
+      std::cout << "FAIL: " << fixture << ": run fact '" << name
+                << "' was never recorded, so the assertion that reads it is comparing "
+                   "the fixture against nothing the run produced. Record it from the "
+                   "replay (#lznullformblind)"
+                << std::endl;
+      std::abort();
+    }
+    return it->second;
+  }
+
+  const std::set<std::string>& vocabulary(const std::string& name) const {
+    const auto it = vocabularies.find(name);
+    if (it == vocabularies.end()) {
+      std::cout << "FAIL: " << fixture << ": run vocabulary '" << name
+                << "' was never recorded, so the assertion that reads it is comparing "
+                   "the fixture against nothing the run produced. Record it from the "
+                   "replay (#lznullformblind)"
+                << std::endl;
+      std::abort();
+    }
+    return it->second;
+  }
+
+  bool vocabulary_is(const std::string& name, const std::set<std::string>& want) const {
+    return vocabulary(name) == want;
+  }
+};
+
+// One deferred comparison: this fixture value, against these run facts, once
+// the replay is finished.
+struct DeferredAssertion {
+  std::string block;
+  std::string key;
+  // A SHARED pointer into the fixture document, not a reference: the document is
+  // a local of the block's `TEST` and is gone long before this runs.
+  JsonPtr want;
+  std::function<bool(const Json&, const RunFacts&)> check;
+};
+
+struct RunFactLedger {
+  std::map<std::string, RunFacts> facts;
+  std::map<std::string, std::vector<DeferredAssertion>> deferred;
+
+  // A deferred comparison that never happened has proven exactly as much as an
+  // unconsumed key. Same shape as the prose ledger's teardown, and for the same
+  // reason: `abort()` rather than a throw, because this runs at exit.
+  ~RunFactLedger() {
+    for (const auto& kv : deferred) {
+      if (kv.second.empty()) continue;
+      std::cout << "FAIL: " << kv.first << ": " << kv.second.size()
+                << " assertion key(s) were deferred to this fixture's run (first: '"
+                << kv.second.front().key << "') but verify_run_facts(\"" << kv.first
+                << "\") never ran, so they were never compared against what the "
+                   "replay produced (#lznullformblind)"
+                << std::endl;
+      std::abort();
+    }
+  }
+};
+
+inline RunFactLedger& run_fact_ledger() {
+  static RunFactLedger ledger;
+  return ledger;
+}
+
+// Record a tally the replay produced. Call it AFTER the loop with the final
+// count, so the fact is the run's own answer rather than a partial one.
+inline void record_run_count(const std::string& fixture, const std::string& name, long long value) {
+  auto& facts = run_fact_ledger().facts[fixture];
+  facts.fixture = fixture;
+  facts.counts[name] = value;
+}
+
+// Record one member of a vocabulary the replay OBSERVED -- the codec it really
+// drove, the outcome a frame really reached. Accumulates.
+inline void record_run_member(const std::string& fixture, const std::string& name,
+                              const std::string& member) {
+  auto& facts = run_fact_ledger().facts[fixture];
+  facts.fixture = fixture;
+  facts.vocabularies[name].insert(member);
+}
+
+// Run every comparison deferred against this fixture. Called by `verify_prose`,
+// and directly by fixtures that declare no prose.
+inline void verify_run_facts(const std::string& fixture) {
+  auto& ledger = run_fact_ledger();
+  const auto it = ledger.deferred.find(fixture);
+  if (it != ledger.deferred.end()) {
+    RunFacts& facts = ledger.facts[fixture];
+    facts.fixture = fixture;
+    for (const auto& claim : it->second) {
+      if (!claim.check(*claim.want, facts)) {
+        std::cout << "FAIL: " << claim.block << ": assertion key '" << claim.key
+                  << "' (fixture value " << json_debug(*claim.want)
+                  << ") disagreed with what this fixture's run actually produced "
+                     "(#lznullformblind)"
+                  << std::endl;
+        std::abort();
+      }
+    }
+    ledger.deferred.erase(it);
+  }
+  // Same scoping rule the prose ledger uses: a "run" is one replay, so a later
+  // one cannot be satisfied by facts an earlier one recorded.
+  ledger.facts.erase(fixture);
+}
+
 class AssertionKeys {
 public:
   AssertionKeys(std::string where, const Json& object)
@@ -305,6 +459,19 @@ public:
       std::abort();
     }
     return *value;
+  }
+
+  // As `required`, but hands back the fixture document's own OWNING handle, so
+  // the value outlives this block. Only `assert_key_against_run` needs it: the
+  // parsed document is a local of the `TEST` that built this block, and a
+  // comparison deferred to the end of the run would otherwise read freed memory.
+  JsonPtr required_shared(const std::string& key) {
+    consumed_.insert(key);
+    for (const auto& kv : object_->object)
+      if (kv.first == key) return kv.second;
+    std::cout << "FAIL: " << where_ << ": required assertion key '" << key
+              << "' is missing from the fixture" << std::endl;
+    std::abort();
   }
 
   // Drop-in for `Json::find`, so an existing optional-lookup call site records
@@ -403,6 +570,28 @@ public:
     asserted_.insert(key);
     if (!check(*want)) fail_mismatch(key, *want);
     return true;
+  }
+
+  // -- rung 5: assertions against the RUN (`#lznullformblind`) ------------
+
+  // Compare `key` against facts THE RUN produced, in a block that cannot see the
+  // run yet. `check` receives the fixture's own value and the fixture's run
+  // facts, and is called by `verify_run_facts` after every test has executed --
+  // which is what lets an `assertions` block sitting in a different (and
+  // earlier) `TEST` than its replay still assert a tally or a vocabulary instead
+  // of measuring the fixture against itself.
+  //
+  // The key is marked asserted HERE because the comparison is now guaranteed to
+  // happen: the ledger's teardown fails a run that never verifies, and reading a
+  // fact the replay never recorded aborts rather than returning zero.
+  template <typename Check> void assert_key_against_run(const std::string& key, Check check) {
+    DeferredAssertion claim;
+    claim.want = required_shared(key);
+    claim.block = where_;
+    claim.key = key;
+    claim.check = std::function<bool(const Json&, const RunFacts&)>(check);
+    asserted_.insert(key);
+    run_fact_ledger().deferred[fixture_].push_back(std::move(claim));
   }
 
   // -- declared exceptions ------------------------------------------------
@@ -635,6 +824,11 @@ private:
 //   rule 4 -- the discharged set against `assertions.prose` itself. That
 //             comparison is what consumes and asserts the `prose` key.
 inline void verify_prose(const std::string& fixture) {
+  // First, because a discharge that names a key which was only ever compared
+  // against the fixture's own structure is a discharge resting on nothing
+  // (`#lznullformblind`). The vacuity has to be reported before the claim that
+  // leans on it.
+  verify_run_facts(fixture);
   auto& ledger = prose_ledger();
   const auto declared_it = ledger.declared.find(fixture);
   if (declared_it == ledger.declared.end()) {

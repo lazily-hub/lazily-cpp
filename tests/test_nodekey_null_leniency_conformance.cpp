@@ -61,13 +61,26 @@ static std::vector<uint8_t> json_bytes(const lazily_test::Json& value) {
   return out;
 }
 
-static IpcMessage decode_scenario(const lazily_test::Json& scenario) {
+// The codec DISPATCH. Which arm was entered is recorded here, inside the arm and
+// after the decoder returned, rather than tallied afterwards from the scenario's
+// `codec` label (`#lznullformblind`). `assertions.codecs` is the claim that both
+// decoders ran; a set built from the label is a set built from the fixture, and
+// it is green over a runner that decodes nothing.
+static IpcMessage decode_scenario(const lazily_test::Json& scenario,
+                                  std::set<std::string>& decoders_entered) {
   const std::string codec = lazily_test::json_string(lazily_test::json_member(scenario, "codec"));
-  if (codec == "json")
-    return decode_json(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")));
-  if (codec == "msgpack")
-    return decode_msgpack(hex_to_bytes(
+  if (codec == "json") {
+    IpcMessage message =
+        decode_json(lazily_test::json_string(lazily_test::json_member(scenario, "wire_json")));
+    decoders_entered.insert("json");
+    return message;
+  }
+  if (codec == "msgpack") {
+    IpcMessage message = decode_msgpack(hex_to_bytes(
         lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex"))));
+    decoders_entered.insert("msgpack");
+    return message;
+  }
   REQUIRE(false, "scenario names an unknown codec");
   return IpcMessage{};
 }
@@ -117,6 +130,29 @@ static std::string wire_key_form(const lazily_test::Json& scenario) {
   return "present";
 }
 
+// A SECOND witness for the msgpack form, taken WITHOUT the decoder.
+//
+// `wire_key_form` above reads a msgpack frame through `msgpack_to_json` — this
+// binding's own decoder. That makes the control and the thing it controls share
+// a dependency: a decoder that lost the nil/absent distinction would classify
+// every scenario the same way AND decode every scenario the same way, and the
+// two would agree all the way to green. This one reads the bytes directly.
+//
+// `a3 6b 65 79` is the MessagePack fixstr header for a 3-byte string followed by
+// `key`; the byte after it is that entry's value, and `c0` is nil. No match at
+// all is the OMITTED form — the entry is not on the wire.
+static std::string raw_msgpack_key_form(const std::string& hex) {
+  const std::vector<uint8_t> bytes = hex_to_bytes(hex);
+  const uint8_t marker[4] = {0xa3, 'k', 'e', 'y'};
+  for (std::size_t i = 0; i + 4 < bytes.size(); ++i) {
+    if (bytes[i] != marker[0] || bytes[i + 1] != marker[1] || bytes[i + 2] != marker[2] ||
+        bytes[i + 3] != marker[3])
+      continue;
+    return bytes[i + 4] == 0xc0 ? "null" : "present";
+  }
+  return "omitted";
+}
+
 // Re-encode under the scenario's own codec and read the field set back
 // SCHEMA-LESSLY. The typed `std::optional<NodeKey>` cannot tell "field absent"
 // from "field present and null", which is the whole distinction under test.
@@ -134,14 +170,20 @@ static const JsonValue& reencoded_node(const lazily_test::Json& scenario, const 
   return frame_node(owner, scenario, "re-encoded frame");
 }
 
+// The field DISPATCH, recorded the same way and for the same reason as the codec
+// one: `fields_decoded` is booked on the arm whose envelope the DECODED message
+// really turned out to be, so `assertions.fields` cannot be satisfied by the
+// scenario's `field` label alone (`#lznullformblind`).
 static std::optional<std::string> decoded_key(const lazily_test::Json& scenario,
-                                              const IpcMessage& message) {
+                                              const IpcMessage& message,
+                                              std::set<std::string>& fields_decoded) {
   const std::string field = lazily_test::json_string(lazily_test::json_member(scenario, "field"));
   // Fail closed (#lzscenariobodyskip) — see `reencoded_node`.
   REQUIRE(field == "snapshot" || field == "node_add", "unknown nodekey field in fixture: " + field);
   if (field == "snapshot") {
     const auto* envelope = std::get_if<IpcMessageSnapshot>(&message);
     REQUIRE(envelope != nullptr, "fixture declares the Snapshot variant");
+    fields_decoded.insert("snapshot");
     const auto& key = envelope->value.nodes.front().key;
     return key ? std::optional<std::string>(std::string(key->path())) : std::nullopt;
   }
@@ -149,6 +191,7 @@ static std::optional<std::string> decoded_key(const lazily_test::Json& scenario,
   REQUIRE(envelope != nullptr, "fixture declares the Delta variant");
   const auto* op = std::get_if<DeltaOpNodeAdd>(&envelope->value.ops.front());
   REQUIRE(op != nullptr, "fixture declares a NodeAdd op");
+  fields_decoded.insert("node_add");
   return op->key ? std::optional<std::string>(std::string(op->key->path())) : std::nullopt;
 }
 
@@ -167,8 +210,12 @@ static void test_nodekey_null_leniency_is_replayed() {
   std::size_t replayed = 0;
   std::size_t keys_decoded = 0;
   std::set<std::string> forms_seen; // read off each scenario's own wire
-  std::set<std::string> fields_seen;
-  std::set<std::string> codecs_seen;
+  // Booked inside the dispatch arms of `decoded_key` / `decode_scenario`, on the
+  // envelope and the decoder that were really reached — never from the
+  // scenario's own `field` / `codec` labels, which are the fixture describing
+  // itself (`#lznullformblind`).
+  std::set<std::string> fields_decoded;
+  std::set<std::string> decoders_entered;
 
   for (const auto& sv : lazily_test::scenario_views(kFixtureId, scenarios)) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
@@ -176,8 +223,6 @@ static void test_nodekey_null_leniency_is_replayed() {
     const auto& scenario = sv.replay();
     const std::string id = sv.id();
     ++replayed;
-    fields_seen.insert(lazily_test::json_string(lazily_test::json_member(scenario, "field")));
-    codecs_seen.insert(lazily_test::json_string(lazily_test::json_member(scenario, "codec")));
 
     // The label and the bytes must agree before either is trusted, and the
     // reading happens BEFORE the decode that would collapse omitted into null.
@@ -187,13 +232,25 @@ static void test_nodekey_null_leniency_is_replayed() {
     REQUIRE(form == on_wire, id + ": scenario declares key_form '" + form +
                                  "' but its own wire carries '" + on_wire +
                                  "' — the label and the bytes disagree");
+    // The msgpack half of `wire_key_form` runs through this binding's own
+    // decoder, so a defect there would corrupt the control and the thing
+    // controlled together. The raw-byte witness has no such dependency.
+    if (lazily_test::json_string(lazily_test::json_member(scenario, "codec")) == "msgpack") {
+      const std::string raw = raw_msgpack_key_form(
+          lazily_test::json_string(lazily_test::json_member(scenario, "wire_msgpack_hex")));
+      REQUIRE(raw == on_wire,
+              id + ": the two wire witnesses disagree — msgpack_to_json says '" + on_wire +
+                  "', the raw bytes say '" + raw +
+                  "'. A decoder defect that moved both would be invisible, which is why "
+                  "there are two");
+    }
     forms_seen.insert(on_wire);
 
     lazily_test::AssertionKeys expect(std::string(kFixtureId) + " scenarios[" + id + "].expect",
                                       lazily_test::json_member(scenario, "expect"));
 
-    const IpcMessage message = decode_scenario(scenario);
-    const auto key = decoded_key(scenario, message);
+    const IpcMessage message = decode_scenario(scenario, decoders_entered);
+    const auto key = decoded_key(scenario, message, fields_decoded);
     if (key) ++keys_decoded;
 
     // The decode half: omitted and explicit-null must both arrive absent.
@@ -249,18 +306,29 @@ static void test_nodekey_null_leniency_is_replayed() {
                                      lazily_test::json_member(*fx, "assertions"));
     block.assert_key("required_of_binding", std::string("MUST"));
     block.assert_key("scenario_count", static_cast<int64_t>(replayed));
+    // Both directions against the DECODERS THIS RUN ENTERED, not against a count
+    // of the scenarios' own `codec` labels (`#lznullformblind`): the previous
+    // `codecs_seen.size() == 2` was satisfied by a fixture carrying two labels
+    // and said nothing about whether either decoder ran.
     block.assert_key_with("codecs", [&](const lazily_test::Json& want) {
       const auto& list = lazily_test::json_array(want);
-      return list.size() == 2 && lazily_test::json_string(*list[0]) == "json" &&
-             lazily_test::json_string(*list[1]) == "msgpack" && codecs_seen.size() == 2;
+      if (list.size() != 2 || lazily_test::json_string(*list[0]) != "json" ||
+          lazily_test::json_string(*list[1]) != "msgpack")
+        return false;
+      std::set<std::string> declared;
+      for (const auto& element : list)
+        declared.insert(lazily_test::json_string(*element));
+      return declared == decoders_entered;
     });
+    // Likewise: booked on the envelope the decode really produced, so a fixture
+    // that labels a frame `node_add` and carries a Snapshot cannot satisfy it.
     block.assert_key_with("fields", [&](const lazily_test::Json& want) {
       const auto& list = lazily_test::json_array(want);
       std::set<std::string> declared;
       for (const auto& element : list)
         declared.insert(lazily_test::json_string(*element));
       return list.size() == 2 && lazily_test::json_string(*list[0]) == "snapshot" &&
-             lazily_test::json_string(*list[1]) == "node_add" && declared == fields_seen;
+             lazily_test::json_string(*list[1]) == "node_add" && declared == fields_decoded;
     });
     // Both directions, against the RAW WIRE rather than a list of literals:
     // every declared form was carried by a scenario whose own bytes this runner

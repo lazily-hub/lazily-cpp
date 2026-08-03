@@ -27,9 +27,11 @@
 
 #include <algorithm>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -88,13 +90,6 @@ static std::optional<std::string> require_nullable(const Json* obj, const char* 
   return node->str;
 }
 
-// Assertion keys this runner verifies. Anything else means the corpus grew a
-// property nobody checks.
-static bool is_known_assertion(const std::string& key) {
-  return key == "receipt_count" || key == "current_generation" || key == "causation_id" ||
-         key == "terminal_outcome" || key == "stale_receipt_ids" || key == "nonterminal_outcomes";
-}
-
 template <typename T> static void check_eq(const char* what, const T& actual, const T& expected) {
   ++g_checks;
   if (actual == expected) return;
@@ -121,10 +116,6 @@ int main() {
 
   const Json* assertions = fixture->find("assertions");
   REQUIRE(assertions != nullptr && assertions->is_object(), "fixture has no assertions block");
-  for (const auto& kv : assertions->object)
-    REQUIRE(is_known_assertion(kv.first),
-            "unrecognised receipts assertion key in fixture — it would be "
-            "silently ignored");
 
   const Json* wire = fixture->find("wire");
   REQUIRE(wire != nullptr, "fixture has no wire block");
@@ -134,24 +125,35 @@ int main() {
   REQUIRE(receipts != nullptr && receipts->is_array() && !receipts->array.empty(),
           "the CausalReceipts envelope carries no receipts");
 
-  const Json* want_gen = assertions->find("current_generation");
-  REQUIRE(want_gen != nullptr, "assertions have no current_generation");
-  const int64_t current_generation = want_gen->as_int();
+  // The block is BOUND to the tracker here and asserted at the end of the fold.
+  //
+  // It was previously read through a hand-written `is_known_assertion` allowlist
+  // — the exact shape `AssertionKeys` exists to replace. That allowlist covered
+  // rung 2 (every key is READ) and nothing above it: a key read and never
+  // compared, or compared against the fixture's own structure, passed. It is
+  // also the shape that made this fixture invisible to every guard the family
+  // has, since all of them are scoped to blocks a runner already bound
+  // (`#lznullformblind`).
+  lazily_test::AssertionKeys keys(std::string(kArea) + "/" + kFixture + " assertions", *assertions);
 
-  const Json* want_causation = assertions->find("causation_id");
-  REQUIRE(want_causation != nullptr && want_causation->type == Json::Type::String,
-          "assertions have no causation_id");
+  // Two SELECTORS, consumed here and asserted below against the fold they drove.
+  const int64_t current_generation = keys.required("current_generation").as_int();
+  const Json& causation = keys.required("causation_id");
+  REQUIRE(causation.type == Json::Type::String, "assertions.causation_id must be a string");
+  const std::string want_causation_id = causation.str;
 
   // Fold the frame. `current_generation` is the projection's notion of "now": a
   // receipt stamped with any other generation is stale.
   ReceiptProjection projection;
   std::vector<std::string> classified_stale;
+  std::set<std::string> observed_causation_ids; // read off the folded receipts
   size_t recorded = 0;
   for (const auto& entry : receipts->array) {
     REQUIRE(entry->is_object(), "a receipt is not an object");
     CausalReceipt receipt;
     receipt.receipt_id = require_str(entry.get(), "receipt_id");
     receipt.causation_id = require_str(entry.get(), "causation_id");
+    observed_causation_ids.insert(receipt.causation_id);
     receipt.observer = require_str(entry.get(), "observer");
     const Json* gen = entry->find("generation");
     REQUIRE(gen != nullptr && gen->type == Json::Type::Number,
@@ -180,10 +182,17 @@ int main() {
     }
   }
 
-  const Json* want_count = assertions->find("receipt_count");
-  REQUIRE(want_count != nullptr, "assertions have no receipt_count");
+  // `#lznullformblind`. This compared `assertions.receipt_count` against
+  // `wire.CausalReceipts.receipts.size()` — the fixture measured against ITSELF.
+  // Delete the fold loop above entirely and it still passed, because neither
+  // side of the comparison had anything to do with the run. It is now the
+  // receipts the projection actually FOLDED.
+  keys.assert_key("receipt_count", static_cast<int64_t>(g_receipts_replayed));
+  ++g_checks;
+  // The fixture's own two halves still have to agree with each other, which is a
+  // separate fact from "the run folded that many" and is stated separately.
   check_eq("receipt_count (frame size)", static_cast<long long>(receipts->array.size()),
-           static_cast<long long>(want_count->as_int()));
+           static_cast<long long>(assertions->find("receipt_count")->as_int()));
 
   const std::vector<std::string> want_stale = str_array(assertions->find("stale_receipt_ids"));
   std::vector<std::string> got_stale = classified_stale;
@@ -191,16 +200,14 @@ int main() {
   std::vector<std::string> sorted_want = want_stale;
   std::sort(sorted_want.begin(), sorted_want.end());
   ++g_checks;
-  if (got_stale != sorted_want) {
-    std::cout << "FAIL: stale_receipt_ids mismatch\n  expected:";
-    for (const auto& s : sorted_want)
-      std::cout << " " << s;
-    std::cout << "\n  actual:  ";
-    for (const auto& s : got_stale)
-      std::cout << " " << s;
-    std::cout << std::endl;
-    std::abort();
-  }
+  // Against the ids the fold really CLASSIFIED stale, in both directions.
+  keys.assert_key_with("stale_receipt_ids", [&](const Json& want) {
+    std::vector<std::string> declared;
+    for (const auto& element : lazily_test::json_array(want))
+      declared.push_back(lazily_test::json_string(*element));
+    std::sort(declared.begin(), declared.end());
+    return declared == got_stale;
+  });
 
   // The projection's own stale set must agree with the per-receipt statuses.
   std::vector<std::string> projection_stale = projection.stale_receipt_ids();
@@ -215,26 +222,36 @@ int main() {
   check_eq("recorded receipts (loop count)", static_cast<long long>(recorded),
            static_cast<long long>(receipts->array.size() - want_stale.size()));
 
-  check_eq("current_generation", projection.current_generation(), current_generation);
+  // The generation the PROJECTION converged on, not the selector it was fed.
+  keys.assert_key("current_generation", projection.current_generation());
+  ++g_checks;
 
-  const auto terminal = projection.terminal_for(want_causation->str);
+  const auto terminal = projection.terminal_for(want_causation_id);
   ++g_checks;
-  REQUIRE(terminal.has_value(), "the causation id named by the fixture has no terminal receipt");
-  const Json* want_terminal = assertions->find("terminal_outcome");
-  REQUIRE(want_terminal != nullptr && want_terminal->type == Json::Type::String,
-          "assertions have no terminal_outcome");
+  // `causation_id` selects which chain to fold, so it is asserted against the
+  // fold it selected: the projection really carries a terminal for that chain,
+  // and the receipts really named it. A selector compared against nothing is the
+  // label-as-assertion shape (`#lznullformblind`).
+  keys.assert_key_with("causation_id", [&](const Json& want) {
+    return terminal.has_value() && lazily_test::json_string(want) == want_causation_id &&
+           observed_causation_ids.count(want_causation_id) != 0;
+  });
   ++g_checks;
-  REQUIRE(terminal->outcome == outcome_of(want_terminal->str),
-          "the folded terminal outcome does not match the fixture");
+  keys.assert_key_with("terminal_outcome", [&](const Json& want) {
+    const ReceiptOutcome declared = outcome_of(lazily_test::json_string(want));
+    // Two facts: the FOLDED terminal is that outcome, and this binding really
+    // classifies it terminal.
+    return terminal.has_value() && terminal->outcome == declared && is_terminal(declared);
+  });
   ++g_checks;
-  REQUIRE(is_terminal(outcome_of(want_terminal->str)),
-          "the fixture's terminal_outcome is not classified terminal");
-
-  for (const auto& spelling : str_array(assertions->find("nonterminal_outcomes"))) {
-    ++g_checks;
-    REQUIRE(!is_terminal(outcome_of(spelling)),
-            "an outcome the fixture calls non-terminal is classified terminal");
-  }
+  keys.assert_key_with("nonterminal_outcomes", [&](const Json& want) {
+    for (const auto& element : lazily_test::json_array(want)) {
+      if (is_terminal(outcome_of(lazily_test::json_string(*element)))) return false;
+    }
+    return true;
+  });
+  ++g_checks;
+  keys.finish();
 
   // State-based idempotence: re-observing the identical frame records nothing
   // new and does not move the generation.
