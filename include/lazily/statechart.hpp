@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -64,7 +65,8 @@ struct ChartDef {
   // tests/test_statechart.cpp.
   Kind kind(const std::string& id) const {
     auto it = states.find(id);
-    return it != states.end() ? it->second.kind : Kind::Atomic;
+    if (it == states.end()) throw std::out_of_range("unknown state in this chart: " + id);
+    return it->second.kind;
   }
 
   std::vector<std::string> ancestors_inclusive(const std::string& id) const {

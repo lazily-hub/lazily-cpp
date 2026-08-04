@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -61,6 +62,10 @@ static const std::vector<std::string> kFixtures = {
 static size_t g_steps_replayed = 0;
 static size_t g_assertions = 0;
 
+static void chart_require(bool condition, const char* message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
 // ---------------------------------------------------------------------------
 // Fixture -> chart
 // ---------------------------------------------------------------------------
@@ -70,15 +75,15 @@ static size_t g_assertions = 0;
 static bool history_is_deep(const std::string& spelling) {
   if (spelling == "deep") return true;
   if (spelling == "shallow") return false;
-  REQUIRE(false, "unknown statechart history depth in fixture");
+  chart_require(false, "unknown statechart history depth in fixture");
   return false; // unreachable
 }
 
 static std::vector<std::string> str_array(const Json* node) {
-  REQUIRE(node != nullptr && node->is_array(), "expected a JSON array");
+  chart_require(node != nullptr && node->is_array(), "expected a JSON array");
   std::vector<std::string> out;
   for (const auto& item : node->array) {
-    REQUIRE(item->type == Json::Type::String, "expected an array of strings");
+    chart_require(item->type == Json::Type::String, "expected an array of strings");
     out.push_back(item->str);
   }
   return out;
@@ -98,18 +103,18 @@ static std::vector<std::string> active_expectation(const Json* node) {
 // A transition is either a bare target id or an object carrying target/guard/
 // action/internal. Both spellings appear in the corpus.
 static void add_transition(StateBuilder& sb, const std::string& event, const Json* value) {
-  REQUIRE(value != nullptr, "transition has no value");
+  chart_require(value != nullptr, "transition has no value");
   if (value->type == Json::Type::String) {
     sb.on(event, value->str);
     return;
   }
-  REQUIRE(value->is_object(), "a transition must be a target id or a transition object");
+  chart_require(value->is_object(), "a transition must be a target id or a transition object");
   const Json* target = value->find("target");
-  REQUIRE(target != nullptr && target->type == Json::Type::String,
-          "transition object has no target");
+  chart_require(target != nullptr && target->type == Json::Type::String,
+                "transition object has no target");
   TransitionBuilder tb = TransitionBuilder::to(target->str);
   if (const Json* guard = value->find("guard")) {
-    REQUIRE(guard->type == Json::Type::String, "transition guard must be a name");
+    chart_require(guard->type == Json::Type::String, "transition guard must be a name");
     tb.guard(guard->str);
   }
   if (const Json* action = value->find("action")) {
@@ -117,7 +122,7 @@ static void add_transition(StateBuilder& sb, const std::string& event, const Jso
       tb.action(act);
   }
   if (const Json* internal = value->find("internal")) {
-    REQUIRE(internal->type == Json::Type::Bool, "`internal` must be a boolean");
+    chart_require(internal->type == Json::Type::Bool, "`internal` must be a boolean");
     if (internal->as_bool()) tb.internal();
   }
   sb.on_transition(event, std::move(tb));
@@ -127,37 +132,54 @@ static void add_transition(StateBuilder& sb, const std::string& event, const Jso
 // are mutually exclusive by construction; asserting that keeps a malformed
 // fixture from silently collapsing to an atomic state.
 static StateBuilder build_state(const std::string& id, const Json* def) {
-  REQUIRE(def != nullptr && def->is_object(), "state definition is not an object");
+  chart_require(def != nullptr && def->is_object(), "state definition is not an object");
   const Json* parallel = def->find("parallel");
   const Json* history = def->find("history");
   const Json* initial = def->find("initial");
 
   bool is_parallel = false;
   if (parallel != nullptr) {
-    REQUIRE(parallel->type == Json::Type::Bool, "`parallel` must be a boolean");
+    chart_require(parallel->type == Json::Type::Bool, "`parallel` must be a boolean");
     is_parallel = parallel->as_bool();
   }
 
   StateBuilder sb = StateBuilder::atomic(id);
+  std::string inferred_kind = "atomic";
   if (is_parallel) {
-    REQUIRE(history == nullptr, "a state cannot be both parallel and a history pseudo-state");
+    chart_require(history == nullptr, "a state cannot be both parallel and a history pseudo-state");
     sb = StateBuilder::parallel(id);
+    inferred_kind = "parallel";
   } else if (history != nullptr) {
-    REQUIRE(history->type == Json::Type::String, "`history` must be a spelling");
-    REQUIRE(initial == nullptr, "a history pseudo-state has a `default`, never an `initial`");
+    chart_require(history->type == Json::Type::String, "`history` must be a spelling");
+    chart_require(initial == nullptr, "a history pseudo-state has a `default`, never an `initial`");
     sb = history_is_deep(history->str) ? StateBuilder::history_deep(id)
                                        : StateBuilder::history_shallow(id);
+    inferred_kind = "history";
     const Json* fallback = def->find("default");
-    REQUIRE(fallback != nullptr && fallback->type == Json::Type::String,
-            "a history pseudo-state needs a `default` target");
+    chart_require(fallback != nullptr && fallback->type == Json::Type::String,
+                  "a history pseudo-state needs a `default` target");
     sb.default_child(fallback->str);
   } else if (initial != nullptr) {
-    REQUIRE(initial->type == Json::Type::String, "`initial` must be a state id");
+    chart_require(initial->type == Json::Type::String, "`initial` must be a state id");
     sb = StateBuilder::compound(id, initial->str);
+    inferred_kind = "compound";
+  }
+
+  if (const Json* kind = def->find("kind")) {
+    chart_require(kind->type == Json::Type::String, "`kind` must be a string");
+    const bool known = kind->str == "atomic" || kind->str == "compound" ||
+                       kind->str == "parallel" || kind->str == "history" || kind->str == "final";
+    chart_require(known, "unknown statechart kind");
+    if (kind->str == "final") {
+      chart_require(inferred_kind == "atomic", "`kind: final` contradicts structural fields");
+      sb = StateBuilder::final_state(id);
+    } else {
+      chart_require(kind->str == inferred_kind, "declared `kind` contradicts structural fields");
+    }
   }
 
   if (const Json* parent = def->find("parent")) {
-    REQUIRE(parent->type == Json::Type::String, "`parent` must be a state id");
+    chart_require(parent->type == Json::Type::String, "`parent` must be a state id");
     sb.parent(parent->str);
   }
   if (const Json* entry = def->find("entry")) {
@@ -169,7 +191,7 @@ static StateBuilder build_state(const std::string& id, const Json* def) {
       sb.exit(act);
   }
   if (const Json* on = def->find("on")) {
-    REQUIRE(on->is_object(), "`on` must be an event map");
+    chart_require(on->is_object(), "`on` must be an event map");
     for (const auto& kv : on->object)
       add_transition(sb, kv.first, kv.second.get());
   }
@@ -177,15 +199,42 @@ static StateBuilder build_state(const std::string& id, const Json* def) {
 }
 
 static ChartDef build_chart(const Json* chart) {
-  REQUIRE(chart != nullptr && chart->is_object(), "fixture has no chart object");
+  chart_require(chart != nullptr && chart->is_object(), "fixture has no chart object");
+  const Json* initial = chart->find("initial");
+  chart_require(initial != nullptr && initial->type == Json::Type::String,
+                "chart.initial must be a string");
   const Json* states = chart->find("states");
-  REQUIRE(states != nullptr && states->is_object(), "chart has no states object");
+  chart_require(states != nullptr && states->is_object(), "chart has no states object");
+  chart_require(states->find(initial->str) != nullptr, "chart.initial must name a declared state");
   ChartBuilder builder;
   for (const auto& kv : states->object)
     builder.state(build_state(kv.first, kv.second.get()));
   auto def = builder.build();
-  REQUIRE(def.has_value(), "the fixture's chart does not build — duplicate ids or no single root");
+  chart_require(
+      def.has_value(),
+      "the fixture's chart does not build — duplicate ids, dangling refs, or no single root");
   return std::move(*def);
+}
+
+static void reject_malformed_corpus() {
+  const JsonPtr fixture =
+      parse_json(lazily_test::spec_fixture_text(kArea, "malformed_rejected.json"));
+  const Json* cases = fixture->find("cases");
+  REQUIRE(cases != nullptr && cases->is_array() && !cases->array.empty(),
+          "malformed statechart corpus has no cases");
+  for (const auto& scenario : cases->array) {
+    const Json* name = scenario->find("name");
+    const Json* chart = scenario->find("chart");
+    REQUIRE(name != nullptr && name->type == Json::Type::String,
+            "malformed statechart case has no name");
+    bool rejected = false;
+    try {
+      (void)build_chart(chart);
+    } catch (const std::exception&) {
+      rejected = true;
+    }
+    REQUIRE(rejected, "a malformed statechart case was accepted");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -314,12 +363,14 @@ int main() {
   }
   std::sort(on_disk.begin(), on_disk.end());
   std::vector<std::string> known = kFixtures;
+  known.push_back("malformed_rejected.json");
   std::sort(known.begin(), known.end());
   REQUIRE(on_disk == known, "the statechart corpus on disk does not match this runner's fixture "
                             "list — a fixture was added or renamed upstream");
 
   for (const auto& name : kFixtures)
     replay(name);
+  reject_malformed_corpus();
 
   REQUIRE(g_steps_replayed >= 33, "the statechart replay performed too few steps — the corpus is "
                                   "empty, truncated, or short-circuited");
@@ -328,6 +379,6 @@ int main() {
   std::cout << "statechart conformance: " << kFixtures.size() << " fixtures, " << g_steps_replayed
             << " steps, " << g_assertions << " assertions" << std::endl;
 
-  REQUIRE_FIXTURES_LOADED(7);
+  REQUIRE_FIXTURES_LOADED(8);
   return 0;
 }
