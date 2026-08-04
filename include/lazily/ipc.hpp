@@ -648,6 +648,23 @@ struct CapabilityCheck {
   std::string reason;
 };
 
+// State retained after two endpoint advertisements successfully negotiate.
+// This is not either endpoint's CapabilityHandshake: the receive ceiling and
+// fragmentation mode are common session values.
+struct NegotiatedCapabilities {
+  Codec codec = kDefaultCodec;
+  int64_t max_frame_size = kDefaultMaxFrameSize;
+  bool fragmentation_supported = false;
+  std::string session_id;
+};
+
+struct CapabilityNegotiation {
+  CapabilityCheck check;
+  std::optional<NegotiatedCapabilities> capabilities;
+
+  bool ok() const { return check.ok && capabilities.has_value(); }
+};
+
 struct CapabilityHandshake {
   std::string protocol_id = kProtocolId;
   int protocol_major_version = kProtocolMajorVersion;
@@ -669,26 +686,43 @@ struct CapabilityHandshake {
     return false;
   }
 
-  CapabilityCheck check_compatible(const CapabilityHandshake& other,
-                                   const std::vector<std::string>& required_features) const {
-    if (protocol_id != other.protocol_id) return {false, "protocol_id", "protocol id mismatch"};
+  CapabilityNegotiation negotiate(const CapabilityHandshake& other,
+                                  const std::vector<std::string>& required_features = {}) const {
+    const auto fail = [](std::string field, std::string reason) {
+      return CapabilityNegotiation{{false, std::move(field), std::move(reason)}, std::nullopt};
+    };
+    if (protocol_id != other.protocol_id) return fail("protocol_id", "protocol id mismatch");
     if (protocol_major_version != other.protocol_major_version)
-      return {false, "protocol_major_version", "major version mismatch"};
+      return fail("protocol_major_version", "major version mismatch");
     if (codec != other.codec)
-      return {false, "codec",
-              std::string("codec mismatch: ") + codec_token(codec) + " vs " +
-                  codec_token(other.codec)};
+      return fail("codec", std::string("codec mismatch: ") + codec_token(codec) + " vs " +
+                               codec_token(other.codec));
     if (!ordered_reliable || !other.ordered_reliable)
-      return {false, "ordered_reliable", "both peers must require ordered reliable"};
+      return fail("ordered_reliable", "both peers must require ordered reliable");
+    if (max_frame_size <= 0 || other.max_frame_size <= 0)
+      return fail("max_frame_size", "both peers must advertise a positive receive ceiling");
+    if (session_id.empty() || other.session_id.empty())
+      return fail("session_id", "both peers must advertise a non-empty session_id");
+    if (session_id != other.session_id)
+      return fail("session_id", "session_id mismatch: " + session_id + " vs " + other.session_id);
     for (auto& f : required_features) {
-      if (!other.has_feature(f)) return {false, "features", "missing required feature: " + f};
+      if (!other.has_feature(f)) return fail("features", "missing required feature: " + f);
     }
-    return {true, "", ""};
+    NegotiatedCapabilities capabilities;
+    capabilities.codec = codec;
+    capabilities.max_frame_size =
+        max_frame_size < other.max_frame_size ? max_frame_size : other.max_frame_size;
+    capabilities.fragmentation_supported = fragmentation_supported && other.fragmentation_supported;
+    capabilities.session_id = session_id;
+    return {{true, "", ""}, std::move(capabilities)};
   }
 
-  bool is_compatible_with(const CapabilityHandshake& other) const {
-    return check_compatible(other, {}).ok;
+  CapabilityCheck check_compatible(const CapabilityHandshake& other,
+                                   const std::vector<std::string>& required_features) const {
+    return negotiate(other, required_features).check;
   }
+
+  bool is_compatible_with(const CapabilityHandshake& other) const { return negotiate(other).ok(); }
 };
 
 inline CapabilityHandshake new_capability_handshake(PeerId peer_id, const std::string& session_id) {

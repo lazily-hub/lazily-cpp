@@ -146,13 +146,24 @@ static IpcMessage codec_dispatch_sample() {
   return IpcMessageCrdtSync{sync};
 }
 
+static NegotiatedCapabilities negotiate_codec_session(CapabilityHandshake local) {
+  auto remote = new_capability_handshake(local.peer_id + 1, local.session_id);
+  remote.codec = local.codec;
+  remote.max_frame_size = local.max_frame_size;
+  remote.fragmentation_supported = local.fragmentation_supported;
+  const auto negotiation = local.negotiate(remote);
+  assert(negotiation.ok());
+  return *negotiation.capabilities;
+}
+
 // A handshake defaults to `msgpack`, and what it encodes must be the SPEC
 // msgpack wire: an externally tagged frame keyed by the variant name. Checking
 // only that the bytes round-trip would pass against codec.hpp's private
 // framing, which is precisely the frame this test exists to exclude.
 TEST(test_negotiated_msgpack_uses_the_spec_wire) {
-  const auto session = new_capability_handshake(1, "s");
-  assert(session.codec == Codec::MsgPack);
+  const auto local = new_capability_handshake(1, "s");
+  assert(local.codec == Codec::MsgPack);
+  const auto session = negotiate_codec_session(local);
 
   const IpcMessage message = codec_dispatch_sample();
   const std::vector<uint8_t> frame = negotiated_encode(session, message);
@@ -165,8 +176,9 @@ TEST(test_negotiated_msgpack_uses_the_spec_wire) {
 }
 
 TEST(test_negotiated_json_uses_the_reference_codec) {
-  auto session = new_capability_handshake(1, "s");
-  session.codec = Codec::Json;
+  auto local = new_capability_handshake(1, "s");
+  local.codec = Codec::Json;
+  const auto session = negotiate_codec_session(local);
 
   const IpcMessage message = codec_dispatch_sample();
   const std::vector<uint8_t> frame = negotiated_encode(session, message);
@@ -207,7 +219,10 @@ TEST(test_negotiated_codec_mismatch_fails_the_handshake) {
   assert(a.is_compatible_with(b));
 
   const IpcMessage message = codec_dispatch_sample();
-  assert(negotiated_decode(b, negotiated_encode(a, message)) == message);
+  const auto negotiation = a.negotiate(b);
+  assert(negotiation.ok());
+  assert(negotiated_decode(*negotiation.capabilities,
+                           negotiated_encode(*negotiation.capabilities, message)) == message);
 
   b.codec = Codec::Json;
   const auto check = a.check_compatible(b, {});

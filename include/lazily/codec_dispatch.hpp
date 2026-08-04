@@ -62,21 +62,31 @@ inline IpcMessage codec_decode(Codec codec, const std::vector<uint8_t>& bytes) {
 }
 
 // The seam that makes a negotiated session actually speak what it negotiated.
-// Prefer these over naming a codec by hand on any boundary that ran a
-// handshake: the session already holds the answer, and re-deciding it at the
-// call site is how the token and the bytes drift apart.
-inline std::vector<uint8_t> negotiated_encode(const CapabilityHandshake& session,
-                                              const IpcMessage& message) {
-  return codec_encode(session.codec, message);
+// It accepts NegotiatedCapabilities, never one endpoint's advertisement, so a
+// caller cannot accidentally retain the larger local receive ceiling or treat
+// one peer's fragmentation support as mutual.
+inline void require_negotiated_frame_size(const NegotiatedCapabilities& session, size_t len) {
+  if (session.max_frame_size <= 0)
+    throw std::runtime_error("negotiated frame ceiling must be positive");
+  if (!session.fragmentation_supported && len > static_cast<size_t>(session.max_frame_size))
+    throw std::length_error("frame exceeds negotiated unfragmented ceiling");
 }
 
-inline IpcMessage negotiated_decode(const CapabilityHandshake& session, const uint8_t* data,
+inline std::vector<uint8_t> negotiated_encode(const NegotiatedCapabilities& session,
+                                              const IpcMessage& message) {
+  std::vector<uint8_t> bytes = codec_encode(session.codec, message);
+  require_negotiated_frame_size(session, bytes.size());
+  return bytes;
+}
+
+inline IpcMessage negotiated_decode(const NegotiatedCapabilities& session, const uint8_t* data,
                                     size_t len) {
+  require_negotiated_frame_size(session, len);
   return codec_decode(session.codec, data, len);
 }
-inline IpcMessage negotiated_decode(const CapabilityHandshake& session,
+inline IpcMessage negotiated_decode(const NegotiatedCapabilities& session,
                                     const std::vector<uint8_t>& bytes) {
-  return codec_decode(session.codec, bytes.data(), bytes.size());
+  return negotiated_decode(session, bytes.data(), bytes.size());
 }
 
 } // namespace lazily

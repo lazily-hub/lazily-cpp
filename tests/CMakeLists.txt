@@ -117,6 +117,12 @@ add_executable(test_codec_conformance test_codec_conformance.cpp)
 target_link_libraries(test_codec_conformance PRIVATE lazily)
 add_test(NAME CodecConformance COMMAND test_codec_conformance)
 
+# Replays capability_handshake.json through the production negotiation API,
+# retaining the common ceiling and mutual fragmentation state.
+add_executable(test_capability_conformance test_capability_conformance.cpp)
+target_link_libraries(test_capability_conformance PRIVATE lazily)
+add_test(NAME CapabilityConformance COMMAND test_capability_conformance)
+
 # Replays ../lazily-spec/conformance/codec/nodeid_exact_range.json through BOTH
 # codecs (#lzspecdecoderbound). The clause it carries — a decoder that cannot
 # represent a received identifier exactly MUST reject the frame rather than
@@ -361,6 +367,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_receipts_conformance
   test_distributed_conformance
   test_codec_conformance
+  test_capability_conformance
   test_nodeid_exact_range_conformance
   test_nodekey_null_leniency_conformance
   test_blob_backend_discriminator_conformance)
@@ -399,6 +406,7 @@ set_tests_properties(
   ReceiptsConformance
   DistributedConformance
   CodecConformance
+  CapabilityConformance
   # Same omission as the four above, spotted while adding the third of them: all
   # three read the sibling checkout through `require_spec_checkout_or_skip`, so
   # without SKIP_RETURN_CODE their exit-77 SKIP is a hard ctest FAILURE whenever

@@ -77,7 +77,7 @@ fi
 # that holds an unknown `backend` token REFUSED rather than normalized to `shm`;
 # keep the floor aligned so deleting a runner cannot hide behind older aggregate
 # growth.
-MIN_FIXTURES="${MIN_FIXTURES:-119}"
+MIN_FIXTURES="${MIN_FIXTURES:-120}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -180,7 +180,7 @@ excuse_scenario() {
 # multi_epoch_delta.json's two scenarios and outbox_store_protocol.json's four
 # scenarios from hand transcriptions/excuses into actual fixture-driven replays.
 # Raise this when replays are added; NEVER lower it to make a red build green.
-MIN_SCENARIOS="${MIN_SCENARIOS:-119}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-124}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
