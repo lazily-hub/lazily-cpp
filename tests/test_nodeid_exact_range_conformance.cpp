@@ -286,8 +286,6 @@ static void test_nodeid_exact_range_is_replayed() {
     // failure, and neither can be reached by a site that forgot to compare the
     // names -- `finish()` refuses an object-valued key consumed any other way.
     block.assert_key_set("outcomes", outcomes_validated);
-    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
-                                  "about the frames under test");
     block.finish();
   }
 

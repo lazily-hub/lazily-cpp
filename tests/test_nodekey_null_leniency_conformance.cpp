@@ -364,8 +364,6 @@ static void test_nodekey_null_leniency_is_replayed() {
     block.prose_key("wire_encoding", {"wire_input_fnv1a64"});
     block.prose_key("reencode_obligation", {"reencoded_key_field_present"});
     block.prose_key("anti_vacuity", {"decoded_key", "key_forms", "scenario_count"});
-    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
-                                  "about the frames under test");
     block.finish();
   }
 

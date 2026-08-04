@@ -608,8 +608,6 @@ static void test_blob_backend_discriminator_is_replayed() {
     // wire carried and no descriptor is ever routed to another backend's table.
     block.prose_key("theorem", {"decoded_backend", "rejected", "rejection_is_decode_error"});
 
-    block.excuse_key("generator", "names the corpus script that emits this fixture, not a fact "
-                                  "about the frames under test");
     block.finish();
   }
 
