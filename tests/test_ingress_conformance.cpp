@@ -46,6 +46,8 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -704,12 +706,285 @@ void the_invalidation_probe_discriminates() {
   REQUIRE(model.value_is_valid(key), "a buffered envelope must NOT invalidate the value reader");
 }
 
+struct BoundaryDelivery {
+  std::string id;
+  std::set<std::string> targets;
+  std::set<std::string> acked;
+};
+
+struct BoundaryModel {
+  std::size_t max_buffered;
+  std::uint64_t freshness_horizon;
+  std::string phase = "detached";
+  std::uint64_t generation = 0;
+  std::optional<std::uint64_t> cursor;
+  std::map<std::uint64_t, const Json*> buffered;
+  std::set<std::string> source_keys;
+  std::set<std::string> members;
+  std::string validation = "valid";
+  std::optional<std::uint64_t> replay_from;
+  std::uint64_t stale_events = 0;
+  std::optional<BoundaryDelivery> delivery;
+  std::optional<std::uint64_t> last_stamped_at;
+  std::uint64_t now = 0;
+  std::uint64_t revision = 0;
+
+  void changed() { ++revision; }
+
+  void apply_payload(const Json& op) {
+    const std::string action = json_string(member(op, "action", "boundary event"));
+    if (action == "upsert") {
+      source_keys.insert(json_string(member(op, "key", "boundary event")));
+    } else if (action == "remove") {
+      source_keys.erase(json_string(member(op, "key", "boundary event")));
+    } else if (action == "validate") {
+      validation = json_string(member(op, "validation", "boundary event"));
+    } else {
+      REQUIRE(false, "unknown boundary event action");
+    }
+    cursor = json_u64(member(op, "cursor", "boundary event"));
+    last_stamped_at = json_u64(member(op, "stamped_at", "boundary event"));
+    phase = validation == "valid" ? "live" : "invalid";
+    replay_from.reset();
+  }
+
+  void drain() {
+    while (cursor) {
+      const auto it = buffered.find(*cursor + 1);
+      if (it == buffered.end()) break;
+      const Json* event = it->second;
+      buffered.erase(it);
+      apply_payload(*event);
+    }
+    if (!buffered.empty()) {
+      phase = "replay_required";
+      replay_from = *cursor + 1;
+    }
+  }
+
+  void apply(const Json& op) {
+    const std::string type = json_string(member(op, "type", "boundary op"));
+    if (type == "subscribe") {
+      const auto next = json_u64(member(op, "generation", type));
+      if (next < generation) return;
+      generation = next;
+      cursor.reset();
+      buffered.clear();
+      source_keys.clear();
+      members.clear();
+      validation = "valid";
+      replay_from.reset();
+      phase = "bootstrapping";
+      changed();
+      return;
+    }
+    if (type == "snapshot") {
+      const auto next = json_u64(member(op, "generation", type));
+      if (next < generation) {
+        ++stale_events;
+        changed();
+        return;
+      }
+      if (next > generation) {
+        generation = next;
+        buffered.clear();
+      }
+      cursor = json_u64(member(op, "cursor", type));
+      last_stamped_at = json_u64(member(op, "stamped_at", type));
+      source_keys.clear();
+      for (const auto& value : member(op, "source_keys", type).array)
+        source_keys.insert(json_string(*value));
+      members.clear();
+      for (const auto& value : member(op, "members", type).array)
+        members.insert(json_string(*value));
+      validation = json_string(member(op, "validation", type));
+      phase = validation == "valid" ? "live" : "invalid";
+      replay_from.reset();
+      for (auto it = buffered.begin(); it != buffered.end();) {
+        if (it->first <= *cursor)
+          it = buffered.erase(it);
+        else
+          ++it;
+      }
+      drain();
+      changed();
+      return;
+    }
+    if (type == "event") {
+      const auto next = json_u64(member(op, "generation", type));
+      const auto event_cursor = json_u64(member(op, "cursor", type));
+      if (next < generation) {
+        ++stale_events;
+        changed();
+        return;
+      }
+      if (next > generation) {
+        generation = next;
+        cursor.reset();
+        buffered.clear();
+        source_keys.clear();
+        members.clear();
+        phase = "bootstrapping";
+        replay_from.reset();
+      }
+      if (!cursor) {
+        if (buffered.size() >= max_buffered && buffered.count(event_cursor) == 0) {
+          phase = "backpressured";
+          replay_from = 0;
+          changed();
+          return;
+        }
+        if (buffered.emplace(event_cursor, &op).second) changed();
+        return;
+      }
+      if (event_cursor <= *cursor || buffered.count(event_cursor) != 0) return;
+      if (event_cursor == *cursor + 1) {
+        apply_payload(op);
+        drain();
+        changed();
+        return;
+      }
+      if (buffered.size() >= max_buffered) {
+        phase = "backpressured";
+        replay_from = *cursor + 1;
+        changed();
+        return;
+      }
+      buffered.emplace(event_cursor, &op);
+      phase = "replay_required";
+      replay_from = *cursor + 1;
+      changed();
+      return;
+    }
+    if (type == "member_join") {
+      const std::string member_name = json_string(member(op, "member", type));
+      if (!members.insert(member_name).second) return;
+      if (delivery && delivery->targets.empty()) delivery->targets.insert(member_name);
+      changed();
+      return;
+    }
+    if (type == "member_leave") {
+      if (members.erase(json_string(member(op, "member", type))) != 0) changed();
+      return;
+    }
+    if (type == "open_receipt") {
+      delivery = BoundaryDelivery{json_string(member(op, "receipt_id", type)), members, {}};
+      changed();
+      return;
+    }
+    if (type == "ack") {
+      if (!delivery || delivery->id != json_string(member(op, "receipt_id", type))) return;
+      const std::string member_name = json_string(member(op, "member", type));
+      if (delivery->targets.count(member_name) && delivery->acked.insert(member_name).second)
+        changed();
+      return;
+    }
+    if (type == "tick") {
+      const bool before = fresh();
+      now = json_u64(member(op, "now", type));
+      if (fresh() != before) changed();
+      return;
+    }
+    REQUIRE(false, "unknown boundary ingress op `" + type + "`");
+  }
+
+  bool fresh() const {
+    return last_stamped_at && now - std::min(now, *last_stamped_at) <= freshness_horizon;
+  }
+};
+
+std::vector<std::string> json_strings(const Json& value) {
+  std::vector<std::string> out;
+  for (const auto& item : value.array)
+    out.push_back(json_string(*item));
+  return out;
+}
+
+std::vector<std::uint64_t> json_u64s(const Json& value) {
+  std::vector<std::uint64_t> out;
+  for (const auto& item : value.array)
+    out.push_back(json_u64(*item));
+  return out;
+}
+
+void assert_boundary_projection(BoundaryModel& model, lazily_test::AssertionKeys& expected) {
+  expected.assert_key_if_present("phase", model.phase);
+  expected.assert_key_if_present("generation", model.generation);
+  expected.assert_key_if_present("cursor", model.cursor, json_optional_u64);
+  std::vector<std::uint64_t> cursors;
+  for (const auto& entry : model.buffered)
+    cursors.push_back(entry.first);
+  expected.assert_key_if_present("buffered_cursors", cursors, json_u64s);
+  expected.assert_key_if_present(
+      "source_keys", std::vector<std::string>(model.source_keys.begin(), model.source_keys.end()),
+      json_strings);
+  expected.assert_key_if_present(
+      "members", std::vector<std::string>(model.members.begin(), model.members.end()),
+      json_strings);
+  expected.assert_key_if_present("validation", model.validation);
+  expected.assert_key_if_present("replay_from", model.replay_from, json_optional_u64);
+  expected.assert_key_if_present("stale_events", model.stale_events);
+  expected.assert_key_if_present("ready", model.phase == "live" && model.validation == "valid");
+  expected.assert_key_if_present("fresh", model.fresh());
+  expected.assert_key_if_present("observation_revision", model.revision);
+  expected.assert_key_if_present("revision", model.revision);
+  if (expected.value_is_object("delivery")) {
+    expected.with_sub("delivery", [&](lazily_test::AssertionKeys& delivery) {
+      REQUIRE(model.delivery.has_value(), "expected an active delivery receipt");
+      delivery.assert_key_if_present("receipt_id", model.delivery->id);
+      delivery.assert_key_if_present(
+          "targets",
+          std::vector<std::string>(model.delivery->targets.begin(), model.delivery->targets.end()),
+          json_strings);
+      delivery.assert_key_if_present(
+          "acked",
+          std::vector<std::string>(model.delivery->acked.begin(), model.delivery->acked.end()),
+          json_strings);
+      delivery.assert_key_if_present("converged", !model.delivery->targets.empty() &&
+                                                      std::includes(model.delivery->acked.begin(),
+                                                                    model.delivery->acked.end(),
+                                                                    model.delivery->targets.begin(),
+                                                                    model.delivery->targets.end()));
+    });
+  } else {
+    expected.assert_key_if_present("delivery", !model.delivery.has_value(),
+                                   [](const Json& value) { return value.is_null(); });
+  }
+}
+
+void replay_boundary_ingress_contract() {
+  const std::string name = "boundary_ingress_adapter.json";
+  const JsonPtr fixture = load(name);
+  const Json& base_policy = member(*fixture, "policy", name);
+  const auto& scenarios = member(*fixture, "scenarios", name).array;
+  std::size_t replayed = 0;
+  for (const auto& view : lazily_test::scenario_views("ingress/" + name, scenarios)) {
+    const Json& scenario = view.replay();
+    const Json* scenario_policy = scenario.find("policy");
+    const std::size_t max_buffered = static_cast<std::size_t>(
+        json_u64(member(scenario_policy ? *scenario_policy : base_policy, "max_buffered", name)));
+    BoundaryModel model{max_buffered, json_u64(member(base_policy, "freshness_horizon", name))};
+    std::size_t index = 0;
+    for (const auto& step : member(scenario, "steps", name).array) {
+      model.apply(member(*step, "op", name));
+      const std::string where = name + " step " + std::to_string(index) + " expected";
+      lazily_test::AssertionKeys expected(where, member(*step, "expected", where));
+      assert_boundary_projection(model, expected);
+      expected.finish();
+      ++index;
+      ++replayed;
+    }
+  }
+  REQUIRE(replayed > 0, "canonical boundary-ingress fixture replayed zero steps");
+}
+
 } // namespace
 
 int main() {
   corpus_is_present_and_non_trivial();
   ledger_is_not_all_skips();
   the_invalidation_probe_discriminates();
+  replay_boundary_ingress_contract();
 
   const std::size_t total = expected_step_total();
   std::map<std::string, std::size_t> replayed;
@@ -734,7 +1009,7 @@ int main() {
 
   every_flavour_is_defined(replayed);
 
-  REQUIRE_FIXTURES_LOADED(7);
+  REQUIRE_FIXTURES_LOADED(8);
   std::cout << "ingress family: 3 shipped flavours x " << fixtures().size() << " fixtures, "
             << total << " steps each (" << (total * 3) << " step replays)" << std::endl;
   return 0;
