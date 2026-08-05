@@ -2,22 +2,15 @@
 //
 // Replays the canonical `lazily-spec/conformance/familysync/
 // materialize_on_ingest.json` fixture against the `CrdtPlaneRuntime` family
-// layer — the language-agnostic conformance every binding MUST validate
-// (`lazily-spec/protocol.md` § "Reactive family sync", proved in `lazily-formal`
-// `FamilySync.lean`).
-//
-// A keyed op for a family entry NOT known locally MATERIALIZES the entry on
-// ingest (seeded from the op's converged register) instead of being dropped, so
-// membership propagates (a key added on one replica appears on the other), values
-// are adopted, a later last-writer-wins update converges, re-ingest is
-// idempotent, and a derived aggregate over the family (a count of `true` entries)
-// converges across replicas. The three scenarios are transcribed by hand, the
-// same fixture-mirroring pattern the other conformance tests use.
+// layer. The fixture is the authority: peers, writes, re-ingest, and every
+// expected projection are read from its scenarios rather than transcribed here.
 
 #include <lazily/lazily.hpp>
 
+#include "test_spec_fixture.hpp"
 #include <algorithm>
 #include <cassert>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -37,104 +30,116 @@ static int test_passed = 0;
   } name##_instance;                                                                               \
   static void name()
 
-static const char* kNamespace = "live";
-
-// Last segment of a `namespace/suffix` family key.
 static std::string suffix_of(const std::string& key) {
-  auto slash = key.rfind('/');
+  const auto slash = key.rfind('/');
   return slash == std::string::npos ? key : key.substr(slash + 1);
 }
 
-// One local set on the origin runtime.
-struct Set {
-  std::string key;
-  bool value;
-  int64_t now;
-};
-
-// Ship the origin's whole op log + frontier and ingest into the target, then run
-// every fixture assertion for a scenario.
-static void run_scenario(PeerId origin_peer, PeerId target_peer, const std::vector<Set>& sets,
-                         bool reingest, const std::vector<std::string>& want_suffixes,
-                         const std::vector<std::pair<std::string, bool>>& want_values,
-                         int want_present_count, int want_count_true, int want_reingest_applied,
-                         bool want_epoch_bumped) {
-  CrdtPlaneRuntime origin(origin_peer);
-  origin.register_family_lww(kNamespace);
-
-  CrdtPlaneRuntime target(target_peer);
-  target.register_family_lww(kNamespace);
-  uint64_t epoch_before = target.membership_epoch();
-
-  for (const auto& s : sets) {
-    auto op = origin.family_set_lww(kNamespace, s.key, s.value, s.now);
-    assert(op.has_value());
-  }
-
-  CrdtSync frame{origin.frontier_entries(), origin.ops()};
-  int applied = target.ingest(frame);
-  assert(applied > 0);
-
-  if (reingest) {
-    int reapplied = target.ingest(frame);
-    assert(reapplied == want_reingest_applied);
-  }
-
-  // Materialized key set (by suffix), order-independent.
-  std::vector<std::string> got_suffixes;
-  for (const auto& k : target.family_keys(kNamespace))
-    got_suffixes.push_back(suffix_of(k));
-  std::sort(got_suffixes.begin(), got_suffixes.end());
-  std::vector<std::string> want_sorted = want_suffixes;
-  std::sort(want_sorted.begin(), want_sorted.end());
-  assert(got_suffixes == want_sorted);
-
-  // Present count.
-  assert(static_cast<int>(target.family_keys(kNamespace).size()) == want_present_count);
-
-  // Adopted values converge.
-  for (const auto& kv : want_values) {
-    auto v = target.family_value_lww(kNamespace, kv.first);
-    assert(v.has_value() && *v == kv.second);
-  }
-
-  // Derived aggregate: count of entries whose value is true.
-  int count_true = 0;
-  for (const auto& k : target.family_keys(kNamespace)) {
-    auto v = target.family_value_lww(kNamespace, suffix_of(k));
-    if (v.has_value() && *v) ++count_true;
-  }
-  assert(count_true == want_count_true);
-
-  // Membership epoch bumped on materialize.
-  if (want_epoch_bumped) assert(target.membership_epoch() != epoch_before);
+static std::vector<std::string> json_strings(const lazily_test::Json& value) {
+  std::vector<std::string> out;
+  for (const auto& item : lazily_test::json_array(value))
+    out.push_back(lazily_test::json_string(*item));
+  std::sort(out.begin(), out.end());
+  return out;
 }
 
-// scenario "materialize_remote_keys_and_converge"
-TEST(test_materialize_remote_keys_and_converge) {
-  run_scenario(1, 2, {{"2", true, 100}, {"3", true, 101}},
-               /*reingest=*/false, /*want_suffixes=*/{"2", "3"},
-               /*want_values=*/{{"2", true}, {"3", true}},
-               /*present=*/2, /*count_true=*/2, /*reingest_applied=*/0,
-               /*epoch_bumped=*/true);
+static void require_fixture_keys(const lazily_test::Json& object,
+                                 std::initializer_list<const char*> expected,
+                                 const std::string& where) {
+  REQUIRE(object.is_object(), where + ": expected object");
+  std::set<std::string> actual;
+  for (const auto& entry : object.object)
+    actual.insert(entry.first);
+  std::set<std::string> want;
+  for (const char* key : expected)
+    want.insert(key);
+  REQUIRE(actual == want, where + ": fixture object keys changed");
 }
 
-// scenario "lww_update_converges_after_materialize"
-TEST(test_lww_update_converges_after_materialize) {
-  run_scenario(1, 2, {{"2", true, 100}, {"3", true, 101}, {"2", false, 300}},
-               /*reingest=*/false, /*want_suffixes=*/{"2", "3"},
-               /*want_values=*/{{"2", false}, {"3", true}},
-               /*present=*/2, /*count_true=*/1, /*reingest_applied=*/0,
-               /*epoch_bumped=*/true);
+TEST(test_materialize_on_ingest_fixture_replay) {
+  constexpr const char* fixture_id = "familysync/materialize_on_ingest.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("familysync", "materialize_on_ingest.json"));
+  require_fixture_keys(
+      *root, {"description", "kind", "model", "namespace", "value_type", "scenarios"}, fixture_id);
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "kind")) == "FamilySync",
+          "family-sync kind");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "model")) == "FamilySync",
+          "family-sync model");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "value_type")) == "bool",
+          "family-sync value type");
+  const std::string family_namespace =
+      lazily_test::json_string(lazily_test::json_member(*root, "namespace"));
+
+  const auto& raw_scenarios = lazily_test::json_array(lazily_test::json_member(*root, "scenarios"));
+  for (const auto& view : lazily_test::scenario_views(fixture_id, raw_scenarios)) {
+    const auto& scenario = view.replay();
+    const std::string where = std::string(fixture_id) + " " + view.id();
+    const bool reingest = scenario.has("reingest");
+    if (reingest) {
+      require_fixture_keys(
+          scenario,
+          {"id", "name", "origin_peer", "target_peer", "origin_sets", "reingest", "expect"}, where);
+      REQUIRE(lazily_test::json_bool(lazily_test::json_member(scenario, "reingest")),
+              where + ": reingest selector must be true");
+    } else {
+      require_fixture_keys(
+          scenario, {"id", "name", "origin_peer", "target_peer", "origin_sets", "expect"}, where);
+    }
+
+    CrdtPlaneRuntime origin(
+        lazily_test::json_u64(lazily_test::json_member(scenario, "origin_peer")));
+    CrdtPlaneRuntime target(
+        lazily_test::json_u64(lazily_test::json_member(scenario, "target_peer")));
+    origin.register_family_lww(family_namespace);
+    target.register_family_lww(family_namespace);
+    const uint64_t epoch_before = target.membership_epoch();
+
+    for (const auto& raw_set :
+         lazily_test::json_array(lazily_test::json_member(scenario, "origin_sets"))) {
+      const auto& set = *raw_set;
+      require_fixture_keys(set, {"key", "value", "now"}, where + " origin_set");
+      const auto op = origin.family_set_lww(
+          family_namespace, lazily_test::json_string(lazily_test::json_member(set, "key")),
+          lazily_test::json_bool(lazily_test::json_member(set, "value")),
+          static_cast<int64_t>(lazily_test::json_u64(lazily_test::json_member(set, "now"))));
+      REQUIRE(op.has_value(), where + ": origin family write was rejected");
+    }
+
+    const CrdtSync frame{origin.frontier_entries(), origin.ops()};
+    REQUIRE(target.ingest(frame) > 0, where + ": initial family ingest applied no ops");
+    int reingest_applied = -1;
+    if (reingest) reingest_applied = target.ingest(frame);
+
+    std::vector<std::string> target_keys;
+    for (const auto& key : target.family_keys(family_namespace))
+      target_keys.push_back(suffix_of(key));
+    std::sort(target_keys.begin(), target_keys.end());
+
+    int count_true = 0;
+    for (const auto& key : target_keys) {
+      const auto value = target.family_value_lww(family_namespace, key);
+      if (value.has_value() && *value) ++count_true;
+    }
+
+    lazily_test::AssertionKeys expected(where + " expect",
+                                        lazily_test::json_member(scenario, "expect"));
+    expected.assert_key("target_keys", target_keys, json_strings);
+    expected.with_sub("target_values", [&](lazily_test::AssertionKeys& values) {
+      for (const auto& key : target_keys) {
+        const auto value = target.family_value_lww(family_namespace, key);
+        REQUIRE(value.has_value(), where + ": materialized key has no value");
+        values.assert_key(key, *value);
+      }
+    });
+    expected.assert_key("target_present_count", target_keys.size());
+    expected.assert_key("target_count_true", count_true);
+    if (reingest) expected.assert_key("reingest_applied", reingest_applied);
+    expected.assert_key("target_epoch_bumped", target.membership_epoch() != epoch_before);
+  }
 }
 
-// scenario "membership_grows_and_reingest_is_idempotent"
-TEST(test_membership_grows_and_reingest_idempotent) {
-  run_scenario(1, 2, {{"7", true, 10}},
-               /*reingest=*/true, /*want_suffixes=*/{"7"},
-               /*want_values=*/{{"7", true}},
-               /*present=*/1, /*count_true=*/1, /*reingest_applied=*/0,
-               /*epoch_bumped=*/true);
+int main() {
+  REQUIRE_FIXTURES_LOADED(1);
+  return test_count == test_passed ? 0 : 1;
 }
-
-int main() { return test_count == test_passed ? 0 : 1; }

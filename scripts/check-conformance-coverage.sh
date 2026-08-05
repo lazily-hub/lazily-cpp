@@ -61,7 +61,7 @@ fi
 # NEVER lower it to make a red build green — a drop means a replay stopped
 # running.
 #
-# The current suite replays 118 distinct fixtures. Six collections fixtures
+# The current suite replays 127 distinct fixtures. Six collections fixtures
 # (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
 # moved out of KNOWN_UNCOVERED in #lazilycppcollections, the seven ingress
 # schedules landed with the transport-agnostic ingress family,
@@ -77,7 +77,7 @@ fi
 # that holds an unknown `backend` token REFUSED rather than normalized to `shm`;
 # keep the floor aligned so deleting a runner cannot hide behind older aggregate
 # growth.
-MIN_FIXTURES="${MIN_FIXTURES:-120}"
+MIN_FIXTURES="${MIN_FIXTURES:-127}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -92,8 +92,6 @@ MIN_FIXTURES="${MIN_FIXTURES:-120}"
 #   signaling  (1)  anti_spoof_session.json IS replayed by
 #                   test_signaling_conformance.cpp. frames.json is not: it needs
 #                   signaling wire serde, which this binding does not have.
-#   familysync (1)  test_family_sync.cpp mirrors materialize_on_ingest.json by
-#                   hand; it never opens the file.
 #   agent-doc  (2)  IPC wire snapshots of the agent-doc state projection — an
 #                   application schema carried on the IPC plane, not a
 #                   binding-level reactive concern.
@@ -105,6 +103,7 @@ REQUIRED_AREAS=(
   coordination
   crdt-tree
   distributed
+  familysync
   ingress
   lossless-tree
   materialization
@@ -140,16 +139,12 @@ KNOWN_UNCOVERED=(
   # replayed from the canonical bytes.
   "materialization/deferral_not_deallocation.json"
   "materialization/observational_transparency.json"
-  # reliable-sync — test_reliable_sync.cpp transcribes five of these by hand and
-  # two have no coverage in any form.
+  # reliable-sync — the remaining three need distinct outbox coalescing, lease
+  # eviction, and journal-decoder runners.
   "reliable-sync/coalesce_bounds_outbox.json"
-  "reliable-sync/idempotent_redelivery.json"
   "reliable-sync/liveness_lease_eviction.json"
-  "reliable-sync/liveness_orset_lww.json"
-  "reliable-sync/outbox_replay_after_crash.json"
   # The canonical journal-decoder trace has no C++ replay runner yet.
   "reliable-sync/outbox_journal_decode.json"
-  "reliable-sync/resync_gap_converge.json"
 )
 
 # ── per-scenario ledger ────────────────────────────────────────────────────
@@ -178,14 +173,15 @@ excuse_scenario() {
 # Without it a ledger that stopped recording entirely would leave the
 # declared-vs-replayed comparison vacuously satisfied on both sides.
 #
-# The suite replays 113. The floor sat at 83 while the run replayed 107, so a
+# The suite replays 137. The floor sat at 83 while the run replayed 107, so a
 # quarter of the ledger could have stopped recording without this check noticing
 # — a slack floor is a floor that has stopped guarding. Pulled up to the actual
-# figure, matching how MIN_FIXTURES is kept. The current +6 comes from converting
-# multi_epoch_delta.json's two scenarios and outbox_store_protocol.json's four
-# scenarios from hand transcriptions/excuses into actual fixture-driven replays.
+# figure, matching how MIN_FIXTURES is kept. The current +19 comes from converting
+# multi_epoch_delta.json's two scenarios, outbox_store_protocol.json's four,
+# four reliable-sync fixture families' ten, and familysync's three scenarios
+# from hand transcriptions/excuses into actual fixture-driven replays.
 # Raise this when replays are added; NEVER lower it to make a red build green.
-MIN_SCENARIOS="${MIN_SCENARIOS:-124}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-137}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2

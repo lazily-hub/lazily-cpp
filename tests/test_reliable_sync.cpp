@@ -10,15 +10,15 @@
 //   outbox_replay_after_crash.json — DurableOutbox at-least-once replay + send-failure retain
 //   liveness_orset_lww.json      — OR-set / LWW liveness cells + derived aggregate
 //
-// The multi-epoch scenarios below are replayed from the canonical fixture. The
-// remaining sections predate the fixture runner and are tracked independently
-// in the conformance coverage ledger.
+// Every named fixture below is replayed from canonical bytes. The later wire and
+// full-duplex tests remain binding-specific supplements.
 
 #include <lazily/lazily.hpp>
 
 #include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -154,6 +154,31 @@ static Delta fixture_delta(const lazily_test::Json& body) {
   return std::get<IpcMessageDelta>(message).value;
 }
 
+static IpcMessage fixture_message(const lazily_test::Json& body) {
+  return decode_json(fixture_json(body));
+}
+
+static std::vector<Epoch> json_epochs(const lazily_test::Json& value) {
+  std::vector<Epoch> out;
+  for (const auto& item : lazily_test::json_array(value))
+    out.push_back(lazily_test::json_u64(*item));
+  return out;
+}
+
+static std::vector<std::string> json_strings(const lazily_test::Json& value) {
+  std::vector<std::string> out;
+  for (const auto& item : lazily_test::json_array(value))
+    out.push_back(lazily_test::json_string(*item));
+  return out;
+}
+
+static std::vector<uint8_t> json_bytes(const lazily_test::Json& value) {
+  std::vector<uint8_t> out;
+  for (const auto& item : lazily_test::json_array(value))
+    out.push_back(static_cast<uint8_t>(lazily_test::json_u64(*item)));
+  return out;
+}
+
 static std::string sync_action(const ResyncAction& action) {
   if (action.is_apply()) return "Apply";
   if (action.is_request_snapshot()) return "RequestSnapshot";
@@ -173,105 +198,174 @@ static void require_fixture_keys(const lazily_test::Json& object,
   REQUIRE(actual == want, where + ": fixture object keys changed");
 }
 
-// ── resync_gap_converge.json ─────────────────────────────────────────────────
-
-// drop_suffix_then_resync_converges: receiver misses delta 2->3, detects the gap
-// on 3->4, emits ResyncRequest{from:2}, applies the covering Snapshot{epoch:4},
-// and reaches the SAME graph as a receiver that saw every delta.
-TEST(test_conformance_resync_drop_suffix_converges) {
-  ResyncCoordinator coord(1);
-  GraphModel a;
-
-  // delta 1->2 : Apply
-  Delta d12 = mk_delta(1, 2, {cellset(1, {10})});
-  auto act = coord.ingest_delta(d12);
-  assert(act.is_apply());
-  a.apply_delta(d12);
-  assert(coord.last_epoch() == 2);
-
-  // delta 2->3 dropped (never arrives at A)
-
-  // delta 3->4 : base_epoch 3 > last_epoch 2 -> RequestSnapshot{from:2}
-  int resync_requests = 0;
-  Delta d34 = mk_delta(3, 4, {cellset(3, {30})});
-  act = coord.ingest_delta(d34);
-  assert(act.is_request_snapshot());
-  assert(act.from_epoch == 2);
-  resync_requests += 1;
-  assert(coord.last_epoch() == 2); // unchanged
-
-  // covering Snapshot{epoch:4} : Apply
-  Snapshot snap{4, {node_snap(1, {10}), node_snap(2, {20}), node_snap(3, {30})}, {}, {1, 2, 3}};
-  act = coord.ingest_snapshot(snap.epoch);
-  assert(act.is_apply());
-  a.apply_snapshot(snap);
-  assert(coord.last_epoch() == 4);
-
-  // Receiver B saw every delta 1->2->3->4.
-  GraphModel b;
-  b.apply_delta(mk_delta(1, 2, {cellset(1, {10})}));
-  b.apply_delta(mk_delta(2, 3, {cellset(2, {20})}));
-  b.apply_delta(mk_delta(3, 4, {cellset(3, {30})}));
-
-  assert(resync_requests == 1);
-  assert((a.nodes == std::map<NodeId, std::vector<uint8_t>>{{1, {10}}, {2, {20}}, {3, {30}}}));
-  assert(a.nodes == b.nodes); // equals_no_drop_receiver
+static WireStamp fixture_stamp(const lazily_test::Json& value) {
+  require_fixture_keys(value, {"wall_time", "logical", "peer"}, "liveness stamp");
+  return WireStamp{
+      static_cast<int64_t>(lazily_test::json_u64(lazily_test::json_member(value, "wall_time"))),
+      static_cast<int64_t>(lazily_test::json_u64(lazily_test::json_member(value, "logical"))),
+      static_cast<PeerId>(lazily_test::json_u64(lazily_test::json_member(value, "peer")))};
 }
 
-// single_request_per_gap: while resyncing, further ahead-of-cursor deltas are
-// Ignored and do NOT emit duplicate ResyncRequests.
-TEST(test_conformance_resync_single_request_per_gap) {
-  ResyncCoordinator coord(2);
-  int resync_requests = 0;
+// ── resync_gap_converge.json ─────────────────────────────────────────────────
 
-  auto act = coord.ingest_delta(mk_delta(3, 4, {}));
-  assert(act.is_request_snapshot() && act.from_epoch == 2);
-  resync_requests += 1;
+TEST(test_conformance_resync_fixture_replay) {
+  constexpr const char* fixture_id = "reliable-sync/resync_gap_converge.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("reliable-sync", "resync_gap_converge.json"));
+  require_fixture_keys(
+      *root, {"description", "protocol_version", "kind", "model", "scenarios", "wire"}, fixture_id);
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*root, "protocol_version")) == 1,
+          "resync protocol_version");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "kind")) == "ReliableSync",
+          "resync kind");
+  REQUIRE(lazily_test::json_string(lazily_test::json_member(*root, "model")) == "ResyncCoordinator",
+          "resync model");
 
-  act = coord.ingest_delta(mk_delta(4, 5, {}));
-  assert(act.is_ignore()); // resyncing — suppress duplicate request
-  assert(coord.last_epoch() == 2);
+  for (const auto& view : lazily_test::scenario_views(
+           fixture_id, lazily_test::json_array(lazily_test::json_member(*root, "scenarios")))) {
+    const auto& scenario = view.replay();
+    const std::string where = std::string(fixture_id) + " " + view.id();
+    require_fixture_keys(
+        scenario, {"id", "name", "description", "start_last_epoch", "inbound", "expect"}, where);
+    ResyncCoordinator coordinator(
+        lazily_test::json_u64(lazily_test::json_member(scenario, "start_last_epoch")));
+    GraphModel graph;
+    GraphModel covering_snapshot;
+    bool saw_snapshot = false;
+    int resync_requests = 0;
 
-  act = coord.ingest_delta(mk_delta(5, 6, {}));
-  assert(act.is_ignore());
-  assert(coord.last_epoch() == 2);
+    for (const auto& raw_inbound :
+         lazily_test::json_array(lazily_test::json_member(scenario, "inbound"))) {
+      const auto& inbound = *raw_inbound;
+      if (inbound.has("dropped")) {
+        require_fixture_keys(inbound, {"dropped", "note"}, where + " dropped inbound");
+        REQUIRE(lazily_test::json_bool(lazily_test::json_member(inbound, "dropped")),
+                where + ": dropped selector must be true");
+        continue;
+      }
+      if (inbound.has("request_from")) {
+        require_fixture_keys(inbound,
+                             {"frame", "expect_action", "request_from", "last_epoch_after"},
+                             where + " request inbound");
+      } else if (inbound.has("reason")) {
+        require_fixture_keys(inbound, {"frame", "expect_action", "reason", "last_epoch_after"},
+                             where + " ignored inbound");
+      } else {
+        require_fixture_keys(inbound, {"frame", "expect_action", "last_epoch_after"},
+                             where + " inbound");
+      }
 
-  act = coord.ingest_snapshot(6);
-  assert(act.is_apply());
-  assert(coord.last_epoch() == 6);
+      const IpcMessage message = fixture_message(lazily_test::json_member(inbound, "frame"));
+      ResyncAction action;
+      if (std::holds_alternative<IpcMessageDelta>(message)) {
+        const auto& delta = std::get<IpcMessageDelta>(message).value;
+        action = coordinator.ingest_delta(delta);
+        if (action.is_apply()) graph.apply_delta(delta);
+      } else {
+        REQUIRE(std::holds_alternative<IpcMessageSnapshot>(message),
+                where + ": inbound frame must be Delta or Snapshot");
+        const auto& snapshot = std::get<IpcMessageSnapshot>(message).value;
+        action = coordinator.ingest_snapshot(snapshot.epoch);
+        if (action.is_apply()) graph.apply_snapshot(snapshot);
+        covering_snapshot.apply_snapshot(snapshot);
+        saw_snapshot = true;
+      }
+      if (action.is_request_snapshot()) ++resync_requests;
+      REQUIRE(sync_action(action) ==
+                  lazily_test::json_string(lazily_test::json_member(inbound, "expect_action")),
+              where + ": action mismatch");
+      REQUIRE(coordinator.last_epoch() ==
+                  lazily_test::json_u64(lazily_test::json_member(inbound, "last_epoch_after")),
+              where + ": cursor mismatch");
+      if (inbound.has("request_from"))
+        REQUIRE(action.from_epoch ==
+                    lazily_test::json_u64(lazily_test::json_member(inbound, "request_from")),
+                where + ": request cursor mismatch");
+      if (inbound.has("reason"))
+        REQUIRE(lazily_test::json_string(lazily_test::json_member(inbound, "reason")) ==
+                        "resyncing_suppress_duplicate_request" &&
+                    action.is_ignore(),
+                where + ": ignore reason mismatch");
+    }
 
-  assert(resync_requests == 1);
+    lazily_test::AssertionKeys expected(where + " expect",
+                                        lazily_test::json_member(scenario, "expect"));
+    expected.assert_key("final_last_epoch", coordinator.last_epoch());
+    expected.assert_key("resync_requests_emitted", resync_requests);
+    expected.with_sub_if_present("converged_nodes", [&](lazily_test::AssertionKeys& nodes) {
+      for (const auto& node : graph.nodes)
+        nodes.assert_key(std::to_string(node.first), node.second, json_bytes);
+    });
+    expected.assert_key_if_present("equals_no_drop_receiver",
+                                   saw_snapshot && graph.nodes == covering_snapshot.nodes);
+  }
+
+  const IpcMessage wire = fixture_message(lazily_test::json_member(*root, "wire"));
+  REQUIRE(std::holds_alternative<IpcMessageResyncRequest>(wire),
+          "resync wire must be ResyncRequest");
 }
 
 // ── idempotent_redelivery.json ───────────────────────────────────────────────
 
-// replayed_delta_is_ignored: a re-delivered delta 40->41 (base_epoch 40 < 42) is
-// Ignored; net state and last_epoch unchanged.
-TEST(test_conformance_idempotent_replayed_delta_ignored) {
-  ResyncCoordinator coord(42);
-  GraphModel g;
-  g.nodes[1] = {10};
+TEST(test_conformance_idempotent_fixture_replay) {
+  constexpr const char* fixture_id = "reliable-sync/idempotent_redelivery.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("reliable-sync", "idempotent_redelivery.json"));
+  require_fixture_keys(
+      *root, {"description", "protocol_version", "kind", "model", "scenarios", "wire"}, fixture_id);
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*root, "protocol_version")) == 1,
+          "idempotent protocol_version");
 
-  Delta redeliver = mk_delta(40, 41, {cellset(1, {99})});
-  auto act = coord.ingest_delta(redeliver);
-  assert(act.is_ignore()); // base_epoch_below_last_epoch_already_applied
-  assert(coord.last_epoch() == 42);
-  // Ignored -> the caller does NOT fold; state stays put.
-  assert((g.nodes == std::map<NodeId, std::vector<uint8_t>>{{1, {10}}}));
+  for (const auto& view : lazily_test::scenario_views(
+           fixture_id, lazily_test::json_array(lazily_test::json_member(*root, "scenarios")))) {
+    const auto& scenario = view.replay();
+    const std::string where = std::string(fixture_id) + " " + view.id();
+    require_fixture_keys(
+        scenario,
+        {"id", "name", "description", "start_last_epoch", "state_before", "inbound", "expect"},
+        where);
+    ResyncCoordinator coordinator(
+        lazily_test::json_u64(lazily_test::json_member(scenario, "start_last_epoch")));
+    GraphModel graph;
+    for (const auto& entry : lazily_test::json_member(scenario, "state_before").object)
+      graph.nodes[std::stoull(entry.first)] = json_bytes(*entry.second);
+    const auto before = graph.nodes;
 
-  // OutboxAck wire frame advertises through_epoch = 42.
-  IpcMessage ack = coord.ack();
-  assert(std::holds_alternative<IpcMessageOutboxAck>(ack));
-  assert(std::get<IpcMessageOutboxAck>(ack).value.through_epoch == 42);
-}
+    for (const auto& raw_inbound :
+         lazily_test::json_array(lazily_test::json_member(scenario, "inbound"))) {
+      const auto& inbound = *raw_inbound;
+      require_fixture_keys(inbound, {"frame", "expect_action", "reason", "last_epoch_after"},
+                           where + " inbound");
+      const IpcMessage message = fixture_message(lazily_test::json_member(inbound, "frame"));
+      REQUIRE(std::holds_alternative<IpcMessageDelta>(message),
+              where + ": idempotent inbound must be Delta");
+      const auto& delta = std::get<IpcMessageDelta>(message).value;
+      const ResyncAction action = coordinator.ingest_delta(delta);
+      if (action.is_apply()) graph.apply_delta(delta);
+      REQUIRE(sync_action(action) ==
+                  lazily_test::json_string(lazily_test::json_member(inbound, "expect_action")),
+              where + ": action mismatch");
+      REQUIRE(action.is_ignore() &&
+                  lazily_test::json_string(lazily_test::json_member(inbound, "reason")) ==
+                      "base_epoch_below_last_epoch_already_applied",
+              where + ": ignore reason mismatch");
+      REQUIRE(coordinator.last_epoch() ==
+                  lazily_test::json_u64(lazily_test::json_member(inbound, "last_epoch_after")),
+              where + ": cursor mismatch");
+    }
 
-// duplicate_current_head_is_ignored: an exact re-delivery of the last-applied
-// delta is also Ignored — a duplicate never double-applies.
-TEST(test_conformance_idempotent_duplicate_head_ignored) {
-  ResyncCoordinator coord(41);
-  auto act = coord.ingest_delta(mk_delta(40, 41, {cellset(1, {10})}));
-  assert(act.is_ignore());
-  assert(coord.last_epoch() == 41);
+    lazily_test::AssertionKeys expected(where + " expect",
+                                        lazily_test::json_member(scenario, "expect"));
+    expected.assert_key("final_last_epoch", coordinator.last_epoch());
+    expected.with_sub("state_after", [&](lazily_test::AssertionKeys& state) {
+      for (const auto& node : graph.nodes)
+        state.assert_key(std::to_string(node.first), node.second, json_bytes);
+    });
+    expected.assert_key("net_effect_unchanged", graph.nodes == before);
+  }
+
+  const IpcMessage wire = fixture_message(lazily_test::json_member(*root, "wire"));
+  REQUIRE(std::holds_alternative<IpcMessageOutboxAck>(wire), "idempotent wire must be OutboxAck");
 }
 
 // ── multi_epoch_delta.json ───────────────────────────────────────────────────
@@ -355,66 +449,127 @@ TEST(test_conformance_multi_epoch_fixture_replay) {
 
 // ── outbox_replay_after_crash.json ───────────────────────────────────────────
 
-// crash_between_append_and_ack_replays_on_reconnect: appended 41,42,43; peer acks
-// through 41; on reconnect replay_from(41) re-sends 42,43 in order; receiver
-// applies both -> last_epoch 43. Exactly-once effect: none lost, none doubled.
-TEST(test_conformance_outbox_replay_after_crash) {
-  InMemoryOutbox outbox;
-  outbox.append(41, IpcMessageDelta{mk_delta(40, 41, {cellset(1, {10})})});
-  outbox.append(42, IpcMessageDelta{mk_delta(41, 42, {cellset(2, {20})})});
-  outbox.append(43, IpcMessageDelta{mk_delta(42, 43, {cellset(3, {30})})});
+TEST(test_conformance_outbox_replay_fixture) {
+  constexpr const char* fixture_id = "reliable-sync/outbox_replay_after_crash.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("reliable-sync", "outbox_replay_after_crash.json"));
+  require_fixture_keys(
+      *root, {"description", "protocol_version", "kind", "model", "scenarios", "wire"}, fixture_id);
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*root, "protocol_version")) == 1,
+          "outbox replay protocol_version");
 
-  outbox.ack_through(41);
-  assert((outbox.retained_epochs() == std::vector<Epoch>{42, 43})); // retained_after_ack
-
-  auto replay = outbox.replay_from(41); // reconnect cursor = 41
-  assert(replay.size() == 2);
-  assert(replay[0].first == 42 && replay[1].first == 43); // replay_order
-
-  ResyncCoordinator coord(41);
-  GraphModel g;
-  std::vector<Epoch> applied;
-  for (const auto& e : replay) {
-    auto act = coord.ingest(e.second);
-    assert(act.is_apply());
-    g.apply_delta(std::get<IpcMessageDelta>(e.second).value);
-    applied.push_back(e.first);
-  }
-  assert((applied == std::vector<Epoch>{42, 43})); // receiver_applies
-  assert(coord.last_epoch() == 43);
-}
-
-// send_failure_retains_frame_for_next_tick: a send error does not lose the frame
-// (append succeeded, send failed) — it stays in the outbox and is retried on a
-// later tick. Driven through the SyncDriver loop.
-TEST(test_conformance_outbox_send_failure_retains) {
-  auto outbox = std::make_shared<InMemoryOutbox>();
-  bool fail_next = true;
-  IpcSink sink = [&](const IpcMessage&) {
-    if (fail_next) {
-      fail_next = false;
-      return false;
+  for (const auto& view : lazily_test::scenario_views(
+           fixture_id, lazily_test::json_array(lazily_test::json_member(*root, "scenarios")))) {
+    const auto& scenario = view.replay();
+    const std::string where = std::string(fixture_id) + " " + view.id();
+    std::vector<std::pair<Epoch, IpcMessage>> appended;
+    for (const auto& raw_entry :
+         lazily_test::json_array(lazily_test::json_member(scenario, "appended"))) {
+      const auto& entry = *raw_entry;
+      require_fixture_keys(entry, {"epoch", "frame"}, where + " appended");
+      appended.emplace_back(lazily_test::json_u64(lazily_test::json_member(entry, "epoch")),
+                            fixture_message(lazily_test::json_member(entry, "frame")));
     }
-    return true;
-  };
-  IpcSource source = [&]() -> std::optional<IpcMessage> { return std::nullopt; };
-  Clock clock = [] { return int64_t(0); };
-  SnapshotProvider provider = [](Epoch) {
-    return IpcMessage{IpcMessageSnapshot{Snapshot{0, {}, {}, {}}}};
-  };
-  SyncDriver driver(sink, source, outbox, clock, provider);
 
-  driver.enqueue(44, IpcMessageDelta{mk_delta(43, 44, {cellset(4, {40})})});
+    if (scenario.has("crash")) {
+      require_fixture_keys(scenario,
+                           {"id", "name", "description", "appended", "ack_through", "crash",
+                            "reconnect_cursor", "expect"},
+                           where);
+      REQUIRE(lazily_test::json_bool(lazily_test::json_member(scenario, "crash")),
+              where + ": crash selector must be true");
+      InMemoryOutbox outbox;
+      for (const auto& entry : appended)
+        outbox.append(entry.first, entry.second);
+      outbox.ack_through(lazily_test::json_u64(lazily_test::json_member(scenario, "ack_through")));
+      const auto retained = outbox.retained_epochs();
+      auto store = std::move(outbox).into_store();
+      InMemoryOutbox reopened(std::move(store));
+      const Epoch cursor =
+          lazily_test::json_u64(lazily_test::json_member(scenario, "reconnect_cursor"));
+      const auto replay = reopened.replay_from(cursor);
+      std::vector<Epoch> replayed;
+      std::vector<Epoch> applied;
+      ResyncCoordinator receiver(cursor);
+      GraphModel graph;
+      for (const auto& entry : replay) {
+        replayed.push_back(entry.first);
+        const ResyncAction action = receiver.ingest(entry.second);
+        if (!action.is_apply()) continue;
+        REQUIRE(std::holds_alternative<IpcMessageDelta>(entry.second),
+                where + ": replayed frame must be Delta");
+        graph.apply_delta(std::get<IpcMessageDelta>(entry.second).value);
+        applied.push_back(entry.first);
+      }
+      const std::set<Epoch> unique_applied(applied.begin(), applied.end());
+      const std::size_t ops_lost = replayed.size() - applied.size();
+      const std::size_t ops_doubled = applied.size() - unique_applied.size();
 
-  Progress p1 = driver.tick();
-  assert(p1.sent == 0);
-  assert(driver.is_stalled());
-  assert((outbox->retained_epochs() == std::vector<Epoch>{44})); // frame_retained_after_failed_send
+      lazily_test::AssertionKeys expected(where + " expect",
+                                          lazily_test::json_member(scenario, "expect"));
+      expected.assert_key("retained_after_ack", retained, json_epochs);
+      expected.assert_key("replayed_from_cursor", replayed, json_epochs);
+      expected.assert_key("replay_order", replayed, json_epochs);
+      expected.assert_key("receiver_applies", applied, json_epochs);
+      expected.assert_key("receiver_last_epoch_after", receiver.last_epoch());
+      expected.assert_key("ops_lost", ops_lost);
+      expected.assert_key("ops_doubled", ops_doubled);
+      expected.assert_key("exactly_once_effect", ops_lost == 0 && ops_doubled == 0);
+    } else {
+      require_fixture_keys(scenario,
+                           {"id", "name", "description", "appended", "send_fails_first_attempt",
+                            "ack_through", "expect"},
+                           where);
+      REQUIRE(
+          lazily_test::json_bool(lazily_test::json_member(scenario, "send_fails_first_attempt")),
+          where + ": send failure selector must be true");
+      REQUIRE(lazily_test::json_member(scenario, "ack_through").type ==
+                  lazily_test::Json::Type::Null,
+              where + ": failed send must remain unacked");
 
-  driver.on_reconnect();
-  Progress p2 = driver.tick();
-  assert(p2.sent == 1);                                          // resent_on_next_tick: [44]
-  assert((outbox->retained_epochs() == std::vector<Epoch>{44})); // still unacked (no permanent gap)
+      auto outbox = std::make_shared<InMemoryOutbox>();
+      bool fail_next = true;
+      std::vector<Epoch> resent;
+      IpcSink sink = [&](const IpcMessage& message) {
+        if (fail_next) {
+          REQUIRE(std::holds_alternative<IpcMessageDelta>(message),
+                  where + ": first failed frame must be Delta");
+          fail_next = false;
+          return false;
+        }
+        if (std::holds_alternative<IpcMessageDelta>(message))
+          resent.push_back(std::get<IpcMessageDelta>(message).value.epoch);
+        return true;
+      };
+      IpcSource source = [&]() -> std::optional<IpcMessage> { return std::nullopt; };
+      Clock clock = [] { return int64_t(0); };
+      SnapshotProvider provider = [](Epoch) {
+        return IpcMessage{IpcMessageSnapshot{Snapshot{0, {}, {}, {}}}};
+      };
+      SyncDriver driver(sink, source, outbox, clock, provider);
+      for (const auto& entry : appended)
+        driver.enqueue(entry.first, entry.second);
+      const Progress failed = driver.tick();
+      const bool stalled_after_failure = driver.is_stalled();
+      const auto retained_after_failure = outbox->retained_epochs();
+      driver.on_reconnect();
+      const Progress retried = driver.tick();
+
+      lazily_test::AssertionKeys expected(where + " expect",
+                                          lazily_test::json_member(scenario, "expect"));
+      expected.assert_key("frame_retained_after_failed_send", failed.sent == 0 &&
+                                                                  stalled_after_failure &&
+                                                                  !retained_after_failure.empty());
+      expected.assert_key("retained", retained_after_failure, json_epochs);
+      expected.assert_key("resent_on_next_tick", resent, json_epochs);
+      expected.assert_key("permanent_gap",
+                          retried.sent != appended.size() || resent.size() != appended.size());
+    }
+  }
+
+  const IpcMessage wire = fixture_message(lazily_test::json_member(*root, "wire"));
+  REQUIRE(std::holds_alternative<IpcMessageOutboxAck>(wire),
+          "outbox replay wire must be OutboxAck");
 }
 
 // ── liveness_orset_lww.json ──────────────────────────────────────────────────
@@ -423,45 +578,6 @@ static WireStamp ws(int64_t wall, int64_t logical, PeerId peer) {
   return WireStamp{wall, logical, peer};
 }
 
-// open_set_add_wins_over_stale_remove: a re-open (add t3) concurrent with a
-// lagging close (remove observing only t1) keeps the doc open; order-independent.
-TEST(test_conformance_liveness_orset_add_wins) {
-  OrSet s;
-  s.add("t1");
-  s.remove_observed({"t1"});
-  s.add("t3");
-  assert(s.present()); // add_tag_t3_not_observed_by_remove
-
-  // order_independent: apply in reverse order, same result.
-  OrSet r;
-  r.add("t3");
-  r.add("t1");
-  r.remove_observed({"t1"});
-  assert(r.present());
-
-  // redeliver_applied_count 0: joining an identical replica changes nothing.
-  OrSet before = s;
-  s.join(r);
-  assert(s.present() == before.present());
-}
-
-// lww_alive_highest_stamp_wins: the OS process-exit write (alive=false at higher
-// stamp) wins; a stale re-assert (alive=true at lower stamp) is dominated.
-TEST(test_conformance_liveness_lww_highest_stamp_wins) {
-  WireLwwRegister<bool> alive(ws(20, 0, 1), true);
-  alive.set(ws(25, 0, 1), false);
-  alive.set(ws(22, 0, 1), true);  // stale — dominated
-  assert(alive.value() == false); // max_stamp resolution
-
-  // order_independent: apply in a different order.
-  WireLwwRegister<bool> alive2(ws(22, 0, 1), true);
-  alive2.set(ws(20, 0, 1), true);
-  alive2.set(ws(25, 0, 1), false);
-  assert(alive2.value() == false);
-}
-
-// Derived per-doc live aggregate: a doc is live iff some present (doc,pid) has
-// alive[pid] == true.
 static std::set<std::string>
 live_docs(const std::map<std::string, std::pair<std::string, OrSet>>&
               open_set,                                              // key -> (doc, pid) OR-set
@@ -477,63 +593,209 @@ live_docs(const std::map<std::string, std::pair<std::string, OrSet>>&
   return docs;
 }
 
-// whole_editor_death_cascades: one alive[pid100]=false recomputes the derived
-// live aggregate for BOTH docs pid100 held; docC (pid200) unaffected.
-TEST(test_conformance_liveness_whole_editor_death_cascades) {
-  std::map<std::string, std::pair<std::string, OrSet>> open_set;
-  std::map<std::string, std::string> key_pid;
-  auto open = [&](const std::string& key, const std::string& doc, const std::string& pid) {
-    OrSet s;
-    s.add(key); // one add tag = present
-    open_set[key] = {doc, s};
-    key_pid[key] = pid;
-  };
-  open("docA/pid100", "docA", "100");
-  open("docB/pid100", "docB", "100");
-  open("docC/pid200", "docC", "200");
-
-  std::map<std::string, WireLwwRegister<bool>> alive;
-  alive.emplace("100", WireLwwRegister<bool>(ws(1, 0, 1), true));
-  alive.emplace("200", WireLwwRegister<bool>(ws(1, 0, 1), true));
-
-  assert((live_docs(open_set, alive, key_pid) == std::set<std::string>{"docA", "docB", "docC"}));
-
-  // pid100 dies (higher stamp).
-  alive.at("100").set(ws(30, 0, 1), false);
-  assert((live_docs(open_set, alive, key_pid) == std::set<std::string>{"docC"})); // cascade
+static std::pair<std::string, std::string> doc_pid(const std::string& key) {
+  const auto slash = key.find('/');
+  REQUIRE(slash != std::string::npos, "liveness key must be doc/pid");
+  std::string pid = key.substr(slash + 1);
+  if (pid.rfind("pid", 0) == 0) pid = pid.substr(3);
+  return {key.substr(0, slash), pid};
 }
 
-// derived_live_doc_aggregate_converges_under_retry: two replicas exchange the same
-// liveness ops in different orders + re-delivery; the derived per-doc live
-// aggregate converges identically (semilattice join).
-TEST(test_conformance_liveness_converges_under_retry) {
-  // Replica op set: add docA/pid100, alive[100]=true, add docB/pid100.
-  auto build = [](bool reverse) {
-    std::map<std::string, std::pair<std::string, OrSet>> open_set;
-    std::map<std::string, std::string> key_pid;
-    auto open = [&](const std::string& key, const std::string& doc, const std::string& pid,
-                    const std::string& tag) {
-      OrSet s;
-      s.add(tag);
-      open_set[key] = {doc, s};
-      key_pid[key] = pid;
-    };
-    if (!reverse) {
-      open("docA/pid100", "docA", "100", "a1");
-      open("docB/pid100", "docB", "100", "b1");
-    } else {
-      open("docB/pid100", "docB", "100", "b1");
-      open("docA/pid100", "docA", "100", "a1");
-    }
-    std::map<std::string, WireLwwRegister<bool>> alive;
-    alive.emplace("100", WireLwwRegister<bool>(ws(41, 0, 1), true));
-    return live_docs(open_set, alive, key_pid);
-  };
+static void apply_orset_op(const lazily_test::Json& op, OrSet& set, const std::string& where) {
+  const std::string kind = lazily_test::json_string(lazily_test::json_member(op, "op"));
+  if (kind == "add") {
+    require_fixture_keys(op, {"op", "tag", "stamp"}, where);
+    (void)fixture_stamp(lazily_test::json_member(op, "stamp"));
+    set.add(lazily_test::json_string(lazily_test::json_member(op, "tag")));
+  } else {
+    REQUIRE(kind == "remove", where + ": unknown OR-set op");
+    require_fixture_keys(op, {"op", "observed_tags", "stamp"}, where);
+    (void)fixture_stamp(lazily_test::json_member(op, "stamp"));
+    set.remove_observed(json_strings(lazily_test::json_member(op, "observed_tags")));
+  }
+}
 
-  auto r1 = build(false);
-  auto r2 = build(true);
-  assert(r1 == r2);                                      // order_independent
-  assert((r1 == std::set<std::string>{"docA", "docB"})); // converged_live_docs; per_doc_isolation
+struct LivenessState {
+  std::map<std::string, std::pair<std::string, OrSet>> open_set;
+  std::map<std::string, std::string> key_pid;
+  std::map<std::string, WireLwwRegister<bool>> alive;
+};
+
+static void apply_liveness_op(const lazily_test::Json& op, LivenessState& state,
+                              const std::string& where) {
+  const std::string register_kind =
+      lazily_test::json_string(lazily_test::json_member(op, "register_kind"));
+  const std::string key = lazily_test::json_string(lazily_test::json_member(op, "key"));
+  if (register_kind == "orset") {
+    require_fixture_keys(op, {"register_kind", "key", "op", "tag", "stamp"}, where);
+    const auto parts = doc_pid(key);
+    state.open_set[key].first = parts.first;
+    state.key_pid[key] = parts.second;
+    (void)fixture_stamp(lazily_test::json_member(op, "stamp"));
+    state.open_set[key].second.add(lazily_test::json_string(lazily_test::json_member(op, "tag")));
+  } else {
+    REQUIRE(register_kind == "lww", where + ": unknown liveness register kind");
+    require_fixture_keys(op, {"register_kind", "key", "value", "stamp"}, where);
+    const auto slash = key.rfind('/');
+    REQUIRE(slash != std::string::npos, where + ": alive key must have a pid suffix");
+    std::string pid = key.substr(slash + 1);
+    if (pid.rfind("pid", 0) == 0) pid = pid.substr(3);
+    const bool value = lazily_test::json_bool(lazily_test::json_member(op, "value"));
+    const WireStamp stamp = fixture_stamp(lazily_test::json_member(op, "stamp"));
+    const auto found = state.alive.find(pid);
+    if (found == state.alive.end())
+      state.alive.emplace(pid, WireLwwRegister<bool>(stamp, value));
+    else
+      found->second.set(stamp, value);
+  }
+}
+
+TEST(test_conformance_liveness_fixture_replay) {
+  constexpr const char* fixture_id = "reliable-sync/liveness_orset_lww.json";
+  const auto root = lazily_test::parse_json(
+      lazily_test::spec_fixture_text("reliable-sync", "liveness_orset_lww.json"));
+  require_fixture_keys(*root, {"description", "protocol_version", "kind", "model", "scenarios"},
+                       fixture_id);
+  REQUIRE(lazily_test::json_u64(lazily_test::json_member(*root, "protocol_version")) == 1,
+          "liveness protocol_version");
+
+  for (const auto& view : lazily_test::scenario_views(
+           fixture_id, lazily_test::json_array(lazily_test::json_member(*root, "scenarios")))) {
+    const auto& scenario = view.replay();
+    const std::string where = std::string(fixture_id) + " " + view.id();
+    if (view.id() == "open_set_add_wins_over_stale_remove") {
+      require_fixture_keys(
+          scenario, {"id", "name", "description", "register_kind", "key", "ops", "expect"}, where);
+      REQUIRE(lazily_test::json_string(lazily_test::json_member(scenario, "register_kind")) ==
+                  "orset",
+              where + ": register kind");
+      REQUIRE(!lazily_test::json_string(lazily_test::json_member(scenario, "key")).empty(),
+              where + ": liveness key");
+      const auto& ops = lazily_test::json_array(lazily_test::json_member(scenario, "ops"));
+      OrSet forward;
+      for (const auto& op : ops)
+        apply_orset_op(*op, forward, where + " op");
+      OrSet reverse;
+      for (auto it = ops.rbegin(); it != ops.rend(); ++it)
+        apply_orset_op(**it, reverse, where + " reverse op");
+      const bool before_redelivery = forward.present();
+      for (const auto& op : ops)
+        apply_orset_op(*op, forward, where + " redelivered op");
+      const int redeliver_applied = forward.present() == before_redelivery ? 0 : 1;
+
+      lazily_test::AssertionKeys expected(where + " expect",
+                                          lazily_test::json_member(scenario, "expect"));
+      expected.assert_key("present", forward.present());
+      expected.assert_key("reason", forward.present()
+                                        ? std::string("add_tag_t3_not_observed_by_remove")
+                                        : std::string("removed"));
+      expected.assert_key("order_independent", forward.present() == reverse.present());
+      expected.assert_key("redeliver_applied_count", redeliver_applied);
+    } else if (view.id() == "lww_alive_highest_stamp_wins") {
+      require_fixture_keys(
+          scenario, {"id", "name", "description", "register_kind", "key", "ops", "expect"}, where);
+      REQUIRE(lazily_test::json_string(lazily_test::json_member(scenario, "register_kind")) ==
+                  "lww",
+              where + ": register kind");
+      const auto& ops = lazily_test::json_array(lazily_test::json_member(scenario, "ops"));
+      REQUIRE(!ops.empty(), where + ": LWW fixture needs at least one op");
+      auto make_register = [&](bool reverse_order) {
+        std::vector<const lazily_test::Json*> ordered;
+        for (const auto& op : ops) {
+          require_fixture_keys(*op, {"value", "stamp"}, where + " lww op");
+          ordered.push_back(op.get());
+        }
+        if (reverse_order) std::reverse(ordered.begin(), ordered.end());
+        WireLwwRegister<bool> result(
+            fixture_stamp(lazily_test::json_member(*ordered.front(), "stamp")),
+            lazily_test::json_bool(lazily_test::json_member(*ordered.front(), "value")));
+        for (std::size_t i = 1; i < ordered.size(); ++i)
+          result.set(fixture_stamp(lazily_test::json_member(*ordered[i], "stamp")),
+                     lazily_test::json_bool(lazily_test::json_member(*ordered[i], "value")));
+        return result;
+      };
+      const auto forward = make_register(false);
+      const auto reverse = make_register(true);
+
+      lazily_test::AssertionKeys expected(where + " expect",
+                                          lazily_test::json_member(scenario, "expect"));
+      expected.assert_key("value", forward.value());
+      expected.assert_key("resolution", std::string("max_stamp"));
+      expected.assert_key("order_independent", forward.value() == reverse.value());
+    } else if (view.id() == "whole_editor_death_cascades") {
+      require_fixture_keys(
+          scenario, {"id", "name", "description", "open_set", "alive_before", "op", "expect"},
+          where);
+      LivenessState state;
+      for (const auto& raw_open :
+           lazily_test::json_array(lazily_test::json_member(scenario, "open_set"))) {
+        const auto& open = *raw_open;
+        require_fixture_keys(open, {"key", "present"}, where + " open_set");
+        const std::string key = lazily_test::json_string(lazily_test::json_member(open, "key"));
+        const auto parts = doc_pid(key);
+        state.open_set[key].first = parts.first;
+        state.key_pid[key] = parts.second;
+        if (lazily_test::json_bool(lazily_test::json_member(open, "present")))
+          state.open_set[key].second.add(key);
+      }
+      for (const auto& alive : lazily_test::json_member(scenario, "alive_before").object)
+        state.alive.emplace(
+            alive.first, WireLwwRegister<bool>(ws(0, 0, 0), lazily_test::json_bool(*alive.second)));
+      const auto before = live_docs(state.open_set, state.alive, state.key_pid);
+      apply_liveness_op(lazily_test::json_member(scenario, "op"), state, where + " death op");
+      const auto after = live_docs(state.open_set, state.alive, state.key_pid);
+
+      lazily_test::AssertionKeys expected(where + " expect",
+                                          lazily_test::json_member(scenario, "expect"));
+      expected.assert_key("live_docs_before",
+                          std::vector<std::string>(before.begin(), before.end()), json_strings);
+      expected.assert_key("live_docs_after", std::vector<std::string>(after.begin(), after.end()),
+                          json_strings);
+      expected.assert_key("cascade", after.size() < before.size());
+    } else if (view.id() == "derived_live_doc_aggregate_converges_under_retry") {
+      require_fixture_keys(scenario,
+                           {"id", "name", "description", "replicas", "ops",
+                            "reverse_order_equivalent", "redeliver", "expect"},
+                           where);
+      REQUIRE(json_strings(lazily_test::json_member(scenario, "replicas")).size() == 2,
+              where + ": fixture must name two replicas");
+      REQUIRE(
+          lazily_test::json_bool(lazily_test::json_member(scenario, "reverse_order_equivalent")),
+          where + ": reverse-order selector");
+      REQUIRE(lazily_test::json_bool(lazily_test::json_member(scenario, "redeliver")),
+              where + ": redelivery selector");
+      const auto& ops = lazily_test::json_array(lazily_test::json_member(scenario, "ops"));
+      auto build = [&](bool reverse_order, bool redeliver) {
+        LivenessState state;
+        std::vector<const lazily_test::Json*> ordered;
+        for (const auto& op : ops)
+          ordered.push_back(op.get());
+        if (reverse_order) std::reverse(ordered.begin(), ordered.end());
+        for (const auto* op : ordered)
+          apply_liveness_op(*op, state, where + " op");
+        const auto before_redelivery = live_docs(state.open_set, state.alive, state.key_pid);
+        if (redeliver)
+          for (const auto* op : ordered)
+            apply_liveness_op(*op, state, where + " redelivered op");
+        return std::make_pair(live_docs(state.open_set, state.alive, state.key_pid),
+                              before_redelivery);
+      };
+      const auto forward = build(false, true);
+      const auto reverse = build(true, false);
+      const int redeliver_applied = forward.first == forward.second ? 0 : 1;
+
+      lazily_test::AssertionKeys expected(where + " expect",
+                                          lazily_test::json_member(scenario, "expect"));
+      expected.assert_key("converged_live_docs",
+                          std::vector<std::string>(forward.first.begin(), forward.first.end()),
+                          json_strings);
+      expected.assert_key("order_independent", forward.first == reverse.first);
+      expected.assert_key("redeliver_applied_count", redeliver_applied);
+      expected.assert_key("per_doc_isolation", forward.first.size() == 2);
+    } else {
+      REQUIRE(false, std::string(fixture_id) + ": unknown scenario " + view.id());
+    }
+  }
 }
 
 // ── wire round-trip: the new control frames survive the codec ────────────────
@@ -613,6 +875,6 @@ TEST(test_sync_driver_full_duplex_resync) {
 int main() {
   // Static initializers above ran every TEST; report the tally.
   std::printf("test_reliable_sync: %d/%d passed\n", test_passed, test_count);
-  REQUIRE_FIXTURES_LOADED(1);
+  REQUIRE_FIXTURES_LOADED(5);
   return test_passed == test_count ? 0 : 1;
 }

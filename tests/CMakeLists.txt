@@ -340,6 +340,7 @@ add_test(NAME ReactiveGraphConformance COMMAND test_reactive_graph_conformance)
 set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_stdlib_conformance
   test_crdt_tree
+  test_family_sync
   test_reliable_sync
   test_outbox_store
   test_temporal_conformance
