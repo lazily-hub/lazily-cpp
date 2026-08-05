@@ -132,6 +132,9 @@ REQUIRED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
+  # protobuf — the experimental v1 generator pilot is Rust/Kotlin/TypeScript;
+  # this binding must negotiate the capability before replaying the typed trace.
+  "protobuf/graph_boundary_traces.json"
   # materialization — mirrored by hand in test_reactive_family.cpp and its
   # async / thread-safe siblings; only entry_kind_orthogonal_to_mode.json is
   # replayed from the canonical bytes.
@@ -144,6 +147,8 @@ KNOWN_UNCOVERED=(
   "reliable-sync/liveness_lease_eviction.json"
   "reliable-sync/liveness_orset_lww.json"
   "reliable-sync/outbox_replay_after_crash.json"
+  # The canonical journal-decoder trace has no C++ replay runner yet.
+  "reliable-sync/outbox_journal_decode.json"
   "reliable-sync/resync_gap_converge.json"
 )
 
