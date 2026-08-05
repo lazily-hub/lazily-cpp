@@ -715,16 +715,16 @@ public:
   // returns whether the library agreed. Marks the key asserted.
   template <typename Check> void assert_key_with(const std::string& key, Check check) {
     const Json& want = required(key);
-    asserted_.insert(key);
     if (!check(want)) fail_mismatch(key, want);
+    asserted_.insert(key);
   }
 
   // As `assert_key_with`, but a no-op when the fixture omits the key.
   template <typename Check> bool assert_key_with_if_present(const std::string& key, Check check) {
     const Json* want = optional(key);
     if (want == nullptr) return false;
-    asserted_.insert(key);
     if (!check(*want)) fail_mismatch(key, *want);
+    asserted_.insert(key);
     return true;
   }
 
