@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -97,18 +98,22 @@ template <typename OwnerContext, typename Topic> static void run_fixture(const s
   size_t step_idx = 0;
   for (const auto& step : steps->array) {
     const std::string tag = name + " step " + std::to_string(step_idx++);
+    const Json* op = step->find("op");
+    const std::string& type = op->find("type")->str;
+    auto subscriber = [&]() { return op->find("subscriber")->str; };
 
-    // Prime every existing probe so `is_set` starts true; record which existed
-    // before this op (a subscriber created by THIS op has no before-state).
+    // A subscribe step asserts invalidation for the identity it creates. Mint
+    // that reader before the subscription so the assertion measures a real
+    // set -> unset transition instead of being skipped for lack of a probe.
+    if (type == "subscribe") ensure_probe(subscriber());
+
+    // Prime every probe so `is_set` starts true.
     std::set<std::string> existed_before;
     for (auto& kv : probes) {
       graph.get(kv.second);
       existed_before.insert(kv.first);
     }
 
-    const Json* op = step->find("op");
-    const std::string& type = op->find("type")->str;
-    auto subscriber = [&]() { return op->find("subscriber")->str; };
     if (type == "publish") {
       topic.publish(ctx, op->find("value")->str);
     } else if (type == "advance") {
@@ -138,69 +143,50 @@ template <typename OwnerContext, typename Topic> static void run_fixture(const s
 
     const Json* expected = step->find("expected");
     REQUIRE(expected != nullptr, "topic step missing expected");
-
-    // `invalidates` and `reads` -- the two properties this runner exists for --
-    // were checked only when their key was present, with no catch-all. A rename
-    // dropped them silently while base_offset/elements/subscriptions kept the
-    // test green. Reject unknown keys instead.
-    for (const auto& kv : expected->object)
-      REQUIRE(kv.first == "invalidates" || kv.first == "reads" || kv.first == "base_offset" ||
-                  kv.first == "elements" || kv.first == "subscriptions",
-              ("unrecognised topic expected key -- it would be silently "
-               "ignored: " +
-               tag)
-                  .c_str());
+    lazily_test::AssertionKeys expect("collections/" + name + " " + tag + " expected", *expected);
 
     // Per-subscriber reader invalidation.
-    if (const Json* inval = expected->find("invalidates")) {
-      for (const auto& kv : inval->object) {
-        const std::string& id = kv.first;
-        const bool want = kv.second->as_bool();
-        if (existed_before.count(id)) {
-          const bool still_set = graph.is_set(probes.at(id));
-          REQUIRE(still_set == !want, ("invalidation mismatch: " + tag + " sub=" + id).c_str());
-        }
-        // A subscriber created by this op has no before-state to transition
-        // from; its probe is (re)built below for subsequent steps.
+    expect.with_sub_if_present("invalidates", [&](lazily_test::AssertionKeys& invalidates) {
+      for (const auto& id : invalidates.keys()) {
+        REQUIRE(existed_before.count(id) != 0,
+                ("invalidation assertion has no primed probe: " + tag + " sub=" + id).c_str());
+        const bool actual = !graph.is_set(probes.at(id));
+        invalidates.assert_key(id, actual);
       }
-    }
+    });
 
     // read_stream per subscriber.
-    if (const Json* reads = expected->find("reads")) {
-      for (const auto& kv : reads->object) {
-        auto got = topic.read_stream(ctx, kv.first);
-        REQUIRE(got == str_array(kv.second.get()),
-                ("read_stream mismatch: " + tag + " sub=" + kv.first).c_str());
+    expect.with_sub_if_present("reads", [&](lazily_test::AssertionKeys& reads) {
+      for (const auto& id : reads.keys()) {
+        const auto got = topic.read_stream(ctx, id);
+        reads.assert_key(id, got, [](const Json& want) { return str_array(&want); });
       }
-    }
+    });
 
     // Topic state: base_offset + elements.
-    const Json* want_base = expected->find("base_offset");
-    const Json* want_elements = expected->find("elements");
-    // `str_array(nullptr)` returns {}, so a renamed `elements` key degraded to
-    // "assert the topic is empty" rather than to a failure.
-    REQUIRE(want_base != nullptr && want_elements != nullptr,
-            ("topic step is missing base_offset or elements: " + tag).c_str());
-    REQUIRE(topic.base_offset() == static_cast<size_t>(want_base->as_int()),
-            ("base_offset mismatch: " + tag).c_str());
-    REQUIRE(topic.elements() == str_array(want_elements), ("elements mismatch: " + tag).c_str());
+    expect.assert_key("base_offset", topic.base_offset(),
+                      [](const Json& want) { return static_cast<size_t>(want.as_int()); });
+    expect.assert_key("elements", topic.elements(),
+                      [](const Json& want) { return str_array(&want); });
 
     // Subscriptions: every expected entry matches; any known id absent from
     // `expected` must be gone from the topic (removed ephemeral).
-    const Json* subs = expected->find("subscriptions");
     std::set<std::string> expected_ids;
-    for (const auto& kv : subs->object) {
-      expected_ids.insert(kv.first);
-      auto got = topic.subscription(kv.first);
-      REQUIRE(got.has_value(), ("subscription missing: " + tag + " sub=" + kv.first).c_str());
-      const Json* e = kv.second.get();
-      REQUIRE(got->cursor == static_cast<size_t>(e->find("cursor")->as_int()),
-              ("cursor mismatch: " + tag + " sub=" + kv.first).c_str());
-      REQUIRE(got->connected == e->find("connected")->as_bool(),
-              ("connected mismatch: " + tag + " sub=" + kv.first).c_str());
-      REQUIRE(got->durability == durability_of(e->find("durability")->str),
-              ("durability mismatch: " + tag + " sub=" + kv.first).c_str());
-    }
+    expect.with_sub("subscriptions", [&](lazily_test::AssertionKeys& subscriptions) {
+      for (const auto& id : subscriptions.keys()) {
+        expected_ids.insert(id);
+        auto got = topic.subscription(id);
+        REQUIRE(got.has_value(), ("subscription missing: " + tag + " sub=" + id).c_str());
+        subscriptions.with_sub(id, [&](lazily_test::AssertionKeys& subscription) {
+          subscription.assert_key("cursor", got->cursor, [](const Json& want) {
+            return static_cast<size_t>(want.as_int());
+          });
+          subscription.assert_key("connected", got->connected);
+          subscription.assert_key("durability", got->durability,
+                                  [](const Json& want) { return durability_of(want.str); });
+        });
+      }
+    });
     for (const auto& id : all_ids)
       if (!expected_ids.count(id))
         REQUIRE(!topic.subscription(id).has_value(),

@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -162,16 +163,8 @@ static void run_scenario(const lazily_test::ScenarioView& sv) {
   const Json* expect = scenario->find("expect");
   REQUIRE(expect != nullptr, "scenario missing expect");
   const std::string tag = "scenario " + std::to_string(idx);
-
-  // Eight independent optional lookups with no catch-all: a renamed or added
-  // expect key ran the whole op schedule and asserted zero properties while the
-  // scenario still counted as passed. The STEP dispatcher above hard-fails on an
-  // unknown op; the expectation side did not. It does now.
-  for (const auto& kv : expect->object)
-    REQUIRE(kv.first == "order" || kv.first == "get" || kv.first == "len" ||
-                kv.first == "orders_equal" || kv.first == "order_on" || kv.first == "get_on" ||
-                kv.first == "contains_all" || kv.first == "not_contains_on",
-            ("unrecognised seqcrdt expect key — it would be silently ignored: " + tag).c_str());
+  lazily_test::AssertionKeys expected("collections/seqcrdt_convergence.json " + tag + " expect",
+                                      *expect);
   REQUIRE(!expect->object.empty(), ("a seqcrdt scenario asserts nothing: " + tag).c_str());
 
   // `len`/`contains_all` target: first element of the first `orders_equal` pair,
@@ -191,53 +184,75 @@ static void run_scenario(const lazily_test::ScenarioView& sv) {
     return "a";
   };
 
-  if (const Json* order = expect->find("order")) assert_order(replicas.at("a"), order, tag);
+  expected.assert_key_with_if_present("order", [&](const Json& order) {
+    assert_order(replicas.at("a"), &order, tag);
+    return true;
+  });
 
-  if (const Json* gets = expect->find("get")) {
-    for (const auto& kv : gets->object) {
-      auto got = replicas.at("a").get(kv.first);
-      REQUIRE(got.has_value() && value_matches(*got, kv.second.get()),
-              ("get mismatch: " + tag + " id=" + kv.first).c_str());
+  expected.with_sub_if_present("get", [&](lazily_test::AssertionKeys& gets) {
+    for (const auto& id : gets.keys()) {
+      gets.assert_key_with(id, [&](const Json& want) {
+        auto got = replicas.at("a").get(id);
+        return got.has_value() && value_matches(*got, &want);
+      });
     }
-  }
+  });
 
-  if (const Json* len = expect->find("len"))
-    REQUIRE(replicas.at(converged_target()).len() == static_cast<size_t>(len->as_int()),
-            ("len mismatch: " + tag).c_str());
+  expected.assert_key_if_present(
+      "len", replicas.at(converged_target()).len(),
+      [](const Json& value) { return static_cast<size_t>(value.as_int()); });
 
-  if (const Json* pairs = expect->find("orders_equal")) {
-    for (const auto& pair : pairs->array) {
+  expected.assert_key_with_if_present("orders_equal", [&](const Json& pairs) {
+    for (const auto& pair : pairs.array) {
       const std::string& a = pair->array[0]->str;
       const std::string& b = pair->array[1]->str;
       REQUIRE(replicas.at(a).order() == replicas.at(b).order(),
               ("orders should converge: " + tag + " " + a + "/" + b).c_str());
     }
-  }
+    return true;
+  });
 
-  if (const Json* on = expect->find("order_on"))
-    for (const auto& kv : on->object)
-      assert_order(replicas.at(kv.first), kv.second.get(), tag + " on " + kv.first);
+  expected.with_sub_if_present("order_on", [&](lazily_test::AssertionKeys& on) {
+    for (const auto& replica : on.keys()) {
+      on.assert_key_with(replica, [&](const Json& order) {
+        assert_order(replicas.at(replica), &order, tag + " on " + replica);
+        return true;
+      });
+    }
+  });
 
-  if (const Json* on = expect->find("get_on"))
-    for (const auto& kv : on->object)
-      for (const auto& g : kv.second->object) {
-        auto got = replicas.at(kv.first).get(g.first);
-        REQUIRE(got.has_value() && value_matches(*got, g.second.get()),
-                ("get_on mismatch: " + tag + " " + kv.first + "/" + g.first).c_str());
-      }
+  expected.with_sub_if_present("get_on", [&](lazily_test::AssertionKeys& on) {
+    for (const auto& replica : on.keys()) {
+      on.with_sub(replica, [&](lazily_test::AssertionKeys& gets) {
+        for (const auto& id : gets.keys()) {
+          gets.assert_key_with(id, [&](const Json& want) {
+            auto got = replicas.at(replica).get(id);
+            return got.has_value() && value_matches(*got, &want);
+          });
+        }
+      });
+    }
+  });
 
-  if (const Json* ca = expect->find("contains_all")) {
+  expected.assert_key_with_if_present("contains_all", [&](const Json& ids) {
     const std::string target = converged_target();
-    for (const auto& id : ca->array)
+    for (const auto& id : ids.array) {
       REQUIRE(replicas.at(target).contains(id->str),
               ("contains_all: " + tag + " id=" + id->str).c_str());
-  }
+    }
+    return true;
+  });
 
-  if (const Json* nc = expect->find("not_contains_on"))
-    for (const auto& kv : nc->object)
-      for (const auto& id : kv.second->array)
-        REQUIRE(!replicas.at(kv.first).contains(id->str),
-                ("not_contains_on: " + tag + " " + kv.first + "/" + id->str).c_str());
+  expected.with_sub_if_present("not_contains_on", [&](lazily_test::AssertionKeys& on) {
+    for (const auto& replica : on.keys()) {
+      on.assert_key_with(replica, [&](const Json& ids) {
+        for (const auto& id : ids.array)
+          REQUIRE(!replicas.at(replica).contains(id->str),
+                  ("not_contains_on: " + tag + " " + replica + "/" + id->str).c_str());
+        return true;
+      });
+    }
+  });
 }
 
 TEST(conformance_seqcrdt_convergence) {

@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -143,34 +144,24 @@ static void apply_step(World& w, const Json* step) {
 }
 
 static void assert_expect(World& w, const Json* expect, const std::string& scen) {
-  // Four independent optional lookups with no catch-all: a renamed or added
-  // expect key made the whole scenario assert NOTHING and still report PASS
-  // (the scenario counter is independent of whether any expectation ran).
-  // Reject unknown keys the way the step dispatcher above already does.
-  for (const auto& kv : expect->object)
-    REQUIRE(kv.first == "render" || kv.first == "render_on" || kv.first == "live_nodes" ||
-                kv.first == "converged",
-            ("unrecognised lossless-tree expect key — it would be silently "
-             "ignored: " +
-             scen)
-                .c_str());
+  lazily_test::AssertionKeys expected("lossless-tree/" + scen + " expect", *expect);
   REQUIRE(!expect->object.empty(), ("a lossless-tree scenario asserts nothing: " + scen).c_str());
-  if (const Json* text = expect->find("render"))
-    REQUIRE(w.replicas.at("a").render() == text->str, ("render on a: " + scen).c_str());
-  if (const Json* per = expect->find("render_on"))
-    for (const auto& kv : per->object)
-      REQUIRE(w.replicas.at(kv.first).render() == kv.second->str,
-              ("render_on " + kv.first + ": " + scen).c_str());
-  if (const Json* n = expect->find("live_nodes"))
-    REQUIRE(w.replicas.at("a").live_node_count() == static_cast<size_t>(n->as_int()),
-            ("live_nodes on a: " + scen).c_str());
-  if (const Json* names = expect->find("converged")) {
-    REQUIRE(!names->array.empty(), "converged list empty");
-    const std::string first = w.replicas.at(names->array[0]->str).render();
-    for (const auto& name : names->array)
+  expected.assert_key_if_present("render", w.replicas.at("a").render());
+  expected.with_sub_if_present("render_on", [&](lazily_test::AssertionKeys& per) {
+    for (const auto& replica : per.keys())
+      per.assert_key(replica, w.replicas.at(replica).render());
+  });
+  expected.assert_key_if_present(
+      "live_nodes", w.replicas.at("a").live_node_count(),
+      [](const Json& value) { return static_cast<size_t>(value.as_int()); });
+  expected.assert_key_with_if_present("converged", [&](const Json& names) {
+    REQUIRE(!names.array.empty(), "converged list empty");
+    const std::string first = w.replicas.at(names.array[0]->str).render();
+    for (const auto& name : names.array)
       REQUIRE(w.replicas.at(name->str).render() == first,
               ("convergence: " + scen + " on " + name->str).c_str());
-  }
+    return true;
+  });
 }
 
 static void run_fixture(const std::string& name, int& fixture_scenarios) {

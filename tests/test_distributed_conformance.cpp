@@ -129,12 +129,6 @@ static CrdtOp op_of(const Json* node) {
   return op;
 }
 
-// Keys a scenario's `expect` block may carry.
-static bool is_known_expect_key(const std::string& key) {
-  return key == "resolution" || key == "applied_count" || key == "redeliver_applied_count" ||
-         key == "order_independent" || key == "converged";
-}
-
 static bool is_known_scenario_key(const std::string& key) {
   // `id` is the canonical scenario identity (#recommendedconformanceco) and is
   // what record_scenario_at books into the replay ledger; `name` is its prose
@@ -336,18 +330,10 @@ int main() {
     for (const auto& op_node : ops_node->array)
       ops.push_back(op_of(op_node.get()));
 
-    const Json* expect = scenario_node->find("expect");
-    REQUIRE(expect != nullptr && expect->is_object(), "a scenario has no expect block");
-    for (const auto& kv : expect->object)
-      REQUIRE(is_known_expect_key(kv.first),
-              "unrecognised distributed expect key in fixture — it would be "
-              "silently ignored");
-
-    const Json* resolution = expect->find("resolution");
-    REQUIRE(resolution != nullptr, "a scenario has no resolution rule");
-
-    const Json* want_applied = expect->find("applied_count");
-    REQUIRE(want_applied != nullptr, "a scenario has no applied_count");
+    const Json* expect_block = scenario_node->find("expect");
+    REQUIRE(expect_block != nullptr && expect_block->is_object(), "a scenario has no expect block");
+    lazily_test::AssertionKeys expect(
+        std::string(kArea) + "/" + kFixture + " scenario[" + name + "].expect", *expect_block);
 
     CrdtPlaneRuntime runtime(99);
     CrdtSync frame{{}, ops};
@@ -355,13 +341,15 @@ int main() {
     g_ops_ingested += ops.size();
     ++g_scenarios;
     ++g_checks;
-    if (applied != static_cast<int>(want_applied->as_int())) {
-      std::cout << "FAIL: " << name << ": applied_count expected " << want_applied->as_int()
-                << ", got " << applied << std::endl;
-      std::abort();
-    }
-    assert_converged(name, runtime, expect->find("converged"));
-    assert_max_stamp_resolution(name, *resolution, ops, runtime);
+    expect.assert_key("applied_count", applied);
+    expect.assert_key_with("converged", [&](const Json& converged) {
+      assert_converged(name, runtime, &converged);
+      return true;
+    });
+    expect.assert_key_with("resolution", [&](const Json& resolution) {
+      assert_max_stamp_resolution(name, resolution, ops, runtime);
+      return true;
+    });
 
     // State-based CvRDT idempotence: re-delivering the same frame applies
     // nothing new and leaves the converged state untouched. Asserted for EVERY
@@ -374,12 +362,13 @@ int main() {
                 << std::endl;
       std::abort();
     }
-    if (const Json* want_re = expect->find("redeliver_applied_count")) {
+    if (expect.assert_key_if_present("redeliver_applied_count", re_applied)) {
       ++g_checks;
-      REQUIRE(re_applied == static_cast<int>(want_re->as_int()),
-              "redeliver_applied_count does not match the fixture");
     }
-    assert_converged(name, runtime, expect->find("converged"));
+    expect.assert_key_with("converged", [&](const Json& converged) {
+      assert_converged(name, runtime, &converged);
+      return true;
+    });
 
     // Delivery-order independence: a fresh replica fed the reversed sequence
     // converges to the identical winner and accounts for the same op count.
@@ -388,12 +377,19 @@ int main() {
     const int rev_applied = reversed_runtime.ingest(CrdtSync{{}, reversed});
     g_ops_ingested += reversed.size();
     ++g_checks;
-    if (rev_applied != static_cast<int>(want_applied->as_int())) {
-      std::cout << "FAIL: " << name << ": reversed applied_count expected "
-                << want_applied->as_int() << ", got " << rev_applied << std::endl;
-      std::abort();
+    expect.assert_key("applied_count", rev_applied);
+    expect.assert_key_with("converged", [&](const Json& converged) {
+      assert_converged(name + " (reversed)", reversed_runtime, &converged);
+      return true;
+    });
+    bool order_independent = applied == rev_applied;
+    for (const auto& op : ops) {
+      const auto forward = runtime.value(op.node);
+      const auto reverse = reversed_runtime.value(op.node);
+      order_independent = order_independent && forward.has_value() && reverse.has_value() &&
+                          ipc_value_equal(*forward, *reverse);
     }
-    assert_converged(name + " (reversed)", reversed_runtime, expect->find("converged"));
+    expect.assert_key_if_present("order_independent", order_independent);
   }
 
   REQUIRE(g_scenarios >= 3 && g_ops_ingested >= 20 && g_checks >= 20,

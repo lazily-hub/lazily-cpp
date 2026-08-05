@@ -101,6 +101,7 @@
 #include <utility>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_spec_fixture.hpp"
 
 using namespace lazily;
@@ -373,6 +374,23 @@ struct JsonParser {
     return node;
   }
 };
+
+// This runner predates the shared fixture reader. Keep its replay model stable
+// while projecting assertion blocks into the shared representation owned by
+// AssertionKeys; the structural clone is content-identical, so rung-0 bind
+// fingerprints still match the canonical fixture bytes.
+static lazily_test::JsonPtr assertion_json(const Json& source) {
+  auto out = std::make_shared<lazily_test::Json>();
+  out->type = static_cast<lazily_test::Json::Type>(source.type);
+  out->boolean = source.boolean;
+  out->number = source.number;
+  out->str = source.str;
+  for (const auto& item : source.array)
+    out->array.push_back(assertion_json(*item));
+  for (const auto& entry : source.object)
+    out->object.emplace_back(entry.first, assertion_json(*entry.second));
+  return out;
+}
 
 // ── Replay engine (synchronous Context) ────────────────────────────────────
 
@@ -773,7 +791,7 @@ void bind_node(World& w, const std::string& id, Ref ref) {
 // Replay one op stream into `w`. `tail` is the `scenarios` shape's `expected`
 // block, evaluated against the final world state when present.
 void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& steps,
-            const Json* tail, Report& report) {
+            const Json* tail, lazily_test::AssertionKeys* tail_expected, Report& report) {
   for (std::size_t i = 0; i < steps.size(); ++i) {
     const Json& step = *steps[i];
     const Json* op = step.find("op");
@@ -954,6 +972,9 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
 
     const Json* expect = step.find("expect");
     if (!expect) continue;
+    const auto tracked_block = assertion_json(*expect);
+    lazily_test::AssertionKeys expected(fixture + " step[" + std::to_string(i) + "].expect",
+                                        *tracked_block);
 
     // `computes_of` is checked BEFORE every other key, in its own pass.
     // Several keys below can perform a read (`value` on a non-reading op,
@@ -968,28 +989,40 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
     // deliberately so no read intervenes before a discriminating count, and
     // that intent should not silently depend on how a key was typed within a
     // step.
-    for (const auto& kv : expect->object) {
-      if (kv.first != "computes_of") continue;
-      for (const auto& e : kv.second->object) {
-        check(fixture, i, "computes_of." + e.first, w.computes[e.first], e.second->as_int(),
-              report);
+    expected.with_sub_if_present("computes_of", [&](lazily_test::AssertionKeys& computes) {
+      for (const auto& id : computes.keys()) {
+        computes.assert_key_with(id, [&](const lazily_test::Json& want) {
+          check(fixture, i, "computes_of." + id, w.computes[id], want.as_int(), report);
+          return true;
+        });
       }
-    }
+    });
 
     for (const auto& kv : expect->object) {
       const std::string& key = kv.first;
-      const Json& want = *kv.second;
 
       if (key == "note" || key == "computes_of") {
         continue;
       } else if (key == "dependents_of") {
-        for (const auto& e : want.object)
-          check(fixture, i, "dependents_of." + e.first, dependents_of(w, e.first),
-                static_cast<std::size_t>(e.second->as_int()), report);
+        expected.with_sub("dependents_of", [&](lazily_test::AssertionKeys& dependents) {
+          for (const auto& id : dependents.keys()) {
+            dependents.assert_key_with(id, [&](const lazily_test::Json& value) {
+              check(fixture, i, "dependents_of." + id, dependents_of(w, id),
+                    static_cast<std::size_t>(value.as_int()), report);
+              return true;
+            });
+          }
+        });
       } else if (key == "dependencies_of") {
-        for (const auto& e : want.object)
-          check(fixture, i, "dependencies_of." + e.first, dependencies_of(w, e.first),
-                static_cast<std::size_t>(e.second->as_int()), report);
+        expected.with_sub("dependencies_of", [&](lazily_test::AssertionKeys& dependencies) {
+          for (const auto& id : dependencies.keys()) {
+            dependencies.assert_key_with(id, [&](const lazily_test::Json& value) {
+              check(fixture, i, "dependencies_of." + id, dependencies_of(w, id),
+                    static_cast<std::size_t>(value.as_int()), report);
+              return true;
+            });
+          }
+        });
       } else if (key == "error") {
         // A string error code means "this op must fail"; null means "must not".
         // The runner does not model error identity -- the fixtures carry the
@@ -1001,66 +1034,99 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
         // not-a-string would silently INVERT the assertion into "this op must
         // succeed" and both this check and the `value` guard below would flip
         // together.
-        REQUIRE(want.type == Json::Type::String || want.type == Json::Type::Null,
-                "`error` must be an error-code string or null");
-        const bool wants_error = want.type == Json::Type::String;
-        check(fixture, i, "error", op_error, wants_error, report);
+        expected.assert_key_with("error", [&](const lazily_test::Json& value) {
+          REQUIRE(value.type == lazily_test::Json::Type::String ||
+                      value.type == lazily_test::Json::Type::Null,
+                  "`error` must be an error-code string or null");
+          const bool wants_error = value.type == lazily_test::Json::Type::String;
+          check(fixture, i, "error", op_error, wants_error, report);
+          return true;
+        });
       } else if (key == "value") {
         // Skipped when the same step expects an error — there is no value then.
         const Json* err = expect->find("error");
-        if (err && err->type == Json::Type::String) continue;
-        if (!have_value) {
-          // A creating op returns no value of its own, but the signal fixtures
-          // pin `value` on the `signal` step to assert that what materialized
-          // eagerly is the CORRECT value and not merely some value. Reading it
-          // here is safe only because `computes_of` was already checked above:
-          // if this binding had been lazy, the count assertion has failed
-          // before this read could paper over it.
-          const Json* id = op->find("id");
-          REQUIRE(id != nullptr, "fixture expects a value from an op that read none and has "
-                                 "no id to read back");
-          const ReadOut out = try_read(w, id->str);
-          REQUIRE(out.ok, "fixture expects a value from an unreadable node");
-          check(fixture, i, "value", out.value, want.as_int(), report);
-          continue;
+        if (err && err->type == Json::Type::String) {
+          expected.excuse_key("value",
+                              "the same step asserts an error, so the operation has no value");
+        } else {
+          expected.assert_key_with("value", [&](const lazily_test::Json& value) {
+            if (!have_value) {
+              // A creating op returns no value of its own, but the signal fixtures
+              // pin `value` on the `signal` step to assert that what materialized
+              // eagerly is the CORRECT value and not merely some value.
+              const Json* id = op->find("id");
+              REQUIRE(id != nullptr, "fixture expects a value from an op that read none and has "
+                                     "no id to read back");
+              const ReadOut out = try_read(w, id->str);
+              REQUIRE(out.ok, "fixture expects a value from an unreadable node");
+              check(fixture, i, "value", out.value, value.as_int(), report);
+            } else {
+              check(fixture, i, "value", op_value, value.as_int(), report);
+            }
+            return true;
+          });
         }
-        check(fixture, i, "value", op_value, want.as_int(), report);
       } else if (key == "read") {
-        for (const auto& e : want.object) {
-          const ReadOut out = try_read(w, e.first);
-          check(fixture, i, "read." + e.first + ".readable", out.ok, true, report);
-          check(fixture, i, "read." + e.first, out.value, e.second->as_int(), report);
-        }
+        expected.with_sub("read", [&](lazily_test::AssertionKeys& reads) {
+          for (const auto& id : reads.keys()) {
+            reads.assert_key_with(id, [&](const lazily_test::Json& value) {
+              const ReadOut out = try_read(w, id);
+              check(fixture, i, "read." + id + ".readable", out.ok, true, report);
+              check(fixture, i, "read." + id, out.value, value.as_int(), report);
+              return true;
+            });
+          }
+        });
       } else if (key == "readable") {
-        for (const auto& e : want.object)
-          check(fixture, i, "readable." + e.first, readable(w, e.first), e.second->boolean, report);
+        expected.with_sub("readable", [&](lazily_test::AssertionKeys& readable_nodes) {
+          for (const auto& id : readable_nodes.keys())
+            readable_nodes.assert_key_with(id, [&](const lazily_test::Json& value) {
+              check(fixture, i, "readable." + id, readable(w, id), value.boolean, report);
+              return true;
+            });
+        });
       } else if (key == "observed_by") {
-        check_strs(fixture, i, "observed_by", observed, strs(&want), report);
+        expected.assert_key_with("observed_by", [&](const lazily_test::Json& value) {
+          std::vector<std::string> names;
+          for (const auto& entry : value.array)
+            names.push_back(entry->str);
+          check_strs(fixture, i, "observed_by", observed, names, report);
+          return true;
+        });
       } else if (key == "observed_count") {
-        check(fixture, i, "observed_count", observed.size(),
-              static_cast<std::size_t>(want.as_int()), report);
+        expected.assert_key_with("observed_count", [&](const lazily_test::Json& value) {
+          check(fixture, i, "observed_count", observed.size(),
+                static_cast<std::size_t>(value.as_int()), report);
+          return true;
+        });
       } else if (key == "cleanup_order") {
         // Only effects run a cleanup callback — a derived slot has none — so
         // the expected order is projected onto its effect entries. The log is
         // cumulative, not per-step: the individual-disposal scenario spreads
         // three disposals over three steps and pins the whole order on the
         // last one.
-        std::vector<std::string> want_effects;
-        for (const auto& id : strs(&want)) {
-          auto it = w.stale.find(id);
-          if (it != w.stale.end() && it->second.kind == Kind::Effect) want_effects.push_back(id);
-        }
-        check_strs(fixture, i, "cleanup_order", w.cleanup_log, want_effects, report);
+        expected.assert_key_with("cleanup_order", [&](const lazily_test::Json& value) {
+          std::vector<std::string> want_effects;
+          for (const auto& entry : value.array) {
+            auto it = w.stale.find(entry->str);
+            if (it != w.stale.end() && it->second.kind == Kind::Effect)
+              want_effects.push_back(entry->str);
+          }
+          check_strs(fixture, i, "cleanup_order", w.cleanup_log, want_effects, report);
+          return true;
+        });
       } else if (key == "scope_owned_count") {
-        for (const auto& e : want.object) {
-          auto it = w.scopes.find(e.first);
-          REQUIRE(it != w.scopes.end(), "scope_owned_count names a scope that is not open");
-          check(fixture, i, "scope_owned_count." + e.first, it->second.size(),
-                static_cast<std::size_t>(e.second->as_int()), report);
-        }
-      } else {
-        REQUIRE(false, "unrecognised expectation key in fixture — it would be "
-                       "silently ignored");
+        expected.with_sub("scope_owned_count", [&](lazily_test::AssertionKeys& scopes) {
+          for (const auto& id : scopes.keys()) {
+            scopes.assert_key_with(id, [&](const lazily_test::Json& value) {
+              auto it = w.scopes.find(id);
+              REQUIRE(it != w.scopes.end(), "scope_owned_count names a scope that is not open");
+              check(fixture, i, "scope_owned_count." + id, it->second.size(),
+                    static_cast<std::size_t>(value.as_int()), report);
+              return true;
+            });
+          }
+        });
       }
     }
   }
@@ -1068,86 +1134,90 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
   // ── `scenarios`-shaped tail ──────────────────────────────────────────────
   report.observation.cleanup_order = w.cleanup_log;
   if (!tail) return;
+  REQUIRE(tail_expected != nullptr, "scenario tail has no shared assertion tracker");
 
   const std::size_t tail_step = steps.size();
-  // The per-step loop above ends in `REQUIRE(false, "unrecognised expectation
-  // key")`; this tail did not, so a `final_state` or `after_publish` block that
-  // gained a key (or had one renamed) dropped every assertion in it and stayed
-  // green. Both blocks now reject unknown keys the same way.
-  // `observationally_equal` is a whole-fixture key handled by the caller, not a
-  // per-scenario one; it is listed so this loop does not reject it.
-  for (const auto& kv : tail->object)
-    REQUIRE(kv.first == "final_state" || kv.first == "after_publish" ||
-                kv.first == "observationally_equal",
-            "unrecognised scenario-tail key in fixture — it would be silently "
-            "ignored");
-  if (const Json* fin = tail->find("final_state")) {
-    for (const auto& kv : fin->object)
-      REQUIRE(kv.first == "dependents_of" || kv.first == "readable" || kv.first == "read",
-              "unrecognised final_state key in fixture — it would be silently "
-              "ignored");
-    if (const Json* deps = fin->find("dependents_of")) {
-      for (const auto& e : deps->object) {
-        const std::size_t got = dependents_of(w, e.first);
-        check(fixture, tail_step, "final.dependents_of." + e.first, got,
-              static_cast<std::size_t>(e.second->as_int()), report);
-        report.observation.degrees[e.first] = got;
+  tail_expected->with_sub_if_present("final_state", [&](lazily_test::AssertionKeys& final_state) {
+    final_state.with_sub_if_present("dependents_of", [&](lazily_test::AssertionKeys& deps) {
+      for (const auto& id : deps.keys()) {
+        deps.assert_key_with(id, [&](const lazily_test::Json& value) {
+          const std::size_t got = dependents_of(w, id);
+          check(fixture, tail_step, "final.dependents_of." + id, got,
+                static_cast<std::size_t>(value.as_int()), report);
+          report.observation.degrees[id] = got;
+          return true;
+        });
       }
-    }
-    if (const Json* rd = fin->find("readable")) {
-      for (const auto& e : rd->object) {
-        const bool alive = readable(w, e.first);
-        check(fixture, tail_step, "final.readable." + e.first, alive, e.second->boolean, report);
-        report.observation.readable[e.first] = alive;
+    });
+    final_state.with_sub_if_present("readable", [&](lazily_test::AssertionKeys& readable_nodes) {
+      for (const auto& id : readable_nodes.keys()) {
+        readable_nodes.assert_key_with(id, [&](const lazily_test::Json& value) {
+          const bool alive = readable(w, id);
+          check(fixture, tail_step, "final.readable." + id, alive, value.boolean, report);
+          report.observation.readable[id] = alive;
+          return true;
+        });
       }
-    }
-    if (const Json* rd = fin->find("read")) {
-      for (const auto& e : rd->object) {
-        const ReadOut out = try_read(w, e.first);
-        check(fixture, tail_step, "final.read." + e.first + ".readable", out.ok, true, report);
-        check(fixture, tail_step, "final.read." + e.first, out.value, e.second->as_int(), report);
-        report.observation.reads[e.first] = out.value;
+    });
+    final_state.with_sub_if_present("read", [&](lazily_test::AssertionKeys& reads) {
+      for (const auto& id : reads.keys()) {
+        reads.assert_key_with(id, [&](const lazily_test::Json& value) {
+          const ReadOut out = try_read(w, id);
+          check(fixture, tail_step, "final.read." + id + ".readable", out.ok, true, report);
+          check(fixture, tail_step, "final.read." + id, out.value, value.as_int(), report);
+          report.observation.reads[id] = out.value;
+          return true;
+        });
       }
-    }
-  }
+    });
+  });
 
   const Json* publish = tail->find("after_publish");
   if (!publish) return;
-  for (const auto& kv : publish->object)
-    REQUIRE(kv.first == "op" || kv.first == "observed_by" || kv.first == "read" ||
-                kv.first == "dependents_of",
-            "unrecognised after_publish key in fixture — it would be silently "
-            "ignored");
-  // A missing `op` used to `return` here, silently dropping `observed_by` — the
-  // fan-out observable this block exists to assert.
-  const Json* pop = publish->find("op");
-  REQUIRE(pop != nullptr, "after_publish block has no op to publish");
+  tail_expected->with_sub("after_publish", [&](lazily_test::AssertionKeys& after_publish) {
+    after_publish.excuse_key("op", "operation input replayed after the scenario");
+    // A missing `op` used to `return` here, silently dropping `observed_by` — the
+    // fan-out observable this block exists to assert.
+    const Json* pop = publish->find("op");
+    REQUIRE(pop != nullptr, "after_publish block has no op to publish");
 
-  const Json* pid = pop->find("id");
-  const Json* pvalue = pop->find("value");
-  REQUIRE(pid && pvalue, "after_publish op needs id and value");
-  const Ref ref = w.lookup(pid->str);
-  REQUIRE(ref.kind == Kind::Cell, "after_publish set_cell on a non-cell");
-  const std::size_t before = w.run_log.size();
-  w.ctx.set(Source<long long>(ref.id), pvalue->as_int());
-  report.observation.after_publish_observed.assign(w.run_log.begin() + before, w.run_log.end());
-  check_strs(fixture, tail_step, "after_publish.observed_by",
-             report.observation.after_publish_observed, strs(publish->find("observed_by")), report);
-  if (const Json* rd = publish->find("read")) {
-    for (const auto& e : rd->object) {
-      const ReadOut out = try_read(w, e.first);
-      check(fixture, tail_step, "after_publish.read." + e.first + ".readable", out.ok, true,
-            report);
-      check(fixture, tail_step, "after_publish.read." + e.first, out.value, e.second->as_int(),
-            report);
-      report.observation.after_publish_reads[e.first] = out.value;
-    }
-  }
-  if (const Json* deps = publish->find("dependents_of")) {
-    for (const auto& e : deps->object)
-      check(fixture, tail_step, "after_publish.dependents_of." + e.first, dependents_of(w, e.first),
-            static_cast<std::size_t>(e.second->as_int()), report);
-  }
+    const Json* pid = pop->find("id");
+    const Json* pvalue = pop->find("value");
+    REQUIRE(pid && pvalue, "after_publish op needs id and value");
+    const Ref ref = w.lookup(pid->str);
+    REQUIRE(ref.kind == Kind::Cell, "after_publish set_cell on a non-cell");
+    const std::size_t before = w.run_log.size();
+    w.ctx.set(Source<long long>(ref.id), pvalue->as_int());
+    report.observation.after_publish_observed.assign(w.run_log.begin() + before, w.run_log.end());
+    after_publish.assert_key_with("observed_by", [&](const lazily_test::Json& value) {
+      std::vector<std::string> names;
+      for (const auto& entry : value.array)
+        names.push_back(entry->str);
+      check_strs(fixture, tail_step, "after_publish.observed_by",
+                 report.observation.after_publish_observed, names, report);
+      return true;
+    });
+    after_publish.with_sub_if_present("read", [&](lazily_test::AssertionKeys& reads) {
+      for (const auto& id : reads.keys()) {
+        reads.assert_key_with(id, [&](const lazily_test::Json& value) {
+          const ReadOut out = try_read(w, id);
+          check(fixture, tail_step, "after_publish.read." + id + ".readable", out.ok, true, report);
+          check(fixture, tail_step, "after_publish.read." + id, out.value, value.as_int(), report);
+          report.observation.after_publish_reads[id] = out.value;
+          return true;
+        });
+      }
+    });
+    after_publish.with_sub_if_present("dependents_of", [&](lazily_test::AssertionKeys& deps) {
+      for (const auto& id : deps.keys()) {
+        deps.assert_key_with(id, [&](const lazily_test::Json& value) {
+          check(fixture, tail_step, "after_publish.dependents_of." + id, dependents_of(w, id),
+                static_cast<std::size_t>(value.as_int()), report);
+          return true;
+        });
+      }
+    });
+  });
   // Recorded after the publish so the cleanup log the comparison sees is the
   // complete one.
   report.observation.cleanup_order = w.cleanup_log;
@@ -1159,7 +1229,7 @@ Report replay_steps(const std::string& name, const Json& fixture) {
   REQUIRE(steps != nullptr, "fixture declares shape 'steps' but has no steps");
   World w;
   Report report;
-  replay(name, w, steps->array, nullptr, report);
+  replay(name, w, steps->array, nullptr, nullptr, report);
   return report;
 }
 
@@ -1171,6 +1241,11 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
   const Json* scenarios = fixture.find("scenarios");
   REQUIRE(scenarios != nullptr, "fixture declares shape 'scenarios' but has none");
   const Json* expected = fixture.find("expected");
+  const auto tracked_expected = expected ? assertion_json(*expected) : nullptr;
+  std::unique_ptr<lazily_test::AssertionKeys> expected_keys;
+  if (tracked_expected)
+    expected_keys = std::make_unique<lazily_test::AssertionKeys>(
+        std::string(kArea) + "/" + name + " expected", *tracked_expected);
 
   Report total;
   std::map<std::string, Observation> observations;
@@ -1193,7 +1268,7 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
                                  sid != nullptr && !sid->str.empty() ? sid->str : sname->str);
     World w;
     Report report;
-    replay(name + "/" + sname->str, w, ssteps->array, expected, report);
+    replay(name + "/" + sname->str, w, ssteps->array, expected, expected_keys.get(), report);
     total.ops += report.ops;
     total.checks += report.checks;
     observations.emplace(sname->str, std::move(report.observation));
@@ -1204,25 +1279,28 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
   // semantics of its own, it only names a set and a moment — and it is a
   // relation between two op streams, so no per-step assertion can express it.
   if (expected) {
-    if (const Json* pair = expected->find("observationally_equal")) {
-      REQUIRE(pair->array.size() >= 2, "observationally_equal needs at least two scenario names");
-      const std::string& first = pair->array[0]->str;
-      for (std::size_t i = 1; i < pair->array.size(); ++i) {
-        const std::string& other = pair->array[i]->str;
-        auto a = observations.find(first);
-        auto b = observations.find(other);
-        REQUIRE(a != observations.end() && b != observations.end(),
-                "observationally_equal names a scenario that was not replayed");
-        ++total.checks;
-        if (a->second != b->second) {
-          std::cout << "FAIL: " << name << " scenarios '" << first << "' and '" << other
-                    << "' are not observationally equal — reactive-graph "
-                       "conformance FINDING (fixture is canonical and is not "
-                       "edited)"
-                    << std::endl;
-          std::abort();
+    if (expected->find("observationally_equal")) {
+      expected_keys->assert_key_with("observationally_equal", [&](const lazily_test::Json& pair) {
+        REQUIRE(pair.array.size() >= 2, "observationally_equal needs at least two scenario names");
+        const std::string& first = pair.array[0]->str;
+        for (std::size_t i = 1; i < pair.array.size(); ++i) {
+          const std::string& other = pair.array[i]->str;
+          auto a = observations.find(first);
+          auto b = observations.find(other);
+          REQUIRE(a != observations.end() && b != observations.end(),
+                  "observationally_equal names a scenario that was not replayed");
+          ++total.checks;
+          if (a->second != b->second) {
+            std::cout << "FAIL: " << name << " scenarios '" << first << "' and '" << other
+                      << "' are not observationally equal — reactive-graph "
+                         "conformance FINDING (fixture is canonical and is not "
+                         "edited)"
+                      << std::endl;
+            std::abort();
+          }
         }
-      }
+        return true;
+      });
     }
   }
   return total;

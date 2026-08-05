@@ -1,5 +1,6 @@
 #include <lazily/stdlib.hpp>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -49,37 +50,30 @@ struct Actual {
   std::optional<std::uint64_t> generation;
 };
 
-void assert_expected(const Json& expected, const Actual& actual) {
-  for (const auto& [key, value] : expected.object) {
-    if (key == "outcome") {
-      REQUIRE(actual.outcome == value->as_str(), "outcome mismatch");
-    } else if (key == "deadline") {
-      REQUIRE(actual.deadline && *actual.deadline == lazily_test::json_u64(*value),
-              "deadline mismatch");
-    } else if (key == "fired_at") {
-      REQUIRE(actual.fired_at && *actual.fired_at == lazily_test::json_u64(*value),
-              "fired_at mismatch");
-    } else if (key == "reason") {
-      REQUIRE(actual.reason && *actual.reason == value->as_str(), "reason mismatch");
-    } else if (key == "value") {
-      REQUIRE(actual.value && *actual.value == value->as_str(), "value mismatch");
-    } else if (key == "operation_calls") {
-      REQUIRE(actual.operation_calls && *actual.operation_calls == lazily_test::json_u64(*value),
-              "operation_calls mismatch");
-    } else if (key == "cancellation_calls") {
-      REQUIRE(actual.cancellation_calls &&
-                  *actual.cancellation_calls == lazily_test::json_u64(*value),
-              "cancellation_calls mismatch");
-    } else if (key == "revision") {
-      REQUIRE(actual.revision && *actual.revision == lazily_test::json_u64(*value),
-              "revision mismatch");
-    } else if (key == "generation") {
-      REQUIRE(actual.generation && *actual.generation == lazily_test::json_u64(*value),
-              "generation mismatch");
-    } else {
-      REQUIRE(false, "unknown stdlib expectation field");
-    }
-  }
+void assert_expected(lazily_test::AssertionKeys& expected, const Actual& actual) {
+  expected.assert_key_if_present("outcome", actual.outcome);
+  expected.assert_key_with_if_present("deadline", [&](const Json& want) {
+    return actual.deadline && *actual.deadline == lazily_test::json_u64(want);
+  });
+  expected.assert_key_with_if_present("fired_at", [&](const Json& want) {
+    return actual.fired_at && *actual.fired_at == lazily_test::json_u64(want);
+  });
+  expected.assert_key_with_if_present(
+      "reason", [&](const Json& want) { return actual.reason && *actual.reason == want.as_str(); });
+  expected.assert_key_with_if_present(
+      "value", [&](const Json& want) { return actual.value && *actual.value == want.as_str(); });
+  expected.assert_key_with_if_present("operation_calls", [&](const Json& want) {
+    return actual.operation_calls && *actual.operation_calls == lazily_test::json_u64(want);
+  });
+  expected.assert_key_with_if_present("cancellation_calls", [&](const Json& want) {
+    return actual.cancellation_calls && *actual.cancellation_calls == lazily_test::json_u64(want);
+  });
+  expected.assert_key_with_if_present("revision", [&](const Json& want) {
+    return actual.revision && *actual.revision == lazily_test::json_u64(want);
+  });
+  expected.assert_key_with_if_present("generation", [&](const Json& want) {
+    return actual.generation && *actual.generation == lazily_test::json_u64(want);
+  });
 }
 
 std::string timer_error(lazily::TimerError error) {
@@ -128,7 +122,8 @@ void replay_timer(const Json& scenario) {
         actual.fired_at = observation.fired_at;
       if (observation.error) actual.reason = timer_error(*observation.error);
     }
-    assert_expected(required(step, "expect"), actual);
+    lazily_test::AssertionKeys expected("stdlib/timer step expect", required(step, "expect"));
+    assert_expected(expected, actual);
   }
 }
 
@@ -218,7 +213,8 @@ void replay_timeout(const Json& scenario) {
         actual.value = observation.value;
       if (!observation.reason.empty()) actual.reason = observation.reason;
     }
-    assert_expected(required(step, "expect"), actual);
+    lazily_test::AssertionKeys expected("stdlib/timeout step expect", required(step, "expect"));
+    assert_expected(expected, actual);
   }
 }
 
@@ -283,7 +279,9 @@ void replay_barrier(const Json& scenario) {
     }
     auto actual = barrier_actual(observation);
     if (op == "observe") actual.cancellation_calls = cancellation_calls;
-    assert_expected(required(step, "expect"), actual);
+    lazily_test::AssertionKeys expected("stdlib/revision_barrier step expect",
+                                        required(step, "expect"));
+    assert_expected(expected, actual);
   }
 }
 

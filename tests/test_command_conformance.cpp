@@ -20,10 +20,12 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -253,9 +255,31 @@ static void assert_image_eq(const CommandProjectionImage& got, const CommandProj
   }
 }
 
-static void assert_projection(const CommandProjection& p, const Json* expect,
-                              const std::string& msg) {
-  assert_image_eq(p.to_image(), decode_projection_image(expect->find("projection")), msg);
+static bool image_equal(const CommandProjectionImage& left, const CommandProjectionImage& right) {
+  if (left.generation != right.generation || left.commands.size() != right.commands.size())
+    return false;
+  std::map<std::string, const CommandProjectionEntry*> by_id;
+  for (const auto& entry : right.commands)
+    by_id[entry.command_id] = &entry;
+  for (const auto& entry : left.commands) {
+    const auto found = by_id.find(entry.command_id);
+    if (found == by_id.end()) return false;
+    const auto& other = *found->second;
+    if (entry.status != other.status || entry.terminal != other.terminal ||
+        entry.generation != other.generation || entry.reason != other.reason ||
+        entry.terminal_receipt_id != other.terminal_receipt_id ||
+        entry.last_event_id != other.last_event_id)
+      return false;
+  }
+  return true;
+}
+
+static void assert_projection(const CommandProjection& p, lazily_test::AssertionKeys& expect,
+                              const std::string& key, const std::string& msg) {
+  expect.assert_key_set_with(key, {"commands", "generation"}, [&](const Json& want) {
+    assert_image_eq(p.to_image(), decode_projection_image(&want), msg);
+    return true;
+  });
 }
 
 static const Json* frames_of(const Json* fx) {
@@ -283,7 +307,9 @@ TEST(editor_route_submit_is_nonterminal) {
   CommandProjection p;
   for (const auto& fr : frames_of(fx.get())->array)
     fold_frame(p, fr.get());
-  assert_projection(p, fx->find("expect"), "editor_route_submit");
+  lazily_test::AssertionKeys expect("message-passing/editor_route_submit.json expect",
+                                    *fx->find("expect"));
+  assert_projection(p, expect, "projection", "editor_route_submit");
   REQUIRE(!p.terminal_for("cmd-run-1").has_value(), "cmd-run-1 must be non-terminal");
 }
 
@@ -293,36 +319,42 @@ TEST(sync_tmux_layout_submit_shared_blob) {
   CommandProjection p;
   for (const auto& fr : frames_of(fx.get())->array)
     fold_frame(p, fr.get());
-  assert_projection(p, fx->find("expect"), "sync_tmux_layout_submit");
+  lazily_test::AssertionKeys expect("message-passing/sync_tmux_layout_submit.json expect",
+                                    *fx->find("expect"));
+  assert_projection(p, expect, "projection", "sync_tmux_layout_submit");
 }
 
 TEST(accepted_then_applied_receipt_terminal_only_at_receipt) {
   lazily_test::JsonPtr fx;
   load("accepted_then_applied_receipt.json", fx);
   const Json* frames = frames_of(fx.get());
-  const size_t terminal_at =
-      static_cast<size_t>(fx->find("expect")->find("terminal_after_frame_index")->as_int());
+  lazily_test::AssertionKeys expect("message-passing/accepted_then_applied_receipt.json expect",
+                                    *fx->find("expect"));
   CommandProjection p;
+  std::optional<size_t> terminal_at;
   for (size_t i = 0; i < frames->array.size(); ++i) {
     fold_frame(p, frames->array[i].get());
     const bool is_term = p.terminal_for("cmd-run-1").has_value();
-    if (i < terminal_at)
-      REQUIRE(!is_term, ("frame must still be non-terminal: " + std::to_string(i)).c_str());
-    else
-      REQUIRE(is_term, ("frame must be terminal: " + std::to_string(i)).c_str());
+    if (is_term && !terminal_at) terminal_at = i;
   }
-  assert_projection(p, fx->find("expect"), "accepted_then_applied_receipt");
+  REQUIRE(terminal_at.has_value(), "command never reached a terminal state");
+  expect.assert_key("terminal_after_frame_index", *terminal_at,
+                    [](const Json& want) { return static_cast<size_t>(want.as_int()); });
+  assert_projection(p, expect, "projection", "accepted_then_applied_receipt");
 }
 
 TEST(stale_generation_events_and_receipts_ignored) {
   lazily_test::JsonPtr fx;
   load("stale_generation_ignored.json", fx);
   const Json* frames = frames_of(fx.get());
+  lazily_test::AssertionKeys expect("message-passing/stale_generation_ignored.json expect",
+                                    *fx->find("expect"));
   std::vector<size_t> ignored;
-  for (const auto& v : fx->find("expect")->find("ignored_frame_indices")->array)
+  for (const auto& v : expect.required("ignored_frame_indices").array)
     ignored.push_back(static_cast<size_t>(v->as_int()));
   CommandProjection p;
   for (size_t i = 0; i < frames->array.size(); ++i) {
+    const auto before = p.to_image();
     auto status = fold_frame(p, frames->array[i].get());
     const bool is_ignored = std::find(ignored.begin(), ignored.end(), i) != ignored.end();
     // A stale MESSAGE frame reports StaleGeneration directly; a stale RECEIPT
@@ -331,23 +363,37 @@ TEST(stale_generation_events_and_receipts_ignored) {
     if (is_ignored && status.has_value())
       REQUIRE(is_stale(status),
               ("ignored message frame expected StaleGeneration: " + std::to_string(i)).c_str());
+    if (is_ignored)
+      REQUIRE(image_equal(before, p.to_image()),
+              ("ignored frame changed the projection: " + std::to_string(i)).c_str());
   }
-  assert_projection(p, fx->find("expect"), "stale_generation_ignored");
+  expect.assert_key_with("ignored_frame_indices",
+                         [&](const Json& want) { return ignored.size() == want.array.size(); });
+  assert_projection(p, expect, "projection", "stale_generation_ignored");
 }
 
 TEST(terminal_conflict_fails_closed) {
   lazily_test::JsonPtr fx;
   load("terminal_conflict_fail_closed.json", fx);
   const Json* frames = frames_of(fx.get());
-  const std::string cmd = fx->find("expect")->find("conflict_command_id")->str;
+  lazily_test::AssertionKeys expect("message-passing/terminal_conflict_fail_closed.json expect",
+                                    *fx->find("expect"));
+  const std::string cmd = expect.required("conflict_command_id").str;
   CommandProjection p;
-  for (const auto& fr : frames->array)
-    fold_frame(p, fr.get());
-  REQUIRE(p.has_conflict(cmd), "terminal conflict must be flagged");
+  std::optional<size_t> conflict_at;
+  for (size_t i = 0; i < frames->array.size(); ++i) {
+    fold_frame(p, frames->array[i].get());
+    if (p.has_conflict(cmd) && !conflict_at) conflict_at = i;
+  }
+  expect.assert_key("conflict", p.has_conflict(cmd));
+  expect.assert_key_with("conflict_command_id",
+                         [&](const Json& want) { return p.has_conflict(want.str); });
+  REQUIRE(conflict_at.has_value(), "terminal conflict must be flagged");
+  expect.assert_key("conflict_after_frame_index", *conflict_at,
+                    [](const Json& want) { return static_cast<size_t>(want.as_int()); });
   // The applied outcome is preserved (no winner selection).
-  assert_image_eq(p.to_image(),
-                  decode_projection_image(fx->find("expect")->find("projection_before_conflict")),
-                  "terminal_conflict projection_before_conflict");
+  assert_projection(p, expect, "projection_before_conflict",
+                    "terminal_conflict projection_before_conflict");
 }
 
 TEST(cancel_preempts_nonterminal_scenarios) {
@@ -360,10 +406,26 @@ TEST(cancel_preempts_nonterminal_scenarios) {
     // Rung 4 books on the PAYLOAD handoff (#lzscenariobodyskip), so a body
     // that stops short of replaying stops being booked.
     const Json* scenario = &sv.replay();
+    lazily_test::AssertionKeys expect(
+        "message-passing/cancel_preempts_nonterminal.json scenarios[" + std::to_string(sv.index()) +
+            "].expect",
+        *scenario->find("expect"));
+    std::vector<size_t> ignored;
+    if (const Json* values = expect.find("ignored_frame_indices"))
+      for (const auto& value : values->array)
+        ignored.push_back(static_cast<size_t>(value->as_int()));
     CommandProjection p;
-    for (const auto& fr : scenario->find("frames")->array)
-      fold_frame(p, fr.get());
-    assert_projection(p, scenario->find("expect"),
+    const Json* scenario_frames = scenario->find("frames");
+    for (size_t i = 0; i < scenario_frames->array.size(); ++i) {
+      const auto before = p.to_image();
+      fold_frame(p, scenario_frames->array[i].get());
+      if (std::find(ignored.begin(), ignored.end(), i) != ignored.end())
+        REQUIRE(image_equal(before, p.to_image()), "ignored cancellation frame changed projection");
+    }
+    expect.assert_key_with_if_present("ignored_frame_indices", [&](const Json& want) {
+      return ignored.size() == want.array.size();
+    });
+    assert_projection(p, expect, "projection",
                       "cancel_preempts[" + scenario->find("name")->str + "]");
   }
 }
@@ -374,35 +436,46 @@ TEST(reconnect_command_projection_resyncs) {
   CommandProjection p;
   for (const auto& fr : frames_of(fx.get())->array)
     fold_frame(p, fr.get());
-  assert_projection(p, fx->find("expect"), "reconnect_command_projection");
+  lazily_test::AssertionKeys expect("message-passing/reconnect_command_projection.json expect",
+                                    *fx->find("expect"));
+  assert_projection(p, expect, "projection", "reconnect_command_projection");
 }
 
 TEST(rpc_call_waits_for_terminal) {
   lazily_test::JsonPtr fx;
   load("rpc_call_waits_for_terminal.json", fx);
   const Json* frames = frames_of(fx.get());
-  const Json* rpc = fx->find("expect")->find("rpc");
-  const std::string cmd = rpc->find("command_id")->str;
-  const size_t resolves_at = static_cast<size_t>(rpc->find("resolves_after_frame_index")->as_int());
-  std::vector<size_t> unresolved;
-  for (const auto& v : rpc->find("unresolved_after_frame_indices")->array)
-    unresolved.push_back(static_cast<size_t>(v->as_int()));
+  lazily_test::AssertionKeys expect("message-passing/rpc_call_waits_for_terminal.json expect",
+                                    *fx->find("expect"));
 
   CommandProjection p;
+  std::vector<size_t> unresolved;
+  std::optional<size_t> resolves_at;
+  const std::string cmd = "cmd-run-1";
   for (size_t i = 0; i < frames->array.size(); ++i) {
     fold_frame(p, frames->array[i].get());
     const bool resolved = p.terminal_for(cmd).has_value();
-    if (std::find(unresolved.begin(), unresolved.end(), i) != unresolved.end())
-      REQUIRE(!resolved, ("RPC must NOT resolve at frame " + std::to_string(i)).c_str());
-    if (i == resolves_at)
-      REQUIRE(resolved, ("RPC must resolve at frame " + std::to_string(i)).c_str());
+    if (resolved && !resolves_at)
+      resolves_at = i;
+    else if (!resolved)
+      unresolved.push_back(i);
   }
-  assert_projection(p, fx->find("expect"), "rpc_call_waits_for_terminal");
-  // Terminal status matches the fixture's rpc.terminal_status.
-  auto term = p.terminal_for(cmd);
-  REQUIRE(term.has_value() &&
-              std::string(status_str(term->status)) == rpc->find("terminal_status")->str,
-          "rpc terminal_status mismatch");
+  expect.with_sub("rpc", [&](lazily_test::AssertionKeys& rpc) {
+    rpc.assert_key("command_id", cmd);
+    REQUIRE(resolves_at.has_value(), "RPC never resolved");
+    rpc.assert_key("resolves_after_frame_index", *resolves_at,
+                   [](const Json& want) { return static_cast<size_t>(want.as_int()); });
+    rpc.assert_key("unresolved_after_frame_indices", unresolved, [](const Json& want) {
+      std::vector<size_t> values;
+      for (const auto& value : want.array)
+        values.push_back(static_cast<size_t>(value->as_int()));
+      return values;
+    });
+    const auto term = p.terminal_for(cmd);
+    REQUIRE(term.has_value(), "RPC has no terminal status");
+    rpc.assert_key("terminal_status", std::string(status_str(term->status)));
+  });
+  assert_projection(p, expect, "projection", "rpc_call_waits_for_terminal");
 }
 
 int main() {

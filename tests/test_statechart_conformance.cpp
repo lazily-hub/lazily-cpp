@@ -39,6 +39,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "test_assertion_keys.hpp"
 #include "test_json.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
@@ -256,13 +257,6 @@ static void expect_states(const std::string& fixture, size_t step, const char* w
   std::abort();
 }
 
-// Keys a step may carry. An unrecognised key means the corpus grew an assertion
-// this runner does not make — reporting green then is a false green.
-static bool is_known_step_key(const std::string& key) {
-  return key == "event" || key == "guards" || key == "accepted" || key == "active" ||
-         key == "actions" || key == "matches" || key == "note" || key == "description";
-}
-
 static void replay(const std::string& name) {
   const std::string text = lazily_test::spec_fixture_text(kArea, name);
   const JsonPtr fixture = parse_json(text);
@@ -289,10 +283,11 @@ static void replay(const std::string& name) {
   for (size_t i = 0; i < steps->array.size(); ++i) {
     const Json& step = *steps->array[i];
     REQUIRE(step.is_object(), "a step is not an object");
-    for (const auto& kv : step.object)
-      REQUIRE(is_known_step_key(kv.first),
-              "unrecognised statechart step key in fixture — it would be "
-              "silently ignored");
+    lazily_test::AssertionKeys expected(
+        std::string(kArea) + "/" + name + " steps[" + std::to_string(i) + "]", step);
+    expected.excuse_key("event", "operation input replayed by StateChart::send");
+    if (step.find("guards"))
+      expected.excuse_key("guards", "operation input replayed as StateChart guard resolutions");
 
     const Json* event = step.find("event");
     REQUIRE(event != nullptr && event->type == Json::Type::String, "step has no event");
@@ -309,38 +304,26 @@ static void replay(const std::string& name) {
     const bool accepted = chart.send(ctx, event->str, guards);
     ++g_steps_replayed;
 
-    const Json* want_accepted = step.find("accepted");
-    REQUIRE(want_accepted != nullptr && want_accepted->type == Json::Type::Bool,
-            "step has no `accepted` expectation");
     ++g_assertions;
-    if (accepted != want_accepted->as_bool()) {
-      std::cout << "FAIL: " << name << " step " << (i + 1) << " event " << event->str
-                << ": expected accepted=" << (want_accepted->as_bool() ? "true" : "false")
-                << ", got " << (accepted ? "true" : "false") << std::endl;
-      std::abort();
-    }
+    expected.assert_key("accepted", accepted);
 
-    expect_states(name, i + 1, "active configuration", chart.active_leaves(ctx),
-                  active_expectation(step.find("active")));
+    expected.assert_key_with("active", [&](const Json& active) {
+      expect_states(name, i + 1, "active configuration", chart.active_leaves(ctx),
+                    active_expectation(&active));
+      return true;
+    });
 
-    if (const Json* actions = step.find("actions")) {
-      expect_states(name, i + 1, "action trace", chart.last_actions(), str_array(actions));
-    }
+    expected.assert_key_with_if_present("actions", [&](const Json& actions) {
+      expect_states(name, i + 1, "action trace", chart.last_actions(), str_array(&actions));
+      return true;
+    });
 
-    if (const Json* matches = step.find("matches")) {
-      REQUIRE(matches->is_object(), "`matches` must be an object");
-      for (const auto& kv : matches->object) {
-        REQUIRE(kv.second->type == Json::Type::Bool, "a `matches` expectation must be a boolean");
+    expected.with_sub_if_present("matches", [&](lazily_test::AssertionKeys& matches) {
+      for (const auto& state : matches.keys()) {
         ++g_assertions;
-        const bool got = chart.matches(ctx, kv.first);
-        if (got != kv.second->as_bool()) {
-          std::cout << "FAIL: " << name << " step " << (i + 1) << ": matches(\"" << kv.first
-                    << "\") expected " << (kv.second->as_bool() ? "true" : "false") << ", got "
-                    << (got ? "true" : "false") << std::endl;
-          std::abort();
-        }
+        matches.assert_key(state, chart.matches(ctx, state));
       }
-    }
+    });
   }
 }
 

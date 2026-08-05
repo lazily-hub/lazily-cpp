@@ -181,6 +181,7 @@ public:
       for (auto& [_, conn] : conns_) {
         if (conn.peer && *conn.peer != join.peer) peers.push_back(*conn.peer);
       }
+      std::sort(peers.begin(), peers.end());
       results.push_back(ServerWelcome{join.peer, peers});
 
       // Notify others
