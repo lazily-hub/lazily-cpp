@@ -125,14 +125,15 @@ template <typename OwnerContext, typename Queue>
 std::size_t replay(const std::string& fixture, const std::string& flavor) {
   const auto root = lazily_test::parse_json(lazily_test::spec_fixture_text("collections", fixture));
   REQUIRE(root && root->is_object(), fixture + ": invalid JSON object");
-  const Json* config = root->find("config");
+  const Json* initial = root->find("initial");
   const Json* steps = root->find("steps");
-  REQUIRE(config && steps && !steps->array.empty(), fixture + ": config or non-empty steps absent");
+  REQUIRE(initial && steps && !steps->array.empty(),
+          fixture + ": initial state/config or non-empty steps absent");
 
   OwnerContext ctx;
   Context& graph = queue_detail::graph(ctx);
-  Queue queue(ctx, static_cast<std::uint64_t>(config->find("visibility_timeout")->as_int()),
-              static_cast<std::uint64_t>(config->find("max_deliveries")->as_int()));
+  Queue queue(ctx, static_cast<std::uint64_t>(initial->find("visibility_timeout")->as_int()),
+              static_cast<std::uint64_t>(initial->find("max_deliveries")->as_int()));
   Readers<Queue> readers(graph, queue);
 
   for (std::size_t i = 0; i < steps->array.size(); ++i) {
