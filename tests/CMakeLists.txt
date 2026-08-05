@@ -338,7 +338,8 @@ add_test(NAME ReactiveGraphConformance COMMAND test_reactive_graph_conformance)
 # silent pass. CI asserts the directory exists so a skip cannot go unnoticed
 # there, and each suite additionally asserts a positive distinct-fixture count.
 set(LAZILY_SPEC_CONFORMANCE_TESTS
-  test_stdlib_conformance
+    test_ipc
+    test_stdlib_conformance
   test_crdt_tree
   test_family_sync
   test_reliable_sync
@@ -379,7 +380,8 @@ foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
 endforeach()
 
 set_tests_properties(
-  StdlibConformance
+    ipc
+    StdlibConformance
   CrdtTreeConformance
   reliable_sync
   OutboxStoreConformance

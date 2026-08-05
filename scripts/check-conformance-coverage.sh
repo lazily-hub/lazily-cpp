@@ -95,17 +95,21 @@ MIN_FIXTURES="${MIN_FIXTURES:-127}"
 #   agent-doc  (2)  IPC wire snapshots of the agent-doc state projection — an
 #                   application schema carried on the IPC plane, not a
 #                   binding-level reactive concern.
-#   root-level (8)  snapshot_*/delta_*/arena_blob IPC wire fixtures; test_ipc.cpp
-#                   hand-builds the equivalent structures.
+#   ipc        (1)  arena_blob.json locks the concrete 40-byte shared-memory
+#                   arena host layout. C++ implements an in-process arena with
+#                   the same descriptor semantics but not that mapped header.
+#                   The seven Snapshot/Delta fixtures are replayed by
+#                   test_ipc.cpp.
 REQUIRED_AREAS=(
-  codec
-  collections
-  coordination
-  crdt-tree
-  distributed
-  familysync
-  ingress
-  lossless-tree
+codec
+collections
+coordination
+crdt-tree
+distributed
+familysync
+ingress
+ipc
+lossless-tree
   materialization
   membership
   message-passing
@@ -131,7 +135,10 @@ REQUIRED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
-  # protobuf — the experimental v1 generator pilot is Rust/Kotlin/TypeScript;
+# ipc — the C++ arena is an in-process host and does not implement the
+# canonical mapped 40-byte LZSH header asserted by this fixture.
+"arena_blob.json"
+# protobuf — the experimental v1 generator pilot is Rust/Kotlin/TypeScript;
   # this binding must negotiate the capability before replaying the typed trace.
   "protobuf/graph_boundary_traces.json"
   # materialization — mirrored by hand in test_reactive_family.cpp and its
@@ -217,10 +224,15 @@ if (( count < MIN_FIXTURES )); then
 fi
 
 for area in "${REQUIRED_AREAS[@]}"; do
-  if ! grep -q "^${area}/" "$replayed"; then
-    echo "ERROR: no fixtures replayed from conformance area '$area' — that suite is silently not running." >&2
-    status=1
-  fi
+if [[ "$area" == "ipc" ]]; then
+area_pattern='^(arena_blob|snapshot_.*|delta_.*)\.json$'
+else
+area_pattern="^${area}/"
+fi
+if ! grep -Eq "$area_pattern" "$replayed"; then
+echo "ERROR: no fixtures replayed from conformance area '$area' — that suite is silently not running." >&2
+status=1
+fi
 done
 
 # Stale-ledger check, both directions. An excuse is only honest while the fixture
@@ -256,21 +268,28 @@ done
 # Completeness: every canonical fixture in a required area is replayed, or named
 # in KNOWN_UNCOVERED. This is the check that catches the corpus GROWING.
 for area in "${REQUIRED_AREAS[@]}"; do
-  [[ -d "$conformance_dir/$area" ]] || continue
-  while IFS= read -r fixture; do
-    [[ -n "$fixture" ]] || continue
-    id="${area}/${fixture}"
-    grep -qxF "$id" "$replayed" && continue
-    excused=0
+if [[ "$area" == "ipc" ]]; then
+fixture_ids="$(cd "$conformance_dir" &&
+  find . -maxdepth 1 -type f \( -name 'arena_blob.json' -o -name 'snapshot_*.json' -o -name 'delta_*.json' \) \
+    -printf '%f\n' | sort)"
+else
+[[ -d "$conformance_dir/$area" ]] || continue
+fixture_ids="$(cd "$conformance_dir/$area" &&
+  find . -maxdepth 1 -type f -name '*.json' -printf "${area}/%f\n" | sort)"
+fi
+while IFS= read -r id; do
+[[ -n "$id" ]] || continue
+grep -qxF "$id" "$replayed" && continue
+excused=0
     for known in "${KNOWN_UNCOVERED[@]}"; do
       [[ "$known" == "$id" ]] && { excused=1; break; }
     done
     if (( excused == 0 )); then
       echo "ERROR: canonical fixture '$id' exists on disk but is never replayed." >&2
       echo "       Write a runner that reads it, or add it to KNOWN_UNCOVERED with a reason." >&2
-      status=1
-    fi
-  done < <(cd "$conformance_dir/$area" && ls -1 *.json 2>/dev/null || true)
+status=1
+fi
+done <<< "$fixture_ids"
 done
 
 # ── per-scenario accounting ────────────────────────────────────────────────

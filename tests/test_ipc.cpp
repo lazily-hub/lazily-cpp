@@ -1,8 +1,12 @@
 #include <lazily/lazily.hpp>
 
+#include "test_spec_fixture.hpp"
+
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <set>
 #include <string>
 
 using namespace lazily;
@@ -247,6 +251,122 @@ TEST(test_delta_sequencing) {
   assert(std::holds_alternative<DeltaApplyStatusResync>(gap));
 }
 
+// -- Canonical root-level IPC fixtures (#rootlevelconformance) --
+
+static const ShmBlobRef* node_shared_blob(const NodeState& state) {
+  const auto* shared = std::get_if<NodeStateSharedBlob>(&state);
+  return shared == nullptr ? nullptr : &shared->blob;
+}
+
+static const ShmBlobRef* value_shared_blob(const IpcValue& value) {
+  const auto* shared = std::get_if<IpcValueSharedBlob>(&value);
+  return shared == nullptr ? nullptr : &shared->blob;
+}
+
+static void assert_snapshot_fixture(lazily_test::AssertionKeys& expected,
+                                    const Snapshot& snapshot) {
+  expected.assert_key_if_present("epoch", snapshot.epoch);
+  expected.assert_key_if_present("node_count", static_cast<int64_t>(snapshot.nodes.size()));
+  expected.assert_key_if_present("edge_count", static_cast<int64_t>(snapshot.edges.size()));
+  expected.assert_key_if_present("root_count", static_cast<int64_t>(snapshot.roots.size()));
+
+  assert(!snapshot.nodes.empty());
+  const NodeSnapshot& first = snapshot.nodes.front();
+  expected.assert_key_if_present("first_node_type_tag", first.type_tag);
+
+  const auto opaque =
+      std::find_if(snapshot.nodes.begin(), snapshot.nodes.end(), [](const NodeSnapshot& node) {
+        return std::holds_alternative<NodeStateOpaque>(node.state);
+      });
+  expected.assert_key_if_present("has_opaque_node", opaque != snapshot.nodes.end());
+  if (expected.has("opaque_node_id")) {
+    assert(opaque != snapshot.nodes.end());
+    expected.assert_key("opaque_node_id", opaque->node);
+  }
+
+  if (expected.has("first_node_state_kind")) {
+    const bool is_shared = std::holds_alternative<NodeStateSharedBlob>(first.state);
+    expected.assert_key("first_node_state_kind", std::string(is_shared ? "SharedBlob" : "other"));
+  }
+  if (const ShmBlobRef* blob = node_shared_blob(first.state)) {
+    expected.assert_key_if_present("blob_offset", blob->offset);
+    expected.assert_key_if_present("blob_len", blob->len);
+    expected.assert_key_if_present("blob_epoch", blob->epoch);
+  }
+}
+
+static void assert_delta_fixture(lazily_test::AssertionKeys& expected, const Delta& delta) {
+  expected.assert_key_if_present("base_epoch", delta.base_epoch);
+  expected.assert_key_if_present("epoch", delta.epoch);
+  expected.assert_key_if_present("op_count", static_cast<int64_t>(delta.ops.size()));
+  expected.assert_key_if_present("is_sequential", delta.is_next_after(delta.base_epoch));
+
+  if (expected.has("resync_after_epoch_10")) {
+    expected.assert_key("resync_after_epoch_10",
+                        std::holds_alternative<DeltaApplyStatusResync>(delta.apply_status(10)));
+  }
+
+  std::set<std::string> variants;
+  for (const DeltaOp& op : delta.ops)
+    variants.insert(delta_op_variant_name(op));
+  expected.assert_key_if_present("has_all_op_variants", variants.size() == 7);
+
+  const bool needs_first_kind = expected.has("first_op_kind");
+  const bool needs_payload_kind = expected.has("first_op_payload_kind");
+  const bool needs_payload_backend = expected.has("first_op_payload_backend");
+  if (!(needs_first_kind || needs_payload_kind || needs_payload_backend)) return;
+  assert(!delta.ops.empty());
+  const DeltaOp& first = delta.ops.front();
+  if (needs_first_kind)
+    expected.assert_key("first_op_kind", std::string(delta_op_variant_name(first)));
+  const IpcValue* payload = nullptr;
+  if (const auto* slot = std::get_if<DeltaOpSlotValue>(&first))
+    payload = &slot->payload;
+  else if (const auto* cell = std::get_if<DeltaOpCellSet>(&first))
+    payload = &cell->payload;
+
+  if (needs_payload_kind) {
+    assert(payload != nullptr);
+    expected.assert_key("first_op_payload_kind",
+                        std::string(std::holds_alternative<IpcValueSharedBlob>(*payload)
+                                        ? "SharedBlob"
+                                        : "Inline"));
+  }
+  if (needs_payload_backend) {
+    assert(payload != nullptr);
+    const ShmBlobRef* blob = value_shared_blob(*payload);
+    assert(blob != nullptr);
+    expected.assert_key("first_op_payload_backend",
+                        std::string(blob_backend_kind_str(blob->backend)));
+  }
+}
+
+TEST(test_root_ipc_conformance_fixtures) {
+  const std::vector<std::string> fixtures = {
+      "snapshot_minimal.json",      "snapshot_multi_node.json", "snapshot_shared_blob.json",
+      "delta_non_sequential.json",  "delta_sequential.json",    "delta_shared_blob.json",
+      "delta_zero_copy_arrow.json",
+  };
+
+  for (const std::string& name : fixtures) {
+    const std::string text = lazily_test::spec_fixture_text("", name);
+
+    const auto fixture = json_parse(text);
+    const IpcMessage message = json_to_ipc_message(json_required(fixture, "wire"));
+    assert(decode_json(encode_json(message)) == message);
+
+    const auto test_fixture = lazily_test::parse_json(text);
+    lazily_test::AssertionKeys expected(name + " assertions",
+                                        lazily_test::json_member(*test_fixture, "assertions"));
+    if (const auto* snapshot = std::get_if<IpcMessageSnapshot>(&message))
+      assert_snapshot_fixture(expected, snapshot->value);
+    else if (const auto* delta = std::get_if<IpcMessageDelta>(&message))
+      assert_delta_fixture(expected, delta->value);
+    else
+      assert(false && "root IPC fixture must decode as Snapshot or Delta");
+  }
+}
+
 // -- Causal receipts --
 
 TEST(test_receipt_observed_nonterminal) {
@@ -381,6 +501,7 @@ TEST(test_ffi_cabi_kind) {
 }
 
 int main() {
+  REQUIRE_FIXTURES_LOADED(7);
   std::cout << "lazily-cpp IPC+FFI tests: " << test_passed << "/" << test_count << " passed"
             << std::endl;
   return test_passed == test_count ? 0 : 1;
