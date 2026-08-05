@@ -345,6 +345,27 @@ public:
   }
 };
 
+// The lock-backed exact-key dependency availability family.
+template <typename K, typename V>
+class ThreadSafeDependencyMap : public ThreadSafeSourceMap<K, DependencyAvailability<V>> {
+public:
+  using Availability = DependencyAvailability<V>;
+  using Base = ThreadSafeSourceMap<K, Availability>;
+  using Base::Base;
+
+  Availability observe_dependency(ThreadSafeContext& ctx, const K& key) {
+    return this->get_or_insert_with(ctx, key, [](const K&) { return Availability::unavailable(); });
+  }
+
+  void publish(ThreadSafeContext& ctx, const K& key, V value) {
+    this->set(ctx, key, Availability::available(std::move(value)));
+  }
+
+  void unpublish(ThreadSafeContext& ctx, const K& key) {
+    this->set(ctx, key, Availability::unavailable());
+  }
+};
+
 // A thread-safe **derived-slot** map: entries are `Computed<V>` minted lazily
 // on access or eagerly via `materialize_all`.
 template <typename K, typename V>

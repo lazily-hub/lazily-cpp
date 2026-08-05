@@ -444,6 +444,67 @@ template <typename Model> void run_fixture(const std::string& fixture) {
             << asserted_invalidations << " invalidation matrices)" << std::endl;
 }
 
+void run_dependency_fixture() {
+  const std::string fixture = "dependency_reactive_availability.json";
+  const std::string text = lazily_test::spec_fixture_text(kArea, fixture);
+  JsonParser parser(text);
+  JsonPtr root = parser.parse();
+  REQUIRE(root && root->is_object(), fixture + ": not a JSON object");
+  const Json* key_json = root->find("key");
+  const Json* steps = root->find("steps");
+  REQUIRE(key_json != nullptr && steps != nullptr && steps->is_array(),
+          fixture + ": missing key or steps");
+  REQUIRE(!steps->array.empty(), fixture + ": a zero-step replay is vacuous");
+
+  Context ctx;
+  DependencyMap<std::string, int> map{ctx};
+  const std::string key = key_json->as_str();
+  std::size_t recomputes = 0;
+  auto reader = ctx.computed<DependencyAvailability<int>>([&](Compute& compute) {
+    ++recomputes;
+    return map.observe_dependency(compute, key);
+  });
+  std::optional<std::uint64_t> identity;
+
+  for (std::size_t i = 0; i < steps->array.size(); ++i) {
+    const Json& step = *steps->array[i];
+    const Json* op = step.find("op");
+    const Json* expected_json = step.find("expected");
+    REQUIRE(op != nullptr && expected_json != nullptr,
+            fixture + " step " + std::to_string(i) + ": missing op/expected");
+    const std::string type = op->find("type")->as_str();
+    if (type == "observe_dependency") {
+      (void)ctx.get(reader);
+    } else if (type == "publish") {
+      map.publish(ctx, op->find("key")->as_str(), static_cast<int>(op->find("value")->as_int()));
+    } else if (type == "unpublish") {
+      map.unpublish(ctx, op->find("key")->as_str());
+    } else {
+      REQUIRE(false, fixture + " step " + std::to_string(i) + ": unsupported op " + type);
+    }
+
+    const auto state = ctx.get(reader);
+    lazily_test::AssertionKeys expected(fixture + " step " + std::to_string(i), *expected_json);
+    if (state.value.has_value()) {
+      expected.with_sub("state", [&](lazily_test::AssertionKeys& available) {
+        available.assert_key("Available", *state.value);
+      });
+    } else {
+      expected.assert_key("state", std::string("Unavailable"));
+    }
+    expected.assert_key("recomputes", static_cast<long long>(recomputes));
+    expected.assert_key("present_count", static_cast<long long>(map.present_count()));
+    const auto handle = map.handle(key);
+    REQUIRE(handle.has_value(), fixture + ": exact-key source disappeared");
+    identity = identity.value_or(handle->id().value);
+    REQUIRE(*identity == handle->id().value, fixture + ": exact-key source identity changed");
+    expected.assert_key("identity", std::string("wanted-1"));
+    expected.finish();
+  }
+
+  std::cout << "ok  sync  " << fixture << "  (" << steps->array.size() << " steps)" << std::endl;
+}
+
 // ---------------------------------------------------------------------------
 // Directional move coverage the canonical corpus does not provide
 // ---------------------------------------------------------------------------
@@ -534,12 +595,15 @@ int main() {
     run_fixture<AsyncModel>(fixture);
   }
 
+  run_dependency_fixture();
+
   check_directional_moves<SyncModel>();
   check_directional_moves<ThreadSafeModel>();
   check_directional_moves<AsyncModel>();
 
-  // Both canonical fixtures, read for real.
-  REQUIRE_FIXTURES_LOADED(2);
-  std::cout << "collections family conformance: 2 fixtures x 3 flavors" << std::endl;
+  // All three canonical fixtures, read for real.
+  REQUIRE_FIXTURES_LOADED(3);
+  std::cout << "collections family conformance: 2 ordering fixtures x 3 flavors + dependency"
+            << std::endl;
   return 0;
 }

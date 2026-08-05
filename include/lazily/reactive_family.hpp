@@ -322,6 +322,44 @@ public:
   void reconcile(Context& ctx, const std::vector<std::pair<K, V>>& new_seq);
 };
 
+// Exact-key dependency state carried by one stable per-key source.
+template <typename V> struct DependencyAvailability {
+  std::optional<V> value;
+
+  static DependencyAvailability unavailable() { return {}; }
+  static DependencyAvailability available(V value) {
+    return DependencyAvailability{std::move(value)};
+  }
+
+  bool operator==(const DependencyAvailability& other) const { return value == other.value; }
+  bool operator!=(const DependencyAvailability& other) const { return !(*this == other); }
+};
+
+// A keyed family whose absent state is reactively observable.
+template <typename K, typename V>
+class DependencyMap : public SourceMap<K, DependencyAvailability<V>> {
+public:
+  using Availability = DependencyAvailability<V>;
+  using Base = SourceMap<K, Availability>;
+  using Base::Base;
+
+  Availability observe_dependency(Context& ctx, const K& key) {
+    auto handle = this->entry(ctx, key, Availability::unavailable());
+    return ctx.get(handle);
+  }
+
+  Availability observe_dependency(Compute& compute, const K& key) {
+    auto handle = this->entry(compute.untracked(), key, Availability::unavailable());
+    return compute.get(handle);
+  }
+
+  void publish(Context& ctx, const K& key, V value) {
+    this->set(ctx, key, Availability::available(std::move(value)));
+  }
+
+  void unpublish(Context& ctx, const K& key) { this->set(ctx, key, Availability::unavailable()); }
+};
+
 // A keyed **derived-slot** collection: every entry is a `Computed<V>` whose
 // value is derived. `get_or_insert_with` mints a slot on first access (lazy
 // materialization); `materialize_all` pre-mints the keyset (eager). A slot's

@@ -295,6 +295,29 @@ public:
   }
 };
 
+// The async-graph exact-key dependency availability family.
+template <typename K, typename V>
+class AsyncDependencyMap : public AsyncSourceMap<K, DependencyAvailability<V>> {
+public:
+  using Availability = DependencyAvailability<V>;
+  using Base = AsyncSourceMap<K, Availability>;
+  using Base::Base;
+
+  Availability observe_dependency(AsyncContext& ctx, const K& key) {
+    auto handle =
+        this->get_or_insert_handle(ctx, key, [](const K&) { return Availability::unavailable(); });
+    return handle.get();
+  }
+
+  void publish(AsyncContext& ctx, const K& key, V value) {
+    this->set(ctx, key, Availability::available(std::move(value)));
+  }
+
+  void unpublish(AsyncContext& ctx, const K& key) {
+    this->set(ctx, key, Availability::unavailable());
+  }
+};
+
 // An async **derived-slot** map: entries are `AsyncComputed<V>` minted lazily
 // on access or eagerly via `materialize_all`, resolved via `get_async()`.
 template <typename K, typename V>

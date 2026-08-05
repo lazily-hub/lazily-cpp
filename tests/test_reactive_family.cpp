@@ -68,6 +68,32 @@ TEST(test_get_or_insert_with_mints_once) {
   assert(map.get_or_insert_with(ctx, "a", [](const std::string&) { return 0; }) == 42);
 }
 
+TEST(test_dependency_availability_is_exact_key_reactive) {
+  Context ctx;
+  DependencyMap<std::string, int> dependencies(ctx);
+  int runs = 0;
+  auto wanted = ctx.computed<DependencyAvailability<int>>([&](Compute& compute) {
+    ++runs;
+    return dependencies.observe_dependency(compute, "wanted");
+  });
+
+  assert(ctx.get(wanted) == DependencyAvailability<int>::unavailable());
+  assert(ctx.get(wanted) == DependencyAvailability<int>::unavailable());
+  assert(runs == 1);
+
+  dependencies.publish(ctx, "other", 2);
+  assert(ctx.get(wanted) == DependencyAvailability<int>::unavailable());
+  assert(runs == 1);
+
+  dependencies.publish(ctx, "wanted", 7);
+  assert(ctx.get(wanted) == DependencyAvailability<int>::available(7));
+  assert(runs == 2);
+
+  dependencies.unpublish(ctx, "wanted");
+  assert(ctx.get(wanted) == DependencyAvailability<int>::unavailable());
+  assert(runs == 3);
+}
+
 // `membership_is_reactive_but_value_changes_are_not`.
 TEST(test_membership_reactive_value_not) {
   Context ctx;
