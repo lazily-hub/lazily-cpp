@@ -59,7 +59,7 @@ invalidation and effect reruns happen once after the outermost batch exits.
 ## Feature Set
 
 The full `lazily` capability set and its cross-language coverage across every
-binding. Legend: ✅ shipped · `~` partial · `—` absent or not applicable. The
+binding. Legend: ✅ shipped · `~` partial · `—` absent · `⊘` not applicable. The
 canonical matrix with per-cell notes and platform carve-outs lives in
 [`lazily-spec` § Cross-Language Coverage](https://github.com/lazily-hub/lazily-spec/blob/main/docs/coverage.md).
 
