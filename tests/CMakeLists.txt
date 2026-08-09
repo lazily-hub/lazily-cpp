@@ -226,6 +226,15 @@ add_executable(test_materialization_conformance test_materialization_conformance
 target_link_libraries(test_materialization_conformance PRIVATE lazily)
 add_test(NAME MaterializationConformance COMMAND test_materialization_conformance)
 
+# The thread-safe / async shells of the same two fixtures. Separate binary
+# because ThreadSafeContext and AsyncContext force the -pthread wasm tier while
+# the core-tier materialization runner above must stay single-threaded
+# (`#lzcppmatreplay`); the replay itself is shared via
+# test_materialization_replay.hpp.
+add_executable(test_materialization_family_conformance test_materialization_family_conformance.cpp)
+target_link_libraries(test_materialization_family_conformance PRIVATE lazily)
+add_test(NAME MaterializationFamilyConformance COMMAND test_materialization_family_conformance)
+
 add_executable(test_collections_family_conformance test_collections_family_conformance.cpp)
 target_link_libraries(test_collections_family_conformance PRIVATE lazily)
 add_test(NAME CollectionsFamilyConformance COMMAND test_collections_family_conformance)
@@ -366,6 +375,7 @@ set(LAZILY_SPEC_CONFORMANCE_TESTS
   test_lossless_tree_conformance
   test_command_conformance
   test_materialization_conformance
+  test_materialization_family_conformance
   test_collections_fixture_conformance
   test_collections_family_conformance
   test_queue_conformance

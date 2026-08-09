@@ -141,11 +141,6 @@ KNOWN_UNCOVERED=(
 # protobuf — the experimental v1 generator pilot is Rust/Kotlin/TypeScript;
   # this binding must negotiate the capability before replaying the typed trace.
   "protobuf/graph_boundary_traces.json"
-  # materialization — mirrored by hand in test_reactive_family.cpp and its
-  # async / thread-safe siblings; only entry_kind_orthogonal_to_mode.json is
-  # replayed from the canonical bytes.
-  "materialization/deferral_not_deallocation.json"
-  "materialization/observational_transparency.json"
   # reliable-sync — the remaining three need distinct outbox coalescing, lease
   # eviction, and journal-decoder runners.
   "reliable-sync/coalesce_bounds_outbox.json"

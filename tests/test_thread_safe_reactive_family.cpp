@@ -2,12 +2,14 @@
 // flavor).
 //
 // Mirrors the Rust reference tests in
-// `lazily-rs/src/thread_safe_reactive_family.rs` and replays the shared
-// lazily-spec materialization conformance fixtures (`conformance/materialization/*`,
-// `"model": "ComputedMap"`) through the `Send + Sync` map: eager pre-mint
+// `lazily-rs/src/thread_safe_reactive_family.rs`: eager pre-mint
 // (`materialize_all`) vs. lazy mint-on-access (`get_or_insert_*`), observational
-// transparency, and present-set monotonicity across threads. There is no
-// eager/lazy mode flag.
+// transparency, and present-set monotonicity across threads — each on its own
+// synthetic input. There is no eager/lazy mode flag.
+//
+// The two `spec.val` materialization fixtures were mirrored here by hand and now
+// replay from the canonical bytes through this same thread-safe shell in
+// `tests/test_materialization_family_conformance.cpp` (`#lzcppmatreplay`).
 
 #include <lazily/lazily.hpp>
 
@@ -128,50 +130,6 @@ TEST(test_shared_across_threads) {
 }
 
 // -- Spec conformance fixtures (replayed through the thread-safe map) --
-
-// conformance/materialization/observational_transparency.json
-TEST(test_conformance_observational_transparency) {
-  ThreadSafeContext ctx;
-  auto factory = [](const uint32_t& k) { return k * 3; };
-  std::vector<uint32_t> keys{0, 1, 2, 5, 9};
-  ThreadSafeComputedMap<uint32_t, uint32_t> eager(ctx);
-  eager.materialize_all(ctx, keys, factory);
-  ThreadSafeComputedMap<uint32_t, uint32_t> lazy(ctx);
-  assert(eager.present_count() == 5);
-  assert(lazy.present_count() == 0);
-  for (uint32_t k : keys)
-    assert(eager.observe(ctx, k) ==
-           std::optional<uint32_t>(lazy.get_or_insert_with(ctx, k, factory)));
-  assert(eager.present_keys() == keys);
-
-  ThreadSafeComputedMap<uint32_t, uint32_t> lazy2(ctx);
-  for (uint32_t k : {1u, 5u})
-    lazy2.get_or_insert_with(ctx, k, factory);
-  assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
-}
-
-// conformance/materialization/deferral_not_deallocation.json
-TEST(test_conformance_deferral_not_deallocation) {
-  ThreadSafeContext ctx;
-  auto factory = [](const uint32_t& k) { return k * 2; };
-  std::vector<uint32_t> keys{1, 2, 3, 4, 5};
-  ThreadSafeComputedMap<uint32_t, uint32_t> eager(ctx);
-  eager.materialize_all(ctx, keys, factory);
-  assert(eager.present_keys() == keys);
-  for (uint32_t k : keys)
-    assert(eager.observe(ctx, k) == std::optional<uint32_t>(k * 2));
-
-  ThreadSafeComputedMap<uint32_t, uint32_t> lazy(ctx);
-  std::vector<size_t> present_after_each_read;
-  for (uint32_t k : {2u, 4u, 2u, 5u}) {
-    assert(lazy.get_or_insert_with(ctx, k, factory) == k * 2);
-    present_after_each_read.push_back(lazy.present_count());
-  }
-  assert((present_after_each_read == std::vector<size_t>{1, 2, 2, 3}));
-  assert((lazy.present_keys() == std::vector<uint32_t>{2, 4, 5}));
-  for (uint32_t k : lazy.present_keys())
-    assert(eager.is_present(k));
-}
 
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
 TEST(test_conformance_entry_kind) {

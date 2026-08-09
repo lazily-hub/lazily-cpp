@@ -1,13 +1,20 @@
 // Keyed-map materialization conformance, replayed from the canonical
 // lazily-spec fixture bytes.
 //
-// `tests/test_reactive_family.cpp` mirrors the same three
-// `conformance/materialization/*` fixtures by hand, which keeps the unit suite
-// runnable without the sibling spec checkout but cannot detect drift: a hand
-// transcription agrees with whatever it was transcribed from. This runner opens
-// `conformance/materialization/entry_kind_orthogonal_to_mode.json` and replays
-// its ACTUAL bytes -- entry kinds, canonical values, reads, and the expected
-// present-sets -- through `SourceMap` / `ComputedMap`.
+// This runner opens all three `conformance/materialization/*` fixtures and
+// replays their ACTUAL bytes -- entry kinds, canonical values, reads, and the
+// expected present-sets -- through `SourceMap` / `ComputedMap`.
+//
+// It used to replay only `entry_kind_orthogonal_to_mode.json`, while
+// `observational_transparency.json` and `deferral_not_deallocation.json` were
+// mirrored by hand in `tests/test_reactive_family.cpp` and its thread-safe /
+// async siblings. That kept the unit suite runnable without the sibling spec
+// checkout and could not detect drift: a hand transcription agrees with
+// whatever it was transcribed from, so C++ scored `~` on all three
+// materialization rows in coverage.json (`#lzcppmatreplay`). The two
+// `spec.val`-shaped fixtures now replay through `test_materialization_replay.hpp`
+// -- shared with the thread-safe / async shells, which live in the `-pthread`
+// wasm tier and therefore in their own binary.
 //
 // ## Entry-kind spellings (forward compatibility)
 //
@@ -25,8 +32,10 @@
 //
 // ## Positive assertion
 //
-// `REQUIRE_FIXTURES_LOADED(1)` asserts the canonical file was actually opened --
-// an absence guard proves the corpus is on disk, not that this binary read it.
+// `REQUIRE_FIXTURES_LOADED(3)` asserts all three canonical files were actually
+// opened -- an absence guard proves the corpus is on disk, not that this binary
+// read it, and the exact count turns a dropped fixture red instead of quietly
+// shrinking coverage.
 
 #include <lazily/core.hpp>
 
@@ -41,6 +50,7 @@
 
 #include "test_assertion_keys.hpp"
 #include "test_json.hpp"
+#include "test_materialization_replay.hpp"
 #include "test_require.hpp"
 #include "test_spec_fixture.hpp"
 
@@ -53,6 +63,30 @@ namespace {
 
 constexpr const char* kArea = "materialization";
 constexpr const char* kFixture = "entry_kind_orthogonal_to_mode.json";
+
+// The single-threaded shell, adapted to the shared replay contract.
+class SyncModel {
+public:
+  static const char* shell() { return "Context/ComputedMap"; }
+
+  template <typename Factory> uint32_t read(const std::string& key, Factory factory) {
+    return slots_.get_or_insert_with(ctx_, key, factory);
+  }
+
+  template <typename Factory>
+  void materialize_all(const std::vector<std::string>& keys, Factory factory) {
+    slots_.materialize_all(ctx_, keys, factory);
+  }
+
+  std::optional<uint32_t> observe(const std::string& key) { return slots_.get(ctx_, key); }
+  std::vector<std::string> present_keys() const { return slots_.present_keys(); }
+  std::size_t present_count() const { return slots_.present_count(); }
+  bool is_present(const std::string& key) const { return slots_.is_present(key); }
+
+private:
+  Context ctx_;
+  ComputedMap<std::string, uint32_t> slots_{ctx_};
+};
 
 // Fixture entry-kind string -> `EntryKind`.
 //
@@ -247,8 +281,16 @@ int main() {
     return sorted(std::move(default_keys)) == sorted(want_default);
   });
 
-  REQUIRE_FIXTURES_LOADED(1);
   std::cout << "materialization conformance: " << kFixture << " replayed (" << cell_entries.size()
             << " input + " << slot_entries.size() << " derived entries)" << std::endl;
+
+  // The two `spec.val`-shaped fixtures, replayed from bytes through the same
+  // single-threaded shell. These retire the hand mirrors in
+  // tests/test_reactive_family.cpp.
+  for (const char* name : {"observational_transparency.json", "deferral_not_deallocation.json"}) {
+    lazily_test::replay_materialization<SyncModel>(lazily_test::load_materialization_fixture(name));
+  }
+
+  REQUIRE_FIXTURES_LOADED(3);
   return 0;
 }

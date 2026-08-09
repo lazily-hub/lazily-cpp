@@ -1,11 +1,14 @@
 // ReactiveMap keyed-collection tests (`#reactivemap`).
 //
-// Mirrors the Rust reference tests in `lazily-rs/src/cell_family.rs` and the
-// shared lazily-spec conformance fixtures in `conformance/materialization/*`
-// (now `"model": "ComputedMap"`):
-//   - observational_transparency.json
-//   - deferral_not_deallocation.json
-//   - entry_kind_orthogonal_to_mode.json
+// Mirrors the Rust reference tests in `lazily-rs/src/cell_family.rs`.
+//
+// `observational_transparency.json` and `deferral_not_deallocation.json` were
+// mirrored here by hand and are now replayed from the canonical bytes in
+// `tests/test_materialization_conformance.cpp` (`#lzcppmatreplay`). A hand
+// transcription agrees with whatever it was transcribed from, so it could not
+// detect drift from the corpus — which is why C++ scored `~` on all three
+// materialization rows. `entry_kind_orthogonal_to_mode.json` keeps its mirror
+// below; it is byte-replayed in the same runner.
 //
 // The unified primitive is `ReactiveMap<K, V, H>` with two specializations:
 // `SourceMap<K, V>` (input cells, `set` + eager `entry`) and `ComputedMap<K, V>`
@@ -200,57 +203,6 @@ TEST(test_move_before_and_after) {
 }
 
 // -- Spec conformance fixtures (model: ComputedMap) --
-
-// conformance/materialization/observational_transparency.json
-TEST(test_conformance_observational_transparency) {
-  Context ctx;
-  auto factory = [](const uint32_t& k) { return k * 3; }; // spec.val = k*3
-  std::vector<uint32_t> keys{0, 1, 2, 5, 9};
-
-  // Eager pre-mints all; lazy (untouched map) has none present.
-  ComputedMap<uint32_t, uint32_t> eager(ctx);
-  eager.materialize_all(ctx, keys, factory);
-  ComputedMap<uint32_t, uint32_t> lazy(ctx);
-  assert(eager.present_count() == 5);
-  assert(lazy.present_count() == 0);
-
-  // observe: identical canonical values whether pre-minted or minted on access.
-  for (uint32_t k : keys)
-    assert(eager.get(ctx, k) == std::optional<uint32_t>(lazy.get_or_insert_with(ctx, k, factory)));
-  assert(eager.present_keys() == keys);
-
-  // Lazy reads [1,5] -> present set exactly {1,5}.
-  ComputedMap<uint32_t, uint32_t> lazy2(ctx);
-  for (uint32_t k : {1u, 5u})
-    lazy2.get_or_insert_with(ctx, k, factory);
-  assert((lazy2.present_keys() == std::vector<uint32_t>{1, 5}));
-}
-
-// conformance/materialization/deferral_not_deallocation.json
-TEST(test_conformance_deferral_not_deallocation) {
-  Context ctx;
-  auto factory = [](const uint32_t& k) { return k * 2; }; // spec.val = k*2
-  std::vector<uint32_t> keys{1, 2, 3, 4, 5};
-
-  ComputedMap<uint32_t, uint32_t> eager(ctx);
-  eager.materialize_all(ctx, keys, factory);
-  assert(eager.present_keys() == keys);
-  for (uint32_t k : keys)
-    assert(eager.get(ctx, k) == std::optional<uint32_t>(k * 2));
-
-  // reads = [2,4,2,5]; present_after_each_read is monotone [1,2,2,3].
-  ComputedMap<uint32_t, uint32_t> lazy(ctx);
-  std::vector<size_t> present_after_each_read;
-  for (uint32_t k : {2u, 4u, 2u, 5u}) {
-    assert(lazy.get_or_insert_with(ctx, k, factory) == k * 2);
-    present_after_each_read.push_back(lazy.present_count());
-  }
-  assert((present_after_each_read == std::vector<size_t>{1, 2, 2, 3}));
-  assert((lazy.present_keys() == std::vector<uint32_t>{2, 4, 5}));
-  // Every lazily-present key is eagerly present.
-  for (uint32_t k : lazy.present_keys())
-    assert(eager.is_present(k));
-}
 
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
 TEST(test_conformance_entry_kind) {

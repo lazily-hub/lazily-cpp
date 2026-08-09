@@ -1,12 +1,12 @@
 // AsyncReactiveMap keyed-collection tests (`#reactivemap`, async flavor).
 //
-// Mirrors the Rust reference tests in `lazily-rs/src/async_reactive_family.rs`
-// and replays the shared lazily-spec materialization conformance fixtures
-// (`"model": "ComputedMap"`) through the async map: present-set laws plus EVENTUAL
-// transparency (a driven async slot resolves to the canonical value, eager
-// pre-mint ≡ lazy mint-on-access). Input cells are always resolved; a derived
-// slot reads `std::nullopt` until driven with `get_async()`. There is no
-// eager/lazy mode flag.
+// Mirrors the Rust reference tests in `lazily-rs/src/async_reactive_family.rs`.
+// Input cells are always resolved; a derived slot reads `std::nullopt` until
+// driven with `get_async()`. There is no eager/lazy mode flag.
+//
+// The two `spec.val` materialization fixtures were mirrored here by hand and now
+// replay from the canonical bytes through this same async shell in
+// `tests/test_materialization_family_conformance.cpp` (`#lzcppmatreplay`).
 
 #include <lazily/lazily.hpp>
 
@@ -121,35 +121,6 @@ TEST(test_source_map_reacts_to_set) {
 }
 
 // -- Spec conformance fixtures (replayed through the async map) --
-
-// conformance/materialization/observational_transparency.json (eventual)
-TEST(test_conformance_observational_transparency) {
-  AsyncContext ctx;
-  auto factory = [](const uint32_t& k) { return k * 3; };
-  std::vector<uint32_t> keys{0, 1, 2, 5, 9};
-  AsyncComputedMap<uint32_t, uint32_t> eager(ctx);
-  eager.materialize_all(ctx, keys, factory);
-  AsyncComputedMap<uint32_t, uint32_t> lazy(ctx);
-  assert(eager.present_count() == 5);
-  assert(lazy.present_count() == 0);
-  for (uint32_t k : keys)
-    assert(drive(*eager.handle(k)) == drive(lazy.get_or_insert_handle(ctx, k, factory)));
-  assert(eager.present_keys() == keys);
-}
-
-// conformance/materialization/deferral_not_deallocation.json
-TEST(test_conformance_deferral_not_deallocation) {
-  AsyncContext ctx;
-  auto factory = [](const uint32_t& k) { return k * 2; };
-  AsyncComputedMap<uint32_t, uint32_t> lazy(ctx);
-  std::vector<size_t> present_after_each_read;
-  for (uint32_t k : {2u, 4u, 2u, 5u}) {
-    assert(drive(lazy.get_or_insert_handle(ctx, k, factory)) == k * 2);
-    present_after_each_read.push_back(lazy.present_count());
-  }
-  assert((present_after_each_read == std::vector<size_t>{1, 2, 2, 3}));
-  assert((lazy.present_keys() == std::vector<uint32_t>{2, 4, 5}));
-}
 
 // conformance/materialization/entry_kind_orthogonal_to_mode.json
 TEST(test_conformance_entry_kind) {

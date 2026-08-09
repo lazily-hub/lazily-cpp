@@ -90,7 +90,7 @@ guard keeps them apart.
 | `familysync` | 1 | — | 1 | needs -pthread |
 | `ingress` | 8 | — | 8 | needs -pthread |
 | `lossless-tree` | 9 | 9 | — |  |
-| `materialization` | 3 | 1 | — |  |
+| `materialization` | 3 | 3 | 2 | split across both tiers |
 | `membership` | 1 | 1 | — |  |
 | `message-passing` | 8 | 8 | — |  |
 | `presence` | 3 | 3 | — |  |
@@ -106,7 +106,7 @@ guard keeps them apart.
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **149** | **87** | **44** | |
+| **total** | **149** | **89** | **46** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits
