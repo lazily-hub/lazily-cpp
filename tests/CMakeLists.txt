@@ -13,6 +13,15 @@ endforeach()
 # per-config flag variables.
 add_compile_options($<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-UNDEBUG>)
 
+# Emscripten/wasm32 builds use their own tier-driven registry and stop here
+# (`#lzcppwasm`). Everything below this point is the native suite and is left
+# exactly as it was — a wasm build cannot regress it, and the wasm registry
+# cannot silently inherit a native-only target.
+if(EMSCRIPTEN)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/wasm.cmake)
+  return()
+endif()
+
 add_executable(test_smoke test_smoke.cpp)
 target_link_libraries(test_smoke PRIVATE lazily)
 add_test(NAME smoke COMMAND test_smoke)

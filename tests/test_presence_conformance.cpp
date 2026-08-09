@@ -9,7 +9,7 @@
 // before re-reading the observer slot, `is_set` is true iff the cached value
 // survived (no invalidation), so `!was == invalidates`.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
 #include <lazily/presence.hpp>
 
 #include "test_assertion_keys.hpp"

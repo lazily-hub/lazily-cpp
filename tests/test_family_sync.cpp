@@ -5,7 +5,9 @@
 // layer. The fixture is the authority: peers, writes, re-ingest, and every
 // expected projection are read from its scenarios rather than transcribed here.
 
-#include <lazily/lazily.hpp>
+#include <lazily/command.hpp>
+#include <lazily/core.hpp>
+#include <lazily/ingress.hpp>
 
 #include "test_spec_fixture.hpp"
 #include <algorithm>

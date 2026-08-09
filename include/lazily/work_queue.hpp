@@ -1,6 +1,15 @@
 #ifndef LAZILY_WORK_QUEUE_HPP
 #define LAZILY_WORK_QUEUE_HPP
 
+// Threaded tier (`#lzcppwasm`). Needs real `std::thread`, which on wasm32 means
+// `-pthread` (and therefore SharedArrayBuffer plus COOP/COEP headers from the
+// host). Without it Emscripten compiles `<thread>` and then aborts at runtime
+// when a thread is spawned — a failure that surfaces far from its cause.
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#error                                                                                             \
+    "lazily/work_queue.hpp is the threaded tier: build with -pthread (wasm needs SharedArrayBuffer + COOP/COEP), or include <lazily/core.hpp> for the single-threaded core. See WASM.md."
+#endif
+
 #include <lazily/async_context.hpp>
 #include <lazily/cell.hpp>
 #include <lazily/context.hpp>

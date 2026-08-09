@@ -23,7 +23,8 @@
 // `REQUIRE_FIXTURES_LOADED(1)` proves the canonical file was opened, and
 // `g_checks` proves the replay did real work.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
+#include <lazily/receipt.hpp>
 
 #include <algorithm>
 #include <iostream>

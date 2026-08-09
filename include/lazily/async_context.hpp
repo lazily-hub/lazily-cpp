@@ -1,6 +1,13 @@
 #ifndef LAZILY_ASYNC_CONTEXT_HPP
 #define LAZILY_ASYNC_CONTEXT_HPP
 
+// Threaded tier (`#lzcppwasm`) — `<thread>`/`<future>`/`<condition_variable>`.
+// See the note in `work_queue.hpp`; on wasm32 this needs `-pthread`.
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#error                                                                                             \
+    "lazily/async_context.hpp is the threaded tier: build with -pthread (wasm needs SharedArrayBuffer + COOP/COEP), or include <lazily/core.hpp> for the single-threaded core. See WASM.md."
+#endif
+
 #include <lazily/cell.hpp>
 #include <lazily/context.hpp>
 #include <lazily/rc_ptr.hpp>

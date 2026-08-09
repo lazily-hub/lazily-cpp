@@ -24,7 +24,9 @@
 // where the fixtures actually nest it. lazily-rs read it off the step instead,
 // so it was always absent and the invalidation assertion never ran once.
 
-#include <lazily/lazily.hpp>
+#include <lazily/async_reactive_family.hpp>
+#include <lazily/core.hpp>
+#include <lazily/thread_safe_reactive_family.hpp>
 
 #include <cstdint>
 #include <iostream>

@@ -167,3 +167,57 @@ jobs:
             echo "::error::the CI-reachability guard exited 0 without reaching its verdict"
             exit 1
           }
+
+  # wasm32 tiers (`#lzcppwasm`). Separate job: it needs the emsdk toolchain and
+  # nothing the native matrix varies. Both tiers are built AND their conformance
+  # suites replayed under Node — building alone would prove the headers compile
+  # while saying nothing about whether the graph evaluates on the target.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Fetch canonical lazily-spec conformance fixtures (#lzspecconf)
+        run: git clone --depth 1 https://github.com/lazily-hub/lazily-spec.git ../lazily-spec
+
+      # Assert the corpus is really there before anything runs. The suites SKIP
+      # (exit 77) on a missing sibling checkout, and a job full of skips is
+      # green — the same vacuous pass the native job guards against.
+      - name: Assert the canonical corpus is present
+        run: |
+          test -d ../lazily-spec/conformance || {
+            echo "::error::canonical conformance corpus missing; the wasm suites would SKIP and the job would pass over nothing"
+            exit 1
+          }
+
+      # Pinned to the emsdk this was actually verified against, not to `latest`.
+      # An unpinned toolchain turns "the tiers built" into "the tiers built on
+      # whatever shipped this morning", and a wasm ABI/flag change would land as
+      # an unexplained red on an unrelated PR.
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.6
+          actions-cache-folder: emsdk-cache
+
+      - name: Build + replay the core tier
+        run: make wasm-core EMSDK_ENV=$EMSDK/emsdk_env.sh
+
+      - name: Build + replay the threaded tier
+        run: make wasm-threaded EMSDK_ENV=$EMSDK/emsdk_env.sh
+
+      # Generates the matrix from the manifests those two runs produced and
+      # fails when the committed WASM.md differs, when a tier fell below its
+      # fixture floor, or when a family is absent from wasm with no recorded
+      # reason. This is the step that makes the published matrix evidence
+      # rather than prose.
+      - name: Capability matrix guard
+        shell: bash
+        run: |
+          out=$(./scripts/check-wasm-tiers.sh 2>&1) || { echo "$out"; echo "::error::wasm tier/matrix guard failed"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q "wasm tier/matrix guard: OK" || {
+            echo "::error::the wasm guard exited 0 without reaching its verdict"
+            exit 1
+          }

@@ -19,7 +19,8 @@
 // popped sequence — the queue exposes no enumeration, so a drain is the only
 // way to assert the full contents without re-implementing the model.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
+#include <lazily/queue.hpp>
 
 #include <functional>
 #include <iostream>

@@ -1,4 +1,5 @@
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
+#include <lazily/crdt_tree.hpp>
 
 #include "test_assertion_keys.hpp"
 #include "test_json.hpp"

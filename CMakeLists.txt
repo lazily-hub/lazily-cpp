@@ -32,17 +32,30 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(lazily INTERFACE _GNU_SOURCE)
 endif()
 
-add_executable(lazily_interop_peer src/interop_peer.cpp)
-target_include_directories(lazily_interop_peer PRIVATE tests)
-target_link_libraries(lazily_interop_peer PRIVATE lazily)
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(lazily_interop_peer PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-  )
-  target_link_options(lazily_interop_peer PRIVATE
-    -fsanitize=address,undefined
-  )
+# The interop peer is a native-only target (`#lzcppwasm`): it drives the POSIX
+# shm transport across a real process boundary, which wasm32 has no equivalent
+# of, and it links ASan/UBSan. Building it under Emscripten would fail at the
+# transport.hpp tier guard — skip it explicitly so the reason is stated here
+# rather than discovered as a build error.
+if(NOT EMSCRIPTEN)
+  add_executable(lazily_interop_peer src/interop_peer.cpp)
+  target_include_directories(lazily_interop_peer PRIVATE tests)
+  target_link_libraries(lazily_interop_peer PRIVATE lazily)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(lazily_interop_peer PRIVATE
+      -fsanitize=address,undefined
+      -fno-omit-frame-pointer
+    )
+    target_link_options(lazily_interop_peer PRIVATE
+      -fsanitize=address,undefined
+    )
+  endif()
+endif()
+
+# The C-ABI FFI shared library is likewise native-only: `src/ffi.cpp` includes
+# the umbrella header, and a wasm consumer links the module rather than a .so.
+if(LAZILY_BUILD_FFI AND EMSCRIPTEN)
+  set(LAZILY_BUILD_FFI OFF)
 endif()
 
 if(LAZILY_BUILD_FFI)

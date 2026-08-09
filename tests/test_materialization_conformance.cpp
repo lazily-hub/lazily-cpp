@@ -28,7 +28,7 @@
 // `REQUIRE_FIXTURES_LOADED(1)` asserts the canonical file was actually opened --
 // an absence guard proves the corpus is on disk, not that this binary read it.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
 
 #include <algorithm>
 #include <cstdint>

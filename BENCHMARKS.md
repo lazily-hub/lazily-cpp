@@ -118,6 +118,174 @@ Refresh: re-run the bench binary and paste the table between the markers.
 > [Optimizations Applied (v0.6.0)](#optimizations-applied-v060). The
 > `thread_safe_concurrency` rows (three lock policies) are unchanged in v0.6.0.
 
+## wasm32 (Emscripten) — `#lzcppwasm`
+
+<!-- wasm-benchmark-results:start -->
+Generated for package `lazily-cpp` version `0.27.0`, **threaded tier**.
+
+Environment: `emcc 6.0.6` (wasm32-unknown-emscripten), C++17 `-O3 -DNDEBUG`,
+`-pthread -sPTHREAD_POOL_SIZE=8 -fexceptions`, run under `node v26.4.0` on
+`AMD Ryzen 9 9950X3D`.
+
+Run command:
+
+```sh
+make wasm-bench
+```
+
+> **These numbers are NOT comparable to the native table above and must never be
+> read into the same chart.** The native rows are `-O3` machine code; these are
+> wasm executing in a JS engine. The deliverable here is a documented baseline
+> for the wasm target, not parity with native.
+>
+> Two rows are absent by construction rather than by omission:
+> `transport` is native-only (POSIX shared memory has no wasm implementation, so
+> the stage reports itself skipped), and the `scale` ladder stops at **2M** —
+> the 5M and 10M rungs exceed the wasm32 32-bit heap and throw `std::bad_alloc`.
+> The harness prints both facts at run time; a shorter table that does not say it
+> is shorter reads as the whole ladder.
+>
+> The threaded tier is used because the harness measures `ThreadSafeContext`
+> contention and read scaling. A single-threaded wasm run would still produce
+> those rows, but they would be measuring something else.
+
+| Group | Case | Mean | Samples |
+|---|---|---:|---:|
+| cached_reads | context | 119.521 ns | 1000000 |
+| cached_reads | thread_safe_context | 141.161 ns | 1000000 |
+| cold_first_get | context | 507.233 ns | 100000 |
+| cold_first_get | thread_safe_context | 574.684 ns | 100000 |
+| dependency_fan_out | context / 32 | 934.349 ns | 10000 |
+| dependency_fan_out | context / 256 | 6.916 us | 10000 |
+| dependency_fan_out | thread_safe_context / 32 | 1.472 us | 10000 |
+| dependency_fan_out | thread_safe_context / 256 | 10.943 us | 10000 |
+| set_cell_invalidation | high_fan_out / 512 | 18.775 us | 1000 |
+| set_cell_invalidation | same_slot_contention / 1 | 192.512 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 2 | 219.622 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 4 | 283.930 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 8 | 431.821 ns | 10000 |
+| set_cell_invalidation | same_slot_contention / 16 | 692.813 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 1 | 183.117 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 2 | 268.160 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 4 | 451.558 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 8 | 790.016 ns | 10000 |
+| set_cell_invalidation | independent_slot_contention / 16 | 1.468 us | 10000 |
+| memo_equality_suppression | context | 180.623 ns | 100000 |
+| memo_equality_suppression | thread_safe_context | 206.374 ns | 100000 |
+| effect_flushing | context | 391.543 ns | 1000000 |
+| effect_flushing | thread_safe_context | 423.169 ns | 1000000 |
+| batch_storms | context / 64 | 6.610 us | 100000 |
+| batch_storms | thread_safe_context / 64 | 5.804 us | 100000 |
+| contention/recursive | total_throughput / 1 | 4.669 Mops/s | 1 |
+| contention/recursive | per_op_latency / 1 | 214.167 ns | 1 |
+| contention/recursive | total_throughput / 2 | 1.913 Mops/s | 2 |
+| contention/recursive | per_op_latency / 2 | 522.756 ns | 2 |
+| contention/recursive | total_throughput / 4 | 1.564 Mops/s | 4 |
+| contention/recursive | per_op_latency / 4 | 639.435 ns | 4 |
+| contention/recursive | total_throughput / 8 | 0.675 Mops/s | 8 |
+| contention/recursive | per_op_latency / 8 | 1.482 us | 8 |
+| contention/recursive | total_throughput / 16 | 0.000 Mops/s | 16 |
+| contention/recursive | per_op_latency / 16 | 0.000 ns | 16 |
+| contention/rw | total_throughput / 1 | 2.321 Mops/s | 1 |
+| contention/rw | per_op_latency / 1 | 430.924 ns | 1 |
+| contention/rw | total_throughput / 2 | 0.995 Mops/s | 2 |
+| contention/rw | per_op_latency / 2 | 1.005 us | 2 |
+| contention/rw | total_throughput / 4 | 0.481 Mops/s | 4 |
+| contention/rw | per_op_latency / 4 | 2.080 us | 4 |
+| contention/rw | total_throughput / 8 | 0.168 Mops/s | 8 |
+| contention/rw | per_op_latency / 8 | 5.963 us | 8 |
+| contention/rw | total_throughput / 16 | 0.079 Mops/s | 16 |
+| contention/rw | per_op_latency / 16 | 12.602 us | 16 |
+| contention/scalable | total_throughput / 1 | 2.226 Mops/s | 1 |
+| contention/scalable | per_op_latency / 1 | 449.165 ns | 1 |
+| contention/scalable | total_throughput / 2 | 1.035 Mops/s | 2 |
+| contention/scalable | per_op_latency / 2 | 966.047 ns | 2 |
+| contention/scalable | total_throughput / 4 | 0.848 Mops/s | 4 |
+| contention/scalable | per_op_latency / 4 | 1.180 us | 4 |
+| contention/scalable | total_throughput / 8 | 0.773 Mops/s | 8 |
+| contention/scalable | per_op_latency / 8 | 1.294 us | 8 |
+| contention/scalable | total_throughput / 16 | 0.480 Mops/s | 16 |
+| contention/scalable | per_op_latency / 16 | 2.085 us | 16 |
+| read_scaling/recursive | total_throughput / 1 | 9.948 Mops/s | 1 |
+| read_scaling/recursive | per_op_latency / 1 | 100.518 ns | 1 |
+| read_scaling/recursive | total_throughput / 2 | 3.516 Mops/s | 2 |
+| read_scaling/recursive | per_op_latency / 2 | 284.389 ns | 2 |
+| read_scaling/recursive | total_throughput / 4 | 1.798 Mops/s | 4 |
+| read_scaling/recursive | per_op_latency / 4 | 556.287 ns | 4 |
+| read_scaling/recursive | total_throughput / 8 | 1.425 Mops/s | 8 |
+| read_scaling/recursive | per_op_latency / 8 | 701.990 ns | 8 |
+| read_scaling/recursive | total_throughput / 16 | 1.541 Mops/s | 16 |
+| read_scaling/recursive | per_op_latency / 16 | 649.050 ns | 16 |
+| read_scaling/rw | total_throughput / 1 | 11.239 Mops/s | 1 |
+| read_scaling/rw | per_op_latency / 1 | 88.977 ns | 1 |
+| read_scaling/rw | total_throughput / 2 | 7.050 Mops/s | 2 |
+| read_scaling/rw | per_op_latency / 2 | 141.838 ns | 2 |
+| read_scaling/rw | total_throughput / 4 | 2.987 Mops/s | 4 |
+| read_scaling/rw | per_op_latency / 4 | 334.756 ns | 4 |
+| read_scaling/rw | total_throughput / 8 | 1.437 Mops/s | 8 |
+| read_scaling/rw | per_op_latency / 8 | 695.945 ns | 8 |
+| read_scaling/rw | total_throughput / 16 | 1.305 Mops/s | 16 |
+| read_scaling/rw | per_op_latency / 16 | 766.001 ns | 16 |
+| read_scaling/scalable | total_throughput / 1 | 20.782 Mops/s | 1 |
+| read_scaling/scalable | per_op_latency / 1 | 48.119 ns | 1 |
+| read_scaling/scalable | total_throughput / 2 | 33.536 Mops/s | 2 |
+| read_scaling/scalable | per_op_latency / 2 | 29.819 ns | 2 |
+| read_scaling/scalable | total_throughput / 4 | 53.940 Mops/s | 4 |
+| read_scaling/scalable | per_op_latency / 4 | 18.539 ns | 4 |
+| read_scaling/scalable | total_throughput / 8 | 108.728 Mops/s | 8 |
+| read_scaling/scalable | per_op_latency / 8 | 9.197 ns | 8 |
+| read_scaling/scalable | total_throughput / 16 | 221.587 Mops/s | 16 |
+| read_scaling/scalable | per_op_latency / 16 | 4.513 ns | 16 |
+| crdt_sync | version_vector / 1000 | 51.328 us | 20 |
+| crdt_sync | delta_since_empty / 1000 | 25.242 us | 20 |
+| crdt_sync | apply_delta_full / 1000 | 153.242 us | 20 |
+| crdt_sync | version_vector / 10000 | 369.306 us | 20 |
+| crdt_sync | delta_since_empty / 10000 | 196.390 us | 20 |
+| crdt_sync | apply_delta_full / 10000 | 1.478 ms | 20 |
+| crdt_sync | version_vector / 100000 | 3.684 ms | 20 |
+| crdt_sync | delta_since_empty / 100000 | 7.804 ms | 20 |
+| crdt_sync | apply_delta_full / 100000 | 17.540 ms | 20 |
+| shm_blob | write / 64B | 176.410 ns | 10000 |
+| shm_blob | read / 64B | 93.338 ns | 10000 |
+| shm_blob | read_view / 64B | 93.005 ns | 10000 |
+| shm_blob | write / 4096B | 3.200 us | 10000 |
+| shm_blob | read / 4096B | 90.854 ns | 10000 |
+| shm_blob | read_view / 4096B | 91.034 ns | 10000 |
+| shm_blob | write / 65536B | 55.877 us | 10000 |
+| shm_blob | read / 65536B | 92.288 ns | 10000 |
+| shm_blob | read_view / 65536B | 90.112 ns | 10000 |
+| codec | encode_snapshot / 100n/5834B | 11.200 us | 20 |
+| codec | decode_snapshot / 100n/5834B | 43.699 us | 20 |
+| codec | encode_snapshot / 1000n/60552B | 69.632 us | 20 |
+| codec | decode_snapshot / 1000n/60552B | 247.565 us | 20 |
+| codec | encode_snapshot / 10000n/618552B | 627.597 us | 20 |
+| codec | decode_snapshot / 10000n/618552B | 2.229 ms | 20 |
+| codec_decode | decode_snapshot / 1000n/60552B | 218.670 us | 50 |
+| codec_decode | throughput / 1000n/60552B | 0.258 GB/s | 50 |
+| codec_decode | decode_snapshot / 10000n/618552B | 2.216 ms | 50 |
+| codec_decode | throughput / 10000n/618552B | 0.260 GB/s | 50 |
+| lossless_tree | diff_empty / 1000 | 122.906 us | 20 |
+| lossless_tree | apply_update_full / 1000 | 1.140 ms | 20 |
+| lossless_tree | diff_empty / 10000 | 1.446 ms | 20 |
+| lossless_tree | apply_update_full / 10000 | 13.127 ms | 20 |
+| lossless_tree | diff_empty / 100000 | 15.002 ms | 20 |
+| lossless_tree | apply_update_full / 100000 | 265.744 ms | 20 |
+| effect_alloc | create_dispose / 1000 | 519.831 us | 200 |
+| effect_alloc | create_dispose / 10000 | 5.600 ms | 200 |
+| scale | build / 100000 | 14.393 ms | 1 |
+| scale | cold_full_recalc / 100000 | 12.199 ms | 1 |
+| scale | full_recalc_invalidate_all / 100000 | 25.782 ms | 1 |
+| scale | viewport_recalc / 100000 | 27.904 us | 1 |
+| scale | build / 1000000 | 132.291 ms | 1 |
+| scale | cold_full_recalc / 1000000 | 103.595 ms | 1 |
+| scale | full_recalc_invalidate_all / 1000000 | 272.887 ms | 1 |
+| scale | viewport_recalc / 1000000 | 55.552 us | 1 |
+| scale | build / 2000000 | 258.517 ms | 1 |
+| scale | cold_full_recalc / 2000000 | 201.976 ms | 1 |
+| scale | full_recalc_invalidate_all / 2000000 | 501.996 ms | 1 |
+| scale | viewport_recalc / 2000000 | 31.488 us | 1 |
+<!-- wasm-benchmark-results:end -->
+
 ## Optimizations Applied (v0.20.0)
 
 v0.20.0 lands the Phase 2 perf quick wins — five contained, individually

@@ -1,6 +1,15 @@
 #ifndef LAZILY_RELIABLE_SYNC_HPP
 #define LAZILY_RELIABLE_SYNC_HPP
 
+// Native-only tier (`#lzcppwasm`). The protocol core here is pure, but this
+// header's durable-outbox path reaches `unistd.h`/`fcntl.h` for file-backed
+// storage, which wasm32 does not provide. Refusing here names the reason at
+// the include that caused it. For wasm, include `lazily/core.hpp`.
+#if defined(__EMSCRIPTEN__)
+#error                                                                                             \
+    "lazily/reliable_sync.hpp is native-only: the durable outbox needs POSIX file I/O (unistd.h/fcntl.h), which wasm32 does not provide. Include <lazily/core.hpp> instead, and see WASM.md for the build tiers."
+#endif
+
 // Reliable sync protocol (`#lzsync`).
 //
 // Delivery-reliability over the `Snapshot`/`Delta`/`CrdtSync` planes (`lazily-spec`

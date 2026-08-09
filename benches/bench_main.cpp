@@ -1,10 +1,27 @@
-#include <lazily/lazily.hpp>
+// The bench harness includes the families it measures NARROWLY (`#lzcppwasm`),
+// not through the umbrella. `lazily.hpp` drags in `transport.hpp`, which is
+// native-only, so the umbrella would make the whole harness unbuildable for
+// wasm32 — including the reactive-core benchmarks that run there perfectly
+// well. `transport.hpp` is included below under an explicit native-only guard.
+#include <lazily/codec.hpp>
+#include <lazily/core.hpp>
+#include <lazily/crdt.hpp>
+#include <lazily/ipc.hpp>
+#include <lazily/lossless_tree_crdt.hpp>
+#include <lazily/queue.hpp>
+#include <lazily/thread_safe.hpp>
+#include <lazily/work_queue.hpp>
+
+#if !defined(__EMSCRIPTEN__)
+#include <lazily/transport.hpp>
+#endif
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -588,6 +605,15 @@ void bench_shm_blob() {
 //     bytes, so a spilled message (tiny descriptor) stays ~constant as payload
 //     grows, while inline grows with the payload;
 //   - resolve: the receiver-side zero-copy read (~constant, no copy, no rehash).
+// Native-only (`#lzcppwasm`): InProcessBackend and BlobRouter live in
+// transport.hpp. Under wasm this reports itself as skipped rather than being
+// silently absent — a benchmark that vanishes from the output looks the same
+// as one that ran and cost nothing.
+#if defined(__EMSCRIPTEN__)
+void bench_transport() {
+  std::printf("transport: SKIPPED on wasm32 (POSIX shared memory is native-only)\n");
+}
+#else
 void bench_transport() {
   for (long long sz : {256, 4096, 65536}) {
     std::vector<uint8_t> payload(static_cast<size_t>(sz), 0x5A);
@@ -618,9 +644,25 @@ void bench_transport() {
   }
 }
 
+#endif // !__EMSCRIPTEN__
+
 // -- Scale benchmark --
 void bench_scale() {
-  for (long long n : {100000, 1000000, 2000000, 5000000, 10000000}) {
+  // The scale ladder is TARGET-DEPENDENT (`#lzcppwasm`).
+  //
+  // wasm32 has a 32-bit address space, so the 5M and 10M rungs allocate past
+  // what the heap can hold and throw std::bad_alloc. The rungs that are omitted
+  // are printed rather than silently dropped: a shorter table that does not say
+  // it is shorter reads as "this is the whole ladder", and comparing a wasm 1M
+  // number against a native 10M number is exactly the mistake that invites.
+#if defined(__EMSCRIPTEN__)
+  std::printf("scale: wasm32 runs rungs up to 2M; the 5M and 10M rungs exceed "
+              "the 32-bit heap and are omitted\n");
+  const std::vector<long long> scale_rungs = {100000, 1000000, 2000000};
+#else
+  const std::vector<long long> scale_rungs = {100000, 1000000, 2000000, 5000000, 10000000};
+#endif
+  for (long long n : scale_rungs) {
     // Build
     double build_ns;
     {
@@ -682,28 +724,52 @@ void bench_scale() {
   }
 }
 
+// Runs one stage and NAMES it if it throws.
+//
+// Results accumulate and print at the end, so before this an exception anywhere
+// in the run took the whole report with it and said only that something threw.
+// On wasm that surfaced as a bare `#<CppException>` from Node with no
+// indication of which stage produced it. A harness whose failure mode is
+// "no output at all" cannot be debugged on a target you are bringing up.
+static int stage_failures = 0;
+static void stage(const char* name, void (*fn)()) {
+  try {
+    fn();
+  } catch (const std::exception& e) {
+    std::cout << "STAGE FAILED: " << name << " threw " << e.what() << "\n";
+    ++stage_failures;
+  } catch (...) {
+    std::cout << "STAGE FAILED: " << name << " threw a non-std exception\n";
+    ++stage_failures;
+  }
+}
+
 int main() {
   std::cout << "lazily-cpp benchmark suite\n";
   std::cout << "==========================\n\n";
 
-  bench_cached_reads();
-  bench_cold_first_get();
-  bench_fan_out();
-  bench_set_cell_invalidation();
-  bench_memo_equality();
-  bench_effect_flushing();
-  bench_batch_storms();
-  bench_ts_contention();
-  bench_read_scaling();
-  bench_crdt_sync();
-  bench_shm_blob();
-  bench_codec();
-  bench_codec_decode_throughput();
-  bench_lossless_tree_crdt();
-  bench_effect_alloc();
-  bench_transport();
-  bench_scale();
+  stage("cached_reads", bench_cached_reads);
+  stage("cold_first_get", bench_cold_first_get);
+  stage("fan_out", bench_fan_out);
+  stage("set_cell_invalidation", bench_set_cell_invalidation);
+  stage("memo_equality", bench_memo_equality);
+  stage("effect_flushing", bench_effect_flushing);
+  stage("batch_storms", bench_batch_storms);
+  stage("ts_contention", bench_ts_contention);
+  stage("read_scaling", bench_read_scaling);
+  stage("crdt_sync", bench_crdt_sync);
+  stage("shm_blob", bench_shm_blob);
+  stage("codec", bench_codec);
+  stage("codec_decode_throughput", bench_codec_decode_throughput);
+  stage("lossless_tree_crdt", bench_lossless_tree_crdt);
+  stage("effect_alloc", bench_effect_alloc);
+  stage("transport", bench_transport);
+  stage("scale", bench_scale);
 
   print_results();
+  if (stage_failures != 0) {
+    std::cout << "\n" << stage_failures << " stage(s) failed\n";
+    return 1;
+  }
   return 0;
 }

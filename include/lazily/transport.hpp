@@ -1,6 +1,16 @@
 #ifndef LAZILY_TRANSPORT_HPP
 #define LAZILY_TRANSPORT_HPP
 
+// Native-only tier (`#lzcppwasm`). `ShmBackend` is POSIX shared memory —
+// `::shm_open` + `mmap` + `ftruncate` over `/dev/shm`. Emscripten has no
+// meaningful implementation of it: the symbols resolve far enough to compile
+// and then fail at link or, worse, at runtime. Refusing here names the reason
+// at the include that caused it. For wasm, include `lazily/core.hpp`.
+#if defined(__EMSCRIPTEN__)
+#error                                                                                             \
+    "lazily/transport.hpp is native-only: ShmBackend needs POSIX shm_open/mmap, which wasm32 does not provide. Include <lazily/core.hpp> instead, and see WASM.md for the build tiers."
+#endif
+
 #include <lazily/ipc.hpp>
 
 #include <atomic>

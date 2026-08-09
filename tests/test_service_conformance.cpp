@@ -13,7 +13,7 @@
 // probe: after an op, a real projection change marks the observing slot dirty
 // (is_set == false) while a deduped no-op leaves it cached (is_set == true).
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
 #include <lazily/service.hpp>
 
 #include "test_assertion_keys.hpp"

@@ -434,6 +434,28 @@ target_link_libraries(your_target PRIVATE lazily)
 # target_link_libraries(your_target PRIVATE lazily_ffi)
 ```
 
+### wasm32 (Emscripten)
+
+```bash
+make wasm-core       # single-threaded tier: build + replay conformance under Node
+make wasm-threaded   # -pthread tier
+make wasm            # both, then audit the capability matrix
+```
+
+Include **`<lazily/core.hpp>`** on wasm — the kernel, collections, keyed order,
+and statechart, with a closure that is standard library only.
+`<lazily/lazily.hpp>` is the **native-only umbrella**: it pulls in
+`transport.hpp` (POSIX `shm_open`/`mmap`) and `reliable_sync.hpp` (file-backed
+durable outbox), which have no wasm implementation. Both refuse to compile under
+`__EMSCRIPTEN__` rather than failing obscurely at link time.
+
+Three explicitly-labelled tiers — **core**, **threaded** (`-pthread`, requiring
+SharedArrayBuffer and COOP/COEP headers from the host), and **native-only**
+(excluded) — so no build silently drops features. The per-family capability
+matrix in [WASM.md](WASM.md) is generated from the fixture manifests the wasm
+runs actually produced and is CI-enforced; wasm benchmark numbers live in their
+own section of [BENCHMARKS.md](BENCHMARKS.md) and are not comparable to native.
+
 ## Modules
 
 | Header | Module |

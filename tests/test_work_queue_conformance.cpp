@@ -3,7 +3,8 @@
 // state machine and the reader-kind invalidation matrix nested under
 // steps[].expected.invalidates.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
+#include <lazily/work_queue.hpp>
 
 #include <cstdint>
 #include <iostream>

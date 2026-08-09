@@ -1,6 +1,13 @@
 #ifndef LAZILY_THREAD_SAFE_HPP
 #define LAZILY_THREAD_SAFE_HPP
 
+// Threaded tier (`#lzcppwasm`) — `<mutex>`/`<shared_mutex>`. See the note in
+// `work_queue.hpp`; on wasm32 this needs `-pthread`.
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#error                                                                                             \
+    "lazily/thread_safe.hpp is the threaded tier: build with -pthread (wasm needs SharedArrayBuffer + COOP/COEP), or include <lazily/core.hpp> for the single-threaded core. See WASM.md."
+#endif
+
 #include <lazily/cell.hpp>
 #include <lazily/context.hpp>
 

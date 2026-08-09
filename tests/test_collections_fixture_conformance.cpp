@@ -1,9 +1,11 @@
 // Canonical collections conformance replays for the fixtures that do not fit
 // the keyed-map/queue-family runners.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
+#include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/merge.hpp>
 #include <lazily/sem_tree.hpp>
+#include <lazily/stable_id.hpp>
 
 #include <algorithm>
 #include <cassert>

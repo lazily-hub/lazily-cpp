@@ -29,7 +29,7 @@
 // opened, and `g_steps_replayed` asserts the replay did real work — an empty or
 // truncated corpus cannot pass vacuously.
 
-#include <lazily/lazily.hpp>
+#include <lazily/core.hpp>
 
 #include <algorithm>
 #include <filesystem>
