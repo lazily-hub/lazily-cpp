@@ -11,15 +11,14 @@
 # Inputs (all produced by `make wasm-core` / `make wasm-threaded`):
 #   build_wasm_core/conformance-fixtures-loaded.txt      core tier manifest
 #   build_wasm_threaded/conformance-fixtures-loaded.txt  threaded tier manifest
-#   build/conformance-fixtures-loaded.txt                native manifest (baseline)
 #   wasm-tiers.conf                                      tier assignment
 #   ../lazily-spec/conformance/                          the canonical corpus
 #
 # Failures detected:
 #   1. a tier manifest is missing or below its floor — that tier stopped running
 #   2. a tier built runners the conf does not assign to it, or vice versa
-#   3. a canonical family replayed natively but in NO wasm tier, with no reason
-#      in WASM_ABSENT_REASONS — a silent gap, which is how a matrix starts lying
+#   3. a canonical family with NO wasm replay and no reason in
+#      WASM_ABSENT_REASONS — a silent gap, which is how a matrix starts lying
 #   4. a WASM_ABSENT_REASONS entry for a family that IS replayed on wasm — a
 #      stale excuse that understates the target (checked in both directions,
 #      exactly as KNOWN_UNCOVERED is in check-conformance-coverage.sh)
@@ -33,6 +32,11 @@
 
 set -euo pipefail
 
+# Deterministic collation. `sort` orders `(root)` differently under a UTF-8
+# locale than under C, so without this the generated row order depends on the
+# machine and the committed table mismatches on a runner while matching locally.
+export LC_ALL=C
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
@@ -42,7 +46,6 @@ wasm_md="$repo_root/WASM.md"
 
 core_manifest="${CORE_MANIFEST:-$repo_root/build_wasm_core/conformance-fixtures-loaded.txt}"
 threaded_manifest="${THREADED_MANIFEST:-$repo_root/build_wasm_threaded/conformance-fixtures-loaded.txt}"
-native_manifest="${NATIVE_MANIFEST:-$repo_root/build/conformance-fixtures-loaded.txt}"
 
 write_mode=0
 [[ "${1:-}" == "--write" ]] && write_mode=1
@@ -55,18 +58,26 @@ MIN_THREADED_FIXTURES="${MIN_THREADED_FIXTURES:-44}"
 
 # ── the one narrowing ledger ────────────────────────────────────────────────
 #
-# A canonical family replayed natively but in no wasm tier MUST appear here with
-# a reason. This is the only mechanism that excuses a family, deliberately: a
+# A canonical family with no replay on any wasm tier MUST appear here with a
+# reason. This is the only mechanism that excuses a family, deliberately: a
 # guard that reads one ledger and silently ignores a second one does not weaken
 # the audit, it inverts it for whoever added the second (`#lzgdcoveragecolumn`).
 # If a narrowing mechanism is ever added, it goes in this array or the guard
 # must be taught about it explicitly.
 #
 # Format: "family|reason"
+# Two distinct kinds of absence live here, and the reason text says which:
+# a family wasm CANNOT carry, and a family lazily-cpp does not replay at ALL
+# (native included). Collapsing them would let "we never wrote this runner" hide
+# behind "wasm can't do this" — the difference between has-not and cannot, the
+# same distinction `⊘` preserves in coverage.json.
 WASM_ABSENT_REASONS=(
   "reliable-sync|the durable outbox is file-backed (unistd.h/fcntl.h); reliable_sync.hpp refuses to compile under __EMSCRIPTEN__"
   "distributed|resolves ShmBlobRef through transport.hpp's ShmBackend — POSIX shm_open/mmap has no wasm implementation"
   "(root)|the top-level snapshot_*/delta_* frames are replayed by the ipc and reliable-sync suites, both native-only"
+  "egress|lazily-cpp has no egress runner in ANY target, native included — a binding gap, not a wasm limit"
+  "protobuf|lazily-cpp ships no protobuf codec in ANY target, native included — a binding gap, not a wasm limit"
+  "agent-doc|agent-doc session fixtures are not a lazily library family and no binding replays them"
 )
 
 status=0
@@ -137,8 +148,7 @@ check_tier_targets threaded "$repo_root/build_wasm_threaded"
 # ── per-family counts ───────────────────────────────────────────────────────
 family_of() { [[ "$1" == */* ]] && echo "${1%%/*}" || echo "(root)"; }
 
-declare -A NATIVE CORE THREADED CORPUS
-while read -r f; do [[ -n "$f" ]] && NATIVE["$(family_of "$f")"]=$(( ${NATIVE["$(family_of "$f")"]:-0} + 1 )); done < <(fixtures_of "$native_manifest")
+declare -A CORE THREADED CORPUS
 while read -r f; do [[ -n "$f" ]] && CORE["$(family_of "$f")"]=$(( ${CORE["$(family_of "$f")"]:-0} + 1 )); done < <(fixtures_of "$core_manifest")
 while read -r f; do [[ -n "$f" ]] && THREADED["$(family_of "$f")"]=$(( ${THREADED["$(family_of "$f")"]:-0} + 1 )); done < <(fixtures_of "$threaded_manifest")
 
@@ -160,11 +170,19 @@ for entry in "${WASM_ABSENT_REASONS[@]}"; do
 done
 
 # ── the two-directional audit ───────────────────────────────────────────────
+#
+# Deliberately stated against the CANONICAL CORPUS, not against a native
+# manifest. The first version compared wasm coverage to what the native suite
+# replayed, which made the audit depend on a manifest produced by a DIFFERENT
+# CI job — so in the wasm job every native cell read zero and the whole table
+# mismatched. Comparing to the corpus is both environment-independent and a
+# stronger claim: every family the spec ships either replays on a wasm tier or
+# carries a recorded reason, whatever the native suite happens to do.
 for fam in "${!CORPUS[@]}"; do
-  nat=${NATIVE[$fam]:-0}; c=${CORE[$fam]:-0}; t=${THREADED[$fam]:-0}
+  c=${CORE[$fam]:-0}; t=${THREADED[$fam]:-0}
   wasm=$(( c + t ))
-  if (( nat > 0 && wasm == 0 )) && [[ -z "${REASON[$fam]+x}" ]]; then
-    fail "family '$fam' replays $nat fixture(s) natively but none on wasm, and WASM_ABSENT_REASONS gives no reason. Either replay it on a wasm tier or record why it cannot be — a blank cell is what makes a matrix unreadable."
+  if (( wasm == 0 )) && [[ -z "${REASON[$fam]+x}" ]]; then
+    fail "family '$fam' has ${CORPUS[$fam]} canonical fixture(s) and replays none on any wasm tier, and WASM_ABSENT_REASONS gives no reason. Either replay it on a tier or record why it cannot be — a blank cell is what makes a matrix unreadable."
   fi
   if (( wasm > 0 )) && [[ -n "${REASON[$fam]+x}" ]]; then
     fail "WASM_ABSENT_REASONS excuses family '$fam', but wasm replays $wasm fixture(s) of it — the excuse is stale and understates the target."
@@ -173,29 +191,25 @@ done
 
 # ── generate the matrix ─────────────────────────────────────────────────────
 generate_matrix() {
-  echo "| Family | Corpus | Native | wasm core | wasm threaded | Note |"
-  echo "|---|---:|---:|---:|---:|---|"
-  local total_corpus=0 total_nat=0 total_core=0 total_thr=0
+  echo "| Family | Corpus | wasm core | wasm threaded | Note |"
+  echo "|---|---:|---:|---:|---|"
+  local total_corpus=0 total_core=0 total_thr=0
   for fam in $(printf '%s\n' "${!CORPUS[@]}" | sort); do
-    local corp=${CORPUS[$fam]:-0} nat=${NATIVE[$fam]:-0} c=${CORE[$fam]:-0} t=${THREADED[$fam]:-0}
+    local corp=${CORPUS[$fam]:-0} c=${CORE[$fam]:-0} t=${THREADED[$fam]:-0}
     local note=""
     if [[ -n "${REASON[$fam]+x}" ]]; then
-      note="native-only — ${REASON[$fam]}"
+      note="not on wasm — ${REASON[$fam]}"
     elif (( c > 0 && t > 0 )); then
       note="split across both tiers"
     elif (( t > 0 )); then
       note="needs -pthread"
-    elif (( nat == 0 && c == 0 && t == 0 )); then
-      note="no runner in any target"
     fi
-    printf '| `%s` | %d | %d | %s | %s | %s |\n' "$fam" "$corp" "$nat" \
+    printf '| `%s` | %d | %s | %s | %s |\n' "$fam" "$corp" \
       "$( ((c>0)) && echo "$c" || echo '—')" \
       "$( ((t>0)) && echo "$t" || echo '—')" "$note"
-    total_corpus=$((total_corpus+corp)); total_nat=$((total_nat+nat))
-    total_core=$((total_core+c)); total_thr=$((total_thr+t))
+    total_corpus=$((total_corpus+corp)); total_core=$((total_core+c)); total_thr=$((total_thr+t))
   done
-  printf '| **total** | **%d** | **%d** | **%d** | **%d** | |\n' \
-    "$total_corpus" "$total_nat" "$total_core" "$total_thr"
+  printf '| **total** | **%d** | **%d** | **%d** | |\n' "$total_corpus" "$total_core" "$total_thr"
 }
 
 start_marker='<!-- wasm-matrix:start -->'

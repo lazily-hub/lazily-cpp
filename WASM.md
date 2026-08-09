@@ -61,40 +61,52 @@ someone believed rather than what ran, which is the drift the manifest exists to
 catch.
 
 Counts are distinct canonical fixtures from `../lazily-spec/conformance/`
-actually opened by a replay in that target. Every absent cell carries a reason;
+actually opened by a replay in that tier. Every absent cell carries a reason;
 there are no blanks.
 
+The table compares the wasm tiers against the **canonical corpus**, not against
+what the native suite happens to replay. Comparing to native would make the
+matrix depend on a manifest produced by a different CI job — the wasm job does
+not build the native suite, so every native cell would read zero there. Against
+the corpus the claim is both environment-independent and stronger: every family
+the spec ships either replays on a tier or carries a recorded reason.
+
+Two kinds of absence appear, and each reason says which: a family wasm **cannot**
+carry (POSIX shared memory, file-backed storage) and a family lazily-cpp does not
+replay in **any** target, native included. Those are different facts and the
+guard keeps them apart.
+
 <!-- wasm-matrix:start -->
-| Family | Corpus | Native | wasm core | wasm threaded | Note |
-|---|---:|---:|---:|---:|---|
-| `agent-doc` | 2 | 0 | — | — | no runner in any target |
-| `codec` | 6 | 6 | 6 | — |  |
-| `collections` | 21 | 21 | 18 | 14 | split across both tiers |
-| `coordination` | 5 | 5 | 5 | — |  |
-| `crdt-tree` | 1 | 1 | 1 | — |  |
-| `distributed` | 2 | 2 | — | — | native-only — resolves ShmBlobRef through transport.hpp's ShmBackend — POSIX shm_open/mmap has no wasm implementation |
-| `egress` | 4 | 0 | — | — | no runner in any target |
-| `familysync` | 1 | 1 | — | 1 | needs -pthread |
-| `ingress` | 8 | 8 | — | 8 | needs -pthread |
-| `lossless-tree` | 9 | 9 | 9 | — |  |
-| `materialization` | 3 | 1 | 1 | — |  |
-| `membership` | 1 | 1 | 1 | — |  |
-| `message-passing` | 8 | 8 | 8 | — |  |
-| `presence` | 3 | 3 | 3 | — |  |
-| `protobuf` | 1 | 0 | — | — | no runner in any target |
-| `rateshape` | 6 | 6 | 6 | — |  |
-| `reactive-graph` | 21 | 21 | — | 21 | needs -pthread |
-| `receipts` | 1 | 1 | 1 | — |  |
-| `reliable-sync` | 9 | 6 | — | — | native-only — the durable outbox is file-backed (unistd.h/fcntl.h); reliable_sync.hpp refuses to compile under __EMSCRIPTEN__ |
-| `resilience` | 4 | 4 | 4 | — |  |
-| `(root)` | 8 | 7 | — | — | native-only — the top-level snapshot_*/delta_* frames are replayed by the ipc and reliable-sync suites, both native-only |
-| `service` | 4 | 4 | 4 | — |  |
-| `signaling` | 2 | 1 | 1 | — |  |
-| `statechart` | 8 | 8 | 8 | — |  |
-| `stdlib` | 3 | 3 | 3 | — |  |
-| `temporal` | 4 | 4 | 4 | — |  |
-| `windowing` | 4 | 4 | 4 | — |  |
-| **total** | **149** | **135** | **87** | **44** | |
+| Family | Corpus | wasm core | wasm threaded | Note |
+|---|---:|---:|---:|---|
+| `(root)` | 8 | — | — | not on wasm — the top-level snapshot_*/delta_* frames are replayed by the ipc and reliable-sync suites, both native-only |
+| `agent-doc` | 2 | — | — | not on wasm — agent-doc session fixtures are not a lazily library family and no binding replays them |
+| `codec` | 6 | 6 | — |  |
+| `collections` | 21 | 18 | 14 | split across both tiers |
+| `coordination` | 5 | 5 | — |  |
+| `crdt-tree` | 1 | 1 | — |  |
+| `distributed` | 2 | — | — | not on wasm — resolves ShmBlobRef through transport.hpp's ShmBackend — POSIX shm_open/mmap has no wasm implementation |
+| `egress` | 4 | — | — | not on wasm — lazily-cpp has no egress runner in ANY target, native included — a binding gap, not a wasm limit |
+| `familysync` | 1 | — | 1 | needs -pthread |
+| `ingress` | 8 | — | 8 | needs -pthread |
+| `lossless-tree` | 9 | 9 | — |  |
+| `materialization` | 3 | 1 | — |  |
+| `membership` | 1 | 1 | — |  |
+| `message-passing` | 8 | 8 | — |  |
+| `presence` | 3 | 3 | — |  |
+| `protobuf` | 1 | — | — | not on wasm — lazily-cpp ships no protobuf codec in ANY target, native included — a binding gap, not a wasm limit |
+| `rateshape` | 6 | 6 | — |  |
+| `reactive-graph` | 21 | — | 21 | needs -pthread |
+| `receipts` | 1 | 1 | — |  |
+| `reliable-sync` | 9 | — | — | not on wasm — the durable outbox is file-backed (unistd.h/fcntl.h); reliable_sync.hpp refuses to compile under __EMSCRIPTEN__ |
+| `resilience` | 4 | 4 | — |  |
+| `service` | 4 | 4 | — |  |
+| `signaling` | 2 | 1 | — |  |
+| `statechart` | 8 | 8 | — |  |
+| `stdlib` | 3 | 3 | — |  |
+| `temporal` | 4 | 4 | — |  |
+| `windowing` | 4 | 4 | — |  |
+| **total** | **149** | **87** | **44** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits
