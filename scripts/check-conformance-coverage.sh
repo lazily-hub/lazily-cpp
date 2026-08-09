@@ -135,6 +135,10 @@ lossless-tree
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
+  # Register CRDTs (LWW / MV / PnCounter + the CellCrdt projection bit) are
+  # implemented here, but this binding has no canonical replay for the new
+  # registers corpus yet; the Registers coverage row is `~` until it does.
+  "collections/registers_convergence.json"
 # ipc — the C++ arena is an in-process host and does not implement the
 # canonical mapped 40-byte LZSH header asserted by this fixture.
 "arena_blob.json"
