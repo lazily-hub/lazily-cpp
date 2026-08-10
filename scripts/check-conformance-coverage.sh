@@ -57,27 +57,23 @@ if [[ ! -d "$conformance_dir" ]]; then
   exit 0
 fi
 
-# Minimum total DISTINCT fixtures replayed. Raise this when replays are added;
-# NEVER lower it to make a red build green — a drop means a replay stopped
-# running.
+# Minimum total DISTINCT fixtures replayed. EXACT: 137 is what the suite really
+# replays, with no margin. NEVER lower it to make a red build green — a drop
+# means a replay stopped running, and that is the finding, not the floor.
 #
-# The current suite replays 127 distinct fixtures. Six collections fixtures
-# (MergeCell, reconciliation, SemTree, stable IDs, and two TextCrdt corpora)
-# moved out of KNOWN_UNCOVERED in #lazilycppcollections, the seven ingress
-# schedules landed with the transport-agnostic ingress family,
-# codec/frame_roundtrip_json.json plus distributed/crdt_sync_frames.json joined
-# them with the json reference codec (#lzcppjsoncodec, #lazilycppexcuses), and
-# codec/frame_roundtrip_msgpack.json joined them with the spec `msgpack` wire
-# (#lzcppmsgpackwire), and codec/nodeid_exact_range.json joined them with the
-# NodeId exact-representation bound (#lzspecdecoderbound) — the runner that found
-# `uint 64` wrapping to a negative int64_t in read_i64(), and
-# codec/nodekey_null_leniency.json joined them with the NodeKey null-leniency
-# rule (#lzkeynullstrict), and codec/blob_backend_discriminator.json joined them
-# with the blob-backend discriminator clause (#lzblobbackendstrict) — the runner
-# that holds an unknown `backend` token REFUSED rather than normalized to `shm`;
-# keep the floor aligned so deleting a runner cannot hide behind older aggregate
-# growth.
-MIN_FIXTURES="${MIN_FIXTURES:-127}"
+# When replays are added, set this to the number the guard REPORTS afterwards.
+# Do NOT add "the N I just added" to the old value (#lzscenariofloordrift): the
+# fixture-by-fixture arithmetic this comment replaced did exactly that, adding
+# each delta on top of a floor that already sat under reality, so the gap only
+# ever widened. It had reached 127 against an actual 137 — ten replays could
+# have been deleted while the guard kept printing OK, which is precisely the
+# "deleting a runner hides behind older aggregate growth" failure that
+# arithmetic was written to prevent. MIN_SCENARIOS below was pulled up to its
+# actual figure for the same reason; this floor is now kept the same way.
+#
+# Confirmed by CI run 31347405556 and a local green `make check`. Verified
+# exact: 138 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-137}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -208,7 +204,12 @@ excuse_scenario() {
 # green; the new scenario is the one that bites. It is published, so CI's clone
 # carries it and this binding replays it with no runner change.
 #
-# Raise this when replays are added; NEVER lower it to make a red build green.
+# NEVER lower it to make a red build green. When replays are added, set this to
+# the number the guard REPORTS afterwards — never the old value plus however
+# many you added, which is how MIN_FIXTURES above drifted ten below reality
+# (#lzscenariofloordrift). This floor is EXACT today: 147 declared, 147
+# replayed, confirmed by CI run 31347405556 and a local green `make check`, and
+# verified by watching 148 fail it.
 MIN_SCENARIOS="${MIN_SCENARIOS:-147}"
 
 if [[ ! -f "$manifest" ]]; then
