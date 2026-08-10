@@ -82,7 +82,7 @@ guard keeps them apart.
 | `(root)` | 8 | — | — | not on wasm — the top-level snapshot_*/delta_* frames are replayed by the ipc and reliable-sync suites, both native-only |
 | `agent-doc` | 2 | — | — | not on wasm — agent-doc session fixtures are not a lazily library family and no binding replays them |
 | `codec` | 6 | 6 | — |  |
-| `collections` | 21 | 18 | 14 | split across both tiers |
+| `collections` | 22 | 18 | 14 | split across both tiers |
 | `coordination` | 5 | 5 | — |  |
 | `crdt-tree` | 1 | 1 | — |  |
 | `distributed` | 2 | — | — | not on wasm — resolves ShmBlobRef through transport.hpp's ShmBackend — POSIX shm_open/mmap has no wasm implementation |
@@ -106,7 +106,7 @@ guard keeps them apart.
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **149** | **89** | **46** | |
+| **total** | **150** | **89** | **46** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits
