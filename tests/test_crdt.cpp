@@ -246,6 +246,63 @@ TEST(test_seqcrdt_merge_converges) {
   assert(a_order == b_order);
 }
 
+// A fork has already OBSERVED everything the source holds, so its clock must
+// not restart: `SeqCrdt<Id, V> clone(new_peer)` handed the new replica a FRESH
+// Hlc at (0, 0), throwing away the source's causal position. The next local op
+// then supplies a `now_micros` BELOW the source's last wall time — ordinary
+// clock skew, which is the entire reason an HLC exists — and `tick` takes the
+// `now <= last_wall` branch off a zeroed clock, minting a stamp causally BEHIND
+// state the fork already holds. `LwwRegister::set` adopts only on strictly
+// greater, so the fork's OWN local write is silently dropped: no error, no
+// conflict, the value just never changes. (`#lzzigforkhlcpeer`)
+TEST(test_seqcrdt_fork_carries_clock_forward) {
+  SeqCrdt<std::string, int> a(1);
+  a.insert_back("x", 1, 100); // value stamp (100, 0, 1)
+
+  auto b = a.fork(2); // b has observed (100, 0, 1)
+
+  // Skewed clock: b's wall reading is BEHIND a's. With a fresh clock this mints
+  // (50, 0, 2), which is not > (100, 0, 1), and the write vanishes. Carrying
+  // the position forward makes it (100, 1, 2), which wins.
+  assert(b.set_value("x", 99, 50));
+  assert(b.get("x").value() == 99);
+
+  // And the surviving write must still converge both ways.
+  a.merge(b, 200);
+  b.merge(a, 200);
+  assert(a.get("x") == b.get("x"));
+  assert(a.get("x").value() == 99);
+}
+
+// The other half, and a separate bug: carrying the causal position forward must
+// NOT carry the source's PEER. The peer is the stamp's final tiebreaker, so two
+// replicas stamping under one peer id can mint the identical (wall, logical,
+// peer) triple. LWW adopts only on strictly greater, so a tie means NEITHER
+// side adopts and the replicas diverge permanently — the one outcome a CRDT
+// exists to make impossible. lazily-zig shipped exactly that variant; this test
+// is the shape that caught it (`#lzzigforkhlcpeer`).
+TEST(test_seqcrdt_fork_stamps_with_its_own_peer) {
+  SeqCrdt<std::string, int> a(1);
+  a.insert_back("x", 1, 10); // (10, 0, 1)
+
+  auto b = a.fork(2); // clock at (10, 0), peer 2
+
+  // Equal wall readings on both sides: each `tick` bumps only the logical
+  // counter, so the peer is what decides. Under the source's peer both stamps
+  // would be (10, 1, 1) and the two merges below leave a=55 and b=99 forever.
+  assert(b.set_value("x", 99, 10)); // (10, 1, 2)
+  assert(a.set_value("x", 55, 10)); // (10, 1, 1)
+
+  a.merge(b, 20);
+  b.merge(a, 20);
+
+  // Convergence FIRST: the replicas must agree at all, before which value won
+  // is even a meaningful question.
+  assert(a.get("x") == b.get("x"));
+  // Peer 2 breaks the tie above peer 1.
+  assert(a.get("x").value() == 99);
+}
+
 // -- Registers --
 
 TEST(test_lww_register) {

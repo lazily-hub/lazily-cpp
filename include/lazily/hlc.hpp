@@ -58,6 +58,27 @@ public:
     return {last_wall_, last_logical_, peer_};
   }
 
+  // Rebase this clock onto a NEW peer, keeping its causal position. Both halves
+  // are load-bearing for `SeqCrdt::fork`, and each was its own bug in the
+  // family (`#lzzigforkhlcpeer`):
+  //
+  //   - Carrying the POSITION: a fork has already observed everything the
+  //     source holds. Hand it a fresh `Hlc(new_peer)` at (0, 0) and its next
+  //     local op — under ordinary clock skew, a `now_micros` below the source's
+  //     last wall — mints a stamp causally BEHIND state it already holds. LWW
+  //     adopts only on strictly greater, so the fork's own write is silently
+  //     dropped.
+  //   - NOT carrying the PEER: the peer is the stamp's final tiebreaker. Two
+  //     replicas stamping under one peer id can mint the identical
+  //     (wall, logical, peer), neither side adopts, and they diverge
+  //     permanently. lazily-zig shipped that variant.
+  Hlc forked(PeerId new_peer) const {
+    Hlc out(new_peer);
+    out.last_wall_ = last_wall_;
+    out.last_logical_ = last_logical_;
+    return out;
+  }
+
   HlcStamp observe(const HlcStamp& remote, int64_t now_micros) {
     int64_t wall = std::max({last_wall_, remote.wall_time, now_micros});
     if (wall == last_wall_ && wall == remote.wall_time) {

@@ -621,8 +621,23 @@ public:
     return changed;
   }
 
+  // A fork carries the source's causal POSITION but stamps under its OWN peer.
+  // `SeqCrdt<Id, V> clone(new_peer)` alone left the new replica on a FRESH Hlc
+  // at (0, 0), discarding a clock position it has demonstrably observed — it is
+  // holding the source's entries. Its next local op then supplies a
+  // `now_micros` below the source's last wall (ordinary clock skew, the reason
+  // an HLC exists), `tick` bumps the logical counter off zero, and the fork
+  // mints a stamp causally BEHIND state it already holds. LWW adopts only on
+  // strictly greater, so the fork's own write is silently dropped.
+  //
+  // Copying `hlc_` wholesale is the opposite error: it would carry the source's
+  // PEER, and two replicas stamping under one peer id can mint the identical
+  // (wall, logical, peer) triple — neither adopts, and they diverge
+  // permanently. `Hlc::forked` is exactly this pair. Both failure modes are
+  // covered by tests/test_crdt.cpp. (`#lzzigforkhlcpeer`)
   SeqCrdt<Id, V> fork(PeerId new_peer) const {
     SeqCrdt<Id, V> clone(new_peer);
+    clone.hlc_ = hlc_.forked(new_peer);
     clone.entries_ = entries_;
     return clone;
   }
