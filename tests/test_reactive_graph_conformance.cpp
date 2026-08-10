@@ -1388,9 +1388,27 @@ int main() {
   }
   const std::set<std::string> known(FIXTURES.begin(), FIXTURES.end());
   if (on_disk != known) {
+    // Name the offending files, in both directions (#lzledgeragreementaudit).
+    // "the fixture set drifted" over a 21-entry corpus is a diff the reader has
+    // to compute by hand, and the whole point of this guard is that it fires on
+    // a corpus someone else grew.
     std::cout << "FAIL: reactive-graph fixture set drifted; every fixture must "
                  "be accounted for by this runner"
               << std::endl;
+    for (const auto& file : on_disk) {
+      if (known.count(file) == 0) {
+        std::cout << "  ON DISK but not in FIXTURES: " << file
+                  << " — add it to FIXTURES (and to SUPPORTED_OPS/SUPPORTED_SHAPES, or to "
+                     "EXPECTED_UNSUPPORTED with a reason) so it cannot go unrun"
+                  << std::endl;
+      }
+    }
+    for (const auto& file : known) {
+      if (on_disk.count(file) == 0) {
+        std::cout << "  in FIXTURES but NOT ON DISK: " << file
+                  << " — renamed or removed upstream; update FIXTURES" << std::endl;
+      }
+    }
     return 1;
   }
 

@@ -262,8 +262,17 @@ static void replay(const std::string& name) {
   const JsonPtr fixture = parse_json(text);
   REQUIRE(fixture->is_object(), "fixture root is not an object");
 
+  // Name the fixture AND the kind actually read (#lzledgeragreementaudit). A
+  // bare "fixture is not a StateChart corpus" over eight replays says neither
+  // which file carries the unrecognised kind nor what that kind was.
   const Json* kind = fixture->find("kind");
-  REQUIRE(kind != nullptr && kind->str == "StateChart", "fixture is not a StateChart corpus");
+  REQUIRE(kind != nullptr && kind->type == Json::Type::String && kind->str == "StateChart",
+          std::string(kArea) + "/" + name + ": unrecognised fixture kind " +
+              (kind == nullptr                    ? "<absent>"
+               : kind->type == Json::Type::String ? "'" + kind->str + "'"
+                                                  : "<not a string>") +
+              " — this runner replays only kind 'StateChart'. A corpus fixture carrying a new "
+              "kind needs a replay arm here before it can be replayed; never widen this to a skip");
 
   Context ctx;
   StateChart chart(ctx, build_chart(fixture->find("chart")));
@@ -348,8 +357,23 @@ int main() {
   std::vector<std::string> known = kFixtures;
   known.push_back("malformed_rejected.json");
   std::sort(known.begin(), known.end());
-  REQUIRE(on_disk == known, "the statechart corpus on disk does not match this runner's fixture "
-                            "list — a fixture was added or renamed upstream");
+  // Name the offending files, in both directions (#lzledgeragreementaudit).
+  // This guard exists to fire on a corpus somebody else grew, and "the set does
+  // not match" leaves that reader diffing two lists by hand.
+  if (on_disk != known) {
+    std::string detail;
+    for (const auto& file : on_disk)
+      if (!std::binary_search(known.begin(), known.end(), file))
+        detail += "\n  ON DISK but not in kFixtures: " + file +
+                  " — add it to kFixtures so it cannot go unrun";
+    for (const auto& file : known)
+      if (!std::binary_search(on_disk.begin(), on_disk.end(), file))
+        detail += "\n  in kFixtures but NOT ON DISK: " + file +
+                  " — renamed or removed upstream; update kFixtures";
+    REQUIRE(false, "the statechart corpus on disk does not match this runner's fixture list — a "
+                   "fixture was added or renamed upstream" +
+                       detail);
+  }
 
   for (const auto& name : kFixtures)
     replay(name);
