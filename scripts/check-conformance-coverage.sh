@@ -199,8 +199,17 @@ excuse_scenario() {
 # held back for are now published (lazily-spec f3246a1, #lzspecforkclockfixture),
 # so CI's clone carries them and they are guaranteed rather than local-only.
 #
+# 146 -> 147: textcrdt_convergence.json gained
+# gc_keeps_a_tombstone_that_is_still_a_left_origin (lazily-spec 34caf9c,
+# #lzspecgcreferencedtombstone) — an INTERIOR delete, so the survivor still
+# names the tombstone as its left origin and a conservative collector must take
+# 0. The pre-existing gc scenario deletes the LAST character, so nothing
+# referenced its tombstone and a collector that ignored origins entirely stayed
+# green; the new scenario is the one that bites. It is published, so CI's clone
+# carries it and this binding replays it with no runner change.
+#
 # Raise this when replays are added; NEVER lower it to make a red build green.
-MIN_SCENARIOS="${MIN_SCENARIOS:-146}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-147}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
