@@ -179,15 +179,19 @@ excuse_scenario() {
 # Without it a ledger that stopped recording entirely would leave the
 # declared-vs-replayed comparison vacuously satisfied on both sides.
 #
-# The suite replays 137. The floor sat at 83 while the run replayed 107, so a
+# The suite replays 146. The floor sat at 83 while the run replayed 107, so a
 # quarter of the ledger could have stopped recording without this check noticing
 # — a slack floor is a floor that has stopped guarding. Pulled up to the actual
-# figure, matching how MIN_FIXTURES is kept. The current +19 comes from converting
-# multi_epoch_delta.json's two scenarios, outbox_store_protocol.json's four,
-# four reliable-sync fixture families' ten, and familysync's three scenarios
-# from hand transcriptions/excuses into actual fixture-driven replays.
+# figure, matching how MIN_FIXTURES is kept. The +19 that took it to 137 came
+# from converting multi_epoch_delta.json's two scenarios, outbox_store_protocol
+# .json's four, four reliable-sync fixture families' ten, and familysync's three
+# scenarios from hand transcriptions/excuses into actual fixture-driven replays.
+# The +9 that takes it to 146 is corpus growth this binding already replays with
+# no runner change — most recently seqcrdt_convergence.json's two fork-clock
+# scenarios (`fork_carries_the_clock_so_a_backwards_skewed_write_survives`,
+# `fork_stamps_with_its_own_peer_so_equal_wall_edits_converge`, #lzzigforkhlcpeer).
 # Raise this when replays are added; NEVER lower it to make a red build green.
-MIN_SCENARIOS="${MIN_SCENARIOS:-137}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-146}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
