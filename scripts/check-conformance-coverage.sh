@@ -192,11 +192,15 @@ excuse_scenario() {
 # The floor tracks the corpus CI ACTUALLY GETS: CI clones lazily-spec at its
 # published main, so a scenario that exists only in a local sibling checkout
 # cannot be part of the floor. A tree carrying unpublished spec work replays
-# MORE than 144 and still passes — the check is a minimum. Raise this once the
-# scenarios land upstream, never to match a working tree.
+# MORE than the floor and still passes — the check is a minimum. Raise this once
+# the scenarios land upstream, never to match a working tree.
+#
+# 144 -> 146: the two SeqCrdt fork-clock scenarios this floor was deliberately
+# held back for are now published (lazily-spec f3246a1, #lzspecforkclockfixture),
+# so CI's clone carries them and they are guaranteed rather than local-only.
 #
 # Raise this when replays are added; NEVER lower it to make a red build green.
-MIN_SCENARIOS="${MIN_SCENARIOS:-144}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-146}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
