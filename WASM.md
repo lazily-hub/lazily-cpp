@@ -89,7 +89,7 @@ guard keeps them apart.
 | `egress` | 4 | — | — | not on wasm — lazily-cpp has no egress runner in ANY target, native included — a binding gap, not a wasm limit |
 | `familysync` | 1 | — | 1 | needs -pthread |
 | `ingress` | 8 | — | 8 | needs -pthread |
-| `lossless-tree` | 9 | 9 | — |  |
+| `lossless-tree` | 11 | 11 | — |  |
 | `materialization` | 3 | 3 | 2 | split across both tiers |
 | `membership` | 1 | 1 | — |  |
 | `message-passing` | 8 | 8 | — |  |
@@ -106,7 +106,7 @@ guard keeps them apart.
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **150** | **89** | **46** | |
+| **total** | **152** | **91** | **46** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits
