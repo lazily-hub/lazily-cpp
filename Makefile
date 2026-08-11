@@ -11,7 +11,7 @@ SHELL := /bin/bash
 
 .PHONY: all configure build test test-interop-peer check fmt fmt-fix tidy clean \
 conformance conformance-coverage assertion-ordering-check bench ci-reach \
-wasm wasm-core wasm-threaded wasm-matrix wasm-bench
+wasm wasm-core wasm-threaded wasm-matrix wasm-bench wasm-corpus-column
 
 BUILD_DIR ?= build
 
@@ -104,11 +104,20 @@ tidy:
 clean:
 	rm -rf $(BUILD_DIR)
 
+# The corpus-derivable half of the WASM.md matrix audit (#lzcppwasmguardlocal).
+# Needs no emsdk, no wasm build, and no tier manifest, so it runs here rather
+# than only in the wasm job: the Corpus column and the family row set are
+# functions of ../lazily-spec/conformance alone. 9b0ff08 passed `make check` and
+# both native CI jobs and still landed red on the matrix; this is that failure
+# made reachable locally. The per-tier columns stay in `make wasm`.
+wasm-corpus-column:
+	./scripts/check-wasm-corpus-column.sh
+
 # Full local gate — run before committing.
 assertion-ordering-check:
 	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding cpp --root .
 
-check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check
+check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check wasm-corpus-column
 	@echo "lazily-cpp: check OK"
 
 # ── Emscripten/wasm32 (`#lzcppwasm`) ───────────────────────────────────────

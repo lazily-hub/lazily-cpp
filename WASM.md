@@ -76,6 +76,18 @@ carry (POSIX shared memory, file-backed storage) and a family lazily-cpp does no
 replay in **any** target, native included. Those are different facts and the
 guard keeps them apart.
 
+The table is audited at **two rungs**, because half of it needs no toolchain.
+The `Corpus` column and the family row set are functions of
+`../lazily-spec/conformance` alone, so `scripts/check-wasm-corpus-column.sh`
+audits them from `make check` with no emsdk, no wasm build, and no manifest —
+that rung exists because a corpus change once passed `make check` and both
+native CI jobs and still reddened main on this table (`#lzcppwasmguardlocal`).
+The per-tier columns, their notes, the absence ledger, and the fixture floors
+are only knowable from a run that happened, so `scripts/check-wasm-tiers.sh`
+remains the full-fidelity gate in the `wasm` job. The local rung shares that
+script's counting and row-rendering code and prints what it did **not** audit,
+so its OK can never be mistaken for a whole-matrix verdict.
+
 <!-- wasm-matrix:start -->
 | Family | Corpus | wasm core | wasm threaded | Note |
 |---|---:|---:|---:|---|

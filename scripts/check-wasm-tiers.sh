@@ -32,15 +32,17 @@
 
 set -euo pipefail
 
-# Deterministic collation. `sort` orders `(root)` differently under a UTF-8
-# locale than under C, so without this the generated row order depends on the
-# machine and the committed table mismatches on a runner while matching locally.
-export LC_ALL=C
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-conformance_dir="${LAZILY_SPEC_CONFORMANCE_DIR:-$repo_root/../lazily-spec/conformance}"
+# Corpus counting, row rendering, the markers, and LC_ALL=C live in the shared
+# library so this generator and the toolchain-free rung in `make check`
+# (scripts/check-wasm-corpus-column.sh) cannot disagree about what a Corpus cell
+# says (`#lzcppwasmguardlocal`).
+# shellcheck source=lib/wasm-matrix.sh
+source "$repo_root/scripts/lib/wasm-matrix.sh"
+
+conformance_dir="$(wasm_corpus_dir "$repo_root")"
 tier_conf="$repo_root/wasm-tiers.conf"
 wasm_md="$repo_root/WASM.md"
 
@@ -153,11 +155,11 @@ while read -r f; do [[ -n "$f" ]] && CORE["$(family_of "$f")"]=$(( ${CORE["$(fam
 while read -r f; do [[ -n "$f" ]] && THREADED["$(family_of "$f")"]=$(( ${THREADED["$(family_of "$f")"]:-0} + 1 )); done < <(fixtures_of "$threaded_manifest")
 
 # Every family the canonical corpus carries, so a family nobody replays anywhere
-# still appears as a row rather than vanishing from the table.
-while read -r d; do
-  CORPUS["$d"]=$(find "$conformance_dir/$d" -name '*.json' | wc -l)
-done < <(find "$conformance_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
-CORPUS["(root)"]=$(find "$conformance_dir" -maxdepth 1 -name '*.json' | wc -l)
+# still appears as a row rather than vanishing from the table. Counted through
+# the shared library — the same call the local corpus-column rung makes.
+while IFS=$'\t' read -r d n; do
+  CORPUS["$d"]="$n"
+done < <(wasm_corpus_counts "$conformance_dir")
 
 declare -A REASON
 for entry in "${WASM_ABSENT_REASONS[@]}"; do
@@ -204,16 +206,19 @@ generate_matrix() {
     elif (( t > 0 )); then
       note="needs -pthread"
     fi
-    printf '| `%s` | %d | %s | %s | %s |\n' "$fam" "$corp" \
+    # The family + Corpus cells come from the shared renderer, so the local rung
+    # compares committed rows against the very bytes this generator emits.
+    printf '%s %s | %s | %s |\n' "$(wasm_matrix_corpus_cells "$fam" "$corp")" \
       "$( ((c>0)) && echo "$c" || echo '—')" \
       "$( ((t>0)) && echo "$t" || echo '—')" "$note"
     total_corpus=$((total_corpus+corp)); total_core=$((total_core+c)); total_thr=$((total_thr+t))
   done
-  printf '| **total** | **%d** | **%d** | **%d** | |\n' "$total_corpus" "$total_core" "$total_thr"
+  printf '%s **%d** | **%d** | |\n' "$(wasm_matrix_total_corpus_cells "$total_corpus")" \
+    "$total_core" "$total_thr"
 }
 
-start_marker='<!-- wasm-matrix:start -->'
-end_marker='<!-- wasm-matrix:end -->'
+start_marker="$WASM_MATRIX_START_MARKER"
+end_marker="$WASM_MATRIX_END_MARKER"
 
 if [[ ! -f "$wasm_md" ]]; then
   fail "WASM.md not found at '$wasm_md'"
@@ -225,8 +230,7 @@ if ! grep -qF "$start_marker" "$wasm_md" || ! grep -qF "$end_marker" "$wasm_md";
 fi
 
 generated="$(generate_matrix)"
-committed="$(awk -v s="$start_marker" -v e="$end_marker" \
-  'index($0,s){f=1;next} index($0,e){f=0} f' "$wasm_md")"
+committed="$(wasm_matrix_committed_body "$wasm_md")"
 
 if [[ "$write_mode" == "1" ]]; then
   tmp="$(mktemp)"

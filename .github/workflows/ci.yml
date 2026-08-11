@@ -146,6 +146,25 @@ jobs:
       - name: Assertion observation ordering (#lzassertordering)
         run: python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding cpp --root .
 
+      # The corpus-derivable half of the WASM.md matrix audit
+      # (#lzcppwasmguardlocal). The full audit needs the emsdk manifests and so
+      # lives in the `wasm` job below; that made the matrix unreachable from
+      # `make check` and from this job, and 9b0ff08 proved the gap by passing
+      # both and landing red on the matrix. The Corpus column and the family row
+      # set need no toolchain, so they are gated here too — this job clones the
+      # corpus, which is the only input. It is a SUBSET verdict by construction
+      # and prints what it did not audit; the wasm job stays the full-fidelity
+      # gate.
+      - name: WASM.md corpus column + row set (#lzcppwasmguardlocal)
+        shell: bash
+        run: |
+          out=$(./scripts/check-wasm-corpus-column.sh 2>&1) || { echo "$out"; echo "::error::the WASM.md matrix is stale against the canonical corpus"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q "wasm corpus-column guard: OK" || {
+            echo "::error::the corpus-column guard exited 0 without reaching its verdict"
+            exit 1
+          }
+
       # The gate that keeps every step above honest (#lzcheckcireachguard). It
       # compares `make check`'s prerequisite closure against the run: bodies in
       # this file and fails on any target CI does not reach. Comments inside run:
