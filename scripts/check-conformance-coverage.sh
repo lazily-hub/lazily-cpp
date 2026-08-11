@@ -47,6 +47,311 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="${1:-$repo_root/build/conformance-fixtures-loaded.txt}"
 conformance_dir="${LAZILY_SPEC_CONFORMANCE_DIR:-$repo_root/../lazily-spec/conformance}"
 
+# ── corpus-root source hygiene (#lzcorpusrootguards) ───────────────────────
+#
+# LAZILY_SPEC_CONFORMANCE_DIR only redirects reads that go THROUGH the seam.
+# lazily-cpp measured clean on that count — 24/24 areas reddened when the
+# override was pointed at a scratch corpus, because every read funnels through
+# `spec_conformance_dir()` in tests/test_spec_fixture.hpp, which consults getenv
+# before falling back to the compile-time macro. Sibling bindings were not:
+# lazily-zig moved 2 of 14 sites and lazily-rs 0 of 25, and both were SILENT,
+# because a runner reading the default corpus while believing it was redirected
+# is green either way.
+#
+# This binding already has the strongest structural guard of the family, and it
+# is not a text scan: tests/test_spec_fixture.hpp #errors when the macro is
+# undefined, so a conformance runner that forgets to register in
+# LAZILY_SPEC_CONFORMANCE_TESTS cannot even compile. That guard has exactly one
+# hole — it only reaches translation units that INCLUDE the seam header. A
+# source that spells the root itself and never touches the seam builds clean and
+# reads the default corpus no matter what the override says.
+#
+# So this rung scans SOURCES, not the manifest, for anyone spelling the root:
+#
+#   * single literal      "../lazily-spec/conformance"  (matched on the
+#     `lazily-spec/conformance` FRAGMENT, never a fixed count of `../` — the
+#     CMake define legitimately spells it with two)
+#   * joined segments     path("..") / "lazily-spec" / "conformance"
+#   * adjacent literals   "../lazily-spec" "/conformance"   — C++ concatenates
+#     these at translation, and it is the form that defeated lazily-go's and
+#     lazily-js's guards and lazily-dart's first draft. Literals are therefore
+#     compared as a STREAM: each one is re-joined with the next few under both
+#     the `/` and the empty separator before the fragment is looked for.
+#
+# Comments are stripped first, in both languages — some twenty headers and
+# runners legitimately quote the corpus path while explaining what they replay,
+# and every one of those citations is prose. STRING LITERALS ARE NOT EXEMPT,
+# including diagnostic ones: the scan cannot tell a message from a path, so the
+# rule is that prose belongs in a comment. That costs nothing today —
+# require_spec_checkout_or_skip's clone hint spells only `../lazily-spec`, not
+# the fragment — and it keeps the rule stateable in one sentence.
+#
+# The allowlist is three entries and each is load-bearing except the seam, which
+# is listed as a declaration rather than a necessity: tests/CMakeLists.txt:398
+# and tests/wasm.cmake:36 DO spell the root (verified — both fail the scan when
+# renamed out of the allowlist), while the seam header currently does not. The
+# seam stays listed because it is the one file that is *entitled* to.
+#
+# It runs BEFORE the missing-corpus SKIP below on purpose. A source-hygiene scan
+# needs no corpus, and behind the skip a machine without the sibling checkout
+# would sail past it — which is how lazily-gd first mis-placed the same rung.
+source_scan_root="${LAZILY_SOURCE_SCAN_ROOT:-$repo_root}"
+if ! python3 - "$source_scan_root" <<'CORPUS_ROOT_SCAN'
+import os
+import re
+import subprocess
+import sys
+
+root = os.path.abspath(sys.argv[1])
+FRAGMENT = "lazily-spec/conformance"
+
+# The read seam, plus the two build files that legitimately DEFINE the macro it
+# falls back to. Nothing else may spell the root.
+ALLOWED = {
+    "tests/test_spec_fixture.hpp",
+    "tests/CMakeLists.txt",
+    "tests/wasm.cmake",
+}
+
+CPP_EXT = (".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h", ".ipp")
+CMAKE_NAMES = ("CMakeLists.txt",)
+CMAKE_EXT = (".cmake",)
+SKIP_DIRS = {
+    ".git", "build", "node_modules", "_deps", "third_party",
+    "cmake-build-debug", "cmake-build-release",
+}
+
+# Positive-evidence floor, same discipline as MIN_FIXTURES above: a scan that
+# quietly stopped finding sources reports OK on every rung it no longer reaches.
+MIN_SCANNED = int(os.environ.get("MIN_SCANNED_SOURCES", "100"))
+
+# How many consecutive literals to re-join when hunting the split forms. A path
+# assembled from more pieces than this is not something this guard pretends to
+# catch; say so rather than implying total reach.
+WINDOW = 8
+
+RAW_STRING = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\\t\n]{0,16})\(')
+CMAKE_BRACKET_COMMENT = re.compile(r"#\[(=*)\[")
+
+
+def collapse(text):
+    """`a//b` and `a/b` name the same path; normalize before matching."""
+    return re.sub(r"/{2,}", "/", text)
+
+
+def cpp_literals(text):
+    """(line, contents) of every string literal, comments and char literals gone."""
+    lits = []
+    i, n, line = 0, len(text), 1
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            line += 1
+            i += 1
+            continue
+        if ch in "RuUL":
+            m = RAW_STRING.match(text, i)
+            if m:
+                closer = ")" + m.group(1) + '"'
+                start = m.end()
+                end = text.find(closer, start)
+                if end < 0:
+                    end = n
+                lits.append((line, text[start:end]))
+                line += text.count("\n", i, min(end + len(closer), n))
+                i = end + len(closer)
+                continue
+        if ch == '"':
+            j, buf = i + 1, []
+            while j < n and text[j] not in ('"', "\n"):
+                if text[j] == "\\":
+                    buf.append(text[j:j + 2])
+                    j += 2
+                    continue
+                buf.append(text[j])
+                j += 1
+            lits.append((line, "".join(buf)))
+            i = j + 1
+            continue
+        # A `'` after an identifier/digit character is a C++14 digit separator
+        # (1'000'000), not a character literal; treating it as one would swallow
+        # the text up to the next quote and blind the scan to whatever is there.
+        if ch == "'" and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+            j = i + 1
+            while j < n and text[j] not in ("'", "\n"):
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            end = n if j < 0 else j + 2
+            line += text.count("\n", i, end)
+            i = end
+            continue
+        i += 1
+    return lits
+
+
+def cmake_scan(text):
+    """(comment-stripped text, literals). CMake takes unquoted arguments, so the
+    whole stripped body is checked, not only the quoted pieces."""
+    out, lits = [], []
+    i, n, line = 0, len(text), 1
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            out.append("\n")
+            line += 1
+            i += 1
+            continue
+        if ch == "#":
+            m = CMAKE_BRACKET_COMMENT.match(text, i)
+            if m:
+                closer = "]" + m.group(1) + "]"
+                end = text.find(closer, m.end())
+                end = n if end < 0 else end + len(closer)
+            else:
+                end = text.find("\n", i)
+                end = n if end < 0 else end
+            out.append("\n" * text.count("\n", i, end))
+            line += text.count("\n", i, end)
+            i = end
+            continue
+        if ch == '"':
+            j, buf = i + 1, []
+            while j < n and text[j] != '"':
+                if text[j] == "\\":
+                    buf.append(text[j:j + 2])
+                    j += 2
+                    continue
+                if text[j] == "\n":
+                    line += 1
+                buf.append(text[j])
+                j += 1
+            body = "".join(buf)
+            lits.append((line, body))
+            out.append(body)
+            i = j + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), lits
+
+
+def joined_hit(lits):
+    """First (line) at which a run of up to WINDOW literals spells the fragment
+    under either the path-separator or the adjacent-concatenation join."""
+    for k in range(len(lits)):
+        window = [c for _, c in lits[k:k + WINDOW]]
+        for sep in ("/", ""):
+            if FRAGMENT in collapse(sep.join(window)):
+                return lits[k][0]
+    return None
+
+
+def discover(base):
+    files = []
+    for flags in (["--cached"], ["--others", "--exclude-standard"]):
+        try:
+            proc = subprocess.run(
+                ["git", "-C", base, "ls-files", "-z"] + flags,
+                capture_output=True,
+            )
+        except OSError:
+            files = []
+            break
+        if proc.returncode != 0:
+            files = []
+            break
+        files += [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+    if files:
+        return files
+    walked = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            walked.append(os.path.relpath(os.path.join(dirpath, name), base))
+    return walked
+
+
+scanned = 0
+violations = []
+for rel in sorted(set(discover(root))):
+    base = os.path.basename(rel)
+    is_cpp = rel.endswith(CPP_EXT)
+    is_cmake = base in CMAKE_NAMES or rel.endswith(CMAKE_EXT)
+    if not (is_cpp or is_cmake):
+        continue
+    if rel in ALLOWED:
+        continue
+    path = os.path.join(root, rel)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        continue
+    scanned += 1
+    if is_cpp:
+        hit = joined_hit(cpp_literals(text))
+        if hit is not None:
+            violations.append((rel, hit))
+        continue
+    stripped, lits = cmake_scan(text)
+    if FRAGMENT in collapse(stripped):
+        idx = stripped.find(FRAGMENT)
+        line = stripped.count("\n", 0, idx) + 1 if idx >= 0 else 0
+        violations.append((rel, line))
+        continue
+    hit = joined_hit(lits)
+    if hit is not None:
+        violations.append((rel, hit))
+
+if scanned == 0:
+    sys.stderr.write(
+        "ERROR: the corpus-root source scan examined NOTHING under '%s'.\n"
+        "       Zero files is not a clean tree, it is a scan that reached nothing —\n"
+        "       exactly the vacuous pass this rung exists to refuse.\n" % root
+    )
+    sys.exit(1)
+
+if scanned < MIN_SCANNED:
+    sys.stderr.write(
+        "ERROR: the corpus-root source scan examined only %d file(s) under '%s',\n"
+        "       expected >= %d. Discovery narrowed; the rungs it no longer reaches\n"
+        "       would report OK forever. Do not lower MIN_SCANNED_SOURCES to fix this.\n"
+        % (scanned, root, MIN_SCANNED)
+    )
+    sys.exit(1)
+
+if violations:
+    for rel, line in violations:
+        sys.stderr.write(
+            "ERROR: %s:%d spells the canonical corpus root itself.\n" % (rel, line)
+        )
+    sys.stderr.write(
+        "       LAZILY_SPEC_CONFORMANCE_DIR cannot redirect a read that never goes\n"
+        "       through the seam, and such a translation unit does not include\n"
+        "       tests/test_spec_fixture.hpp, so its #error cannot see it either. The\n"
+        "       runner would replay the DEFAULT corpus while believing it was\n"
+        "       redirected, and stay green either way. Read fixtures through\n"
+        "       lazily_test::spec_fixture_text (#lzcorpusrootguards).\n"
+    )
+    sys.exit(1)
+
+print(
+    "corpus-root source hygiene OK: %d source file(s) scanned, none spells "
+    "'%s' outside the seam" % (scanned, FRAGMENT)
+)
+CORPUS_ROOT_SCAN
+then
+  echo "conformance coverage FAILED: corpus-root source hygiene" >&2
+  exit 1
+fi
+
 # Absence of the sibling checkout is a clean SKIP, consistent with the suites
 # themselves (CTest SKIP_RETURN_CODE 77 via require_spec_checkout_or_skip). It is
 # NOT a pass: nothing was verified and the message says so.
