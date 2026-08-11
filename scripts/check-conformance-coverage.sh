@@ -363,7 +363,7 @@ if [[ ! -d "$conformance_dir" ]]; then
   exit 0
 fi
 
-# Minimum total DISTINCT fixtures replayed. EXACT: 137 is what the suite really
+# Minimum total DISTINCT fixtures replayed. EXACT: 139 is what the suite really
 # replays, with no margin. NEVER lower it to make a red build green — a drop
 # means a replay stopped running, and that is the finding, not the floor.
 #
@@ -377,9 +377,15 @@ fi
 # arithmetic was written to prevent. MIN_SCENARIOS below was pulled up to its
 # actual figure for the same reason; this floor is now kept the same way.
 #
-# Confirmed by CI run 31347405556 and a local green `make check`. Verified
-# exact: 138 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-137}"
+# 137 -> 139: lazily-spec 39df4b3 (#lzspecoutoforderfixtures) added
+# lossless-tree/apply_update_advances_counter.json and
+# lossless-tree/out_of_order_delivery_buffers.json, and
+# tests/test_lossless_tree_conformance.cpp now replays both. They are published,
+# so CI's clone carries them. Set to what the guard REPORTED after the change,
+# not to 137+2 — those happen to agree here only because nothing else moved.
+#
+# Confirmed by a local green `make check`. Verified exact: 140 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-139}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -542,10 +548,20 @@ excuse_scenario() {
 # NEVER lower it to make a red build green. When replays are added, set this to
 # the number the guard REPORTS afterwards — never the old value plus however
 # many you added, which is how MIN_FIXTURES above drifted ten below reality
-# (#lzscenariofloordrift). This floor is EXACT today: 147 declared, 147
-# replayed, confirmed by CI run 31347405556 and a local green `make check`, and
-# verified by watching 148 fail it.
-MIN_SCENARIOS="${MIN_SCENARIOS:-147}"
+# (#lzscenariofloordrift).
+#
+# 147 -> 149: lazily-spec 39df4b3 (#lzspecoutoforderfixtures) published the two
+# fixtures that pin `apply_update`'s counter and buffering rules —
+# apply_update_advances_counter.json's post_sync_write_outranks_ingested_stamp
+# and out_of_order_delivery_buffers.json's reversed_batch_drains_through_buffer,
+# one scenario each. They are the corpus-level form of this binding's
+# tests/test_lossless_tree_apply_update_{counter,buffering}.cpp, and replaying
+# the second one needed the `deliver.order` selector
+# (tests/test_lossless_tree_deliver.hpp).
+#
+# This floor is EXACT today: 149 declared, 149 replayed, confirmed by a local
+# green `make check`, and verified by watching 150 fail it.
+MIN_SCENARIOS="${MIN_SCENARIOS:-149}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2

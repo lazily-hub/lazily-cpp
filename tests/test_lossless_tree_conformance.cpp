@@ -2,9 +2,15 @@
 // A C++17 port of `lazily-rs/tests/lossless_tree_conformance.rs`, generically
 // replaying every `lazily-spec/conformance/lossless-tree/*.json` corpus through
 // `lazily::LosslessTreeCrdt`: build the seed tree on replica `a`, run a schedule
-// of ops / forks / anti-entropy syncs (full + non-contiguous `deliver`) across
-// named replicas, and assert exact rendered text, live-node counts, and
-// convergence — the lossless invariant `render(tree) == source_text`.
+// of ops / forks / anti-entropy syncs (full, plus partial `deliver` steps that
+// withhold ops with `only` or reorder them with `order`) across named replicas,
+// and assert exact rendered text, live-node counts, and convergence — the
+// lossless invariant `render(tree) == source_text`.
+//
+// A step may also mutate a replica AFTER a sync into it, so nothing here may
+// assume a fork -> concurrent-edit -> sync phase order or cache a replica's diff
+// or clock between steps: apply_update_advances_counter.json is exactly that
+// shape and is the first fixture in this corpus to take it.
 //
 // Fixture bytes are read from the sibling lazily-spec checkout;
 // REQUIRE_FIXTURES_LOADED asserts the exact distinct-fixture count so a green
@@ -20,6 +26,7 @@
 
 #include "test_assertion_keys.hpp"
 #include "test_json.hpp"
+#include "test_lossless_tree_deliver.hpp"
 #include "test_spec_fixture.hpp"
 
 using namespace lazily;
@@ -129,13 +136,14 @@ static void apply_step(World& w, const Json* step) {
     TreeUpdate update = w.replicas.at(from).diff(w.replicas.at(to).frontier());
     w.replicas.at(to).apply_update(update);
   } else if (const Json* deliver = step->find("deliver")) {
+    // Partial anti-entropy. The selector indexes into the SAME list `sync`
+    // computes — `from.diff(to.frontier())`, canonically ordered — and the
+    // selection is delivered in the listed sequence as one `apply_update` call.
+    // Contract and rationale: tests/test_lossless_tree_deliver.hpp.
     const std::string& from = deliver->find("from")->str;
     const std::string& to = deliver->find("to")->str;
     TreeUpdate full = w.replicas.at(from).diff(w.replicas.at(to).frontier());
-    TreeUpdate selected;
-    for (const auto& idx : deliver->find("only")->array)
-      selected.ops.push_back(full.ops.at(static_cast<size_t>(idx->as_int())));
-    w.replicas.at(to).apply_update(selected);
+    lazily_test::deliver_selection(full.ops, *deliver, w.replicas.at(to));
   } else if (const Json* on = step->find("on")) {
     apply_op(w, on->str, step);
   } else {
@@ -206,14 +214,24 @@ TEST(conformance_lossless_tree_all) {
       "token_trivia_preservation.json",
       "invalid_source_roundtrip.json",
       "concurrent_conflict_preserves_text.json",
+      // The two `apply_update` rules the corpus could not see until lazily-spec
+      // 39df4b3 (#lzspecoutoforderfixtures) — the corpus-level form of
+      // tests/test_lossless_tree_apply_update_{counter,buffering}.cpp, and of
+      // the two clauses fb9fc80 restored in this binding.
+      //
+      // `apply_update_advances_counter` mutates a replica AFTER a sync into it,
+      // which no earlier lossless-tree fixture does; `out_of_order_delivery_buffers`
+      // is the corpus's first `deliver.order` step.
+      "apply_update_advances_counter.json",
+      "out_of_order_delivery_buffers.json",
   };
   for (const char* f : fixtures)
     run_fixture(f, g_scenarios);
-  REQUIRE(g_scenarios >= 9, "expected at least one scenario per fixture");
+  REQUIRE(g_scenarios >= 11, "expected at least one scenario per fixture");
 }
 
 int main() {
-  REQUIRE_FIXTURES_LOADED(9);
+  REQUIRE_FIXTURES_LOADED(11);
   std::cout << "lazily-cpp lossless-tree conformance: " << test_passed << "/" << test_count
             << " passed (" << g_scenarios << " scenarios)" << std::endl;
   return test_passed == test_count ? 0 : 1;

@@ -388,6 +388,20 @@ target_link_libraries(test_lossless_tree_apply_update_buffering PRIVATE lazily)
 add_test(NAME lossless_tree_apply_update_buffering
          COMMAND test_lossless_tree_apply_update_buffering)
 
+# How a corpus `deliver` step's selector is INTERPRETED
+# (tests/test_lossless_tree_deliver.hpp). A fixture cannot assert on that: the
+# `order` sequence lazily-spec 39df4b3 introduced produces the same verdict under
+# a runner that re-sorts it, and a re-sorting runner was measured green on
+# out_of_order_delivery_buffers.json against a library with no dependency buffer.
+# So the sequence, the single apply_update call, and the two rejection arms
+# (out-of-range index, both/neither selector) are pinned directly. Same
+# registration reasoning as the two targets above: no fixture is read — every
+# step is written inline — so a bare add_test() is correct and the guard below
+# leaves it alone. #lzspecoutoforderfixtures
+add_executable(test_lossless_tree_deliver_order test_lossless_tree_deliver_order.cpp)
+target_link_libraries(test_lossless_tree_deliver_order PRIVATE lazily)
+add_test(NAME lossless_tree_deliver_order COMMAND test_lossless_tree_deliver_order)
+
 add_executable(test_command_conformance test_command_conformance.cpp)
 target_link_libraries(test_command_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(CommandConformance test_command_conformance)
