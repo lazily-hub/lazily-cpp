@@ -367,6 +367,27 @@ add_executable(test_lossless_tree_diff_order test_lossless_tree_diff_order.cpp)
 target_link_libraries(test_lossless_tree_diff_order PRIVATE lazily)
 add_test(NAME lossless_tree_diff_order COMMAND test_lossless_tree_diff_order)
 
+# `apply_update`'s two cross-binding guarantees, split into one target each so a
+# regression names which one broke: the Lamport counter advances past every
+# observed op, and an op whose dependency has not arrived is buffered and
+# retried. Neither is discriminated by the shared corpus -- no fixture makes a
+# local edit after receiving a higher-counter remote op, and the only fixture
+# that delivers a gap withholds siblings whose parents the receiver already
+# holds. Same registration reasoning as the diff-order test above: no fixture is
+# read, so a bare add_test() is correct and the guard below leaves them alone.
+# #lzcppapplyupdatelamport
+add_executable(test_lossless_tree_apply_update_counter
+               test_lossless_tree_apply_update_counter.cpp)
+target_link_libraries(test_lossless_tree_apply_update_counter PRIVATE lazily)
+add_test(NAME lossless_tree_apply_update_counter
+         COMMAND test_lossless_tree_apply_update_counter)
+
+add_executable(test_lossless_tree_apply_update_buffering
+               test_lossless_tree_apply_update_buffering.cpp)
+target_link_libraries(test_lossless_tree_apply_update_buffering PRIVATE lazily)
+add_test(NAME lossless_tree_apply_update_buffering
+         COMMAND test_lossless_tree_apply_update_buffering)
+
 add_executable(test_command_conformance test_command_conformance.cpp)
 target_link_libraries(test_command_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(CommandConformance test_command_conformance)

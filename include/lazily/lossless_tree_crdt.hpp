@@ -270,14 +270,22 @@ public:
     std::string head = text.substr(0, at_byte);
     std::string tail = text.substr(at_byte);
 
-    auto new_id = next_id();
+    // ONE id, used as both the op stamp and the tail node's identity — the same
+    // shape as lazily-rs (`let new = TreeNodeId(op_id)`). Minting two ids left
+    // the first one attached to no op at all, so it was a permanent hole in this
+    // replica's frontier; once `apply_update` gates a `LeafEdit` on
+    // `frontier.contains(prev)` (#lzcppapplyupdatelamport), an edit to the tail
+    // carried a `prev` no partner could ever hold and buffered forever. It also
+    // made the tail's `text_head` differ between the local and the applied path
+    // (`apply_op` has always used the op id there).
+    auto stamp = next_id();
+    auto new_id = stamp;
     auto parent = it->second.parent.value_or(kTreeRoot);
 
     // Re-seed head
     it->second.text = std::make_shared<TextCrdt>(peer_);
     it->second.text->insert_str(0, head);
     auto prev = it->second.text_head;
-    auto stamp = next_id();
     it->second.text_head = stamp;
 
     // Create tail node
@@ -290,7 +298,7 @@ public:
     tail_node.leaf_kind = it->second.leaf_kind;
     tail_node.text = std::make_shared<TextCrdt>(new_id.peer);
     tail_node.text->insert_str(0, tail);
-    tail_node.text_head = new_id;
+    tail_node.text_head = stamp;
     nodes_[new_id] = tail_node;
     children_[parent].push_back(new_id);
 
@@ -395,13 +403,41 @@ public:
     return update;
   }
 
+  // Apply a batch of remote ops. Idempotent (already-held ops are skipped) and
+  // order-tolerant (an op whose target/parent or `prev` has not arrived is
+  // buffered and retried). Advances the Lamport counter past every observed op.
+  //
+  // BOTH of those clauses were missing until #lzcppapplyupdatelamport, and the
+  // shared corpus discriminated neither:
+  //
+  // * The counter never advanced, so a replica that received a higher-counter
+  //   remote op and then edited locally minted an id at or below one it already
+  //   held — colliding with it, or sorting before it and losing every LWW
+  //   comparison (`Reorder`'s `op.id > sort_stamp`, `Tombstone`'s smaller-id
+  //   wins). No fixture makes a local edit AFTER receiving a higher-counter
+  //   remote op, so nothing caught it.
+  // * `buffered_` was declared and never touched, so an op whose parent had not
+  //   arrived was applied against a missing node and silently DROPPED by
+  //   `apply_op`'s existence guards — never retried, gone from the tree while
+  //   `record` told the frontier it was held, so no later diff re-requested it.
+  //   `non_contiguous_anti_entropy.json` delivers a gap but every delivered op's
+  //   parent is already present, so nothing caught that either.
+  //
+  // The contract is lazily-spec docs/lossless-tree-crdt.md ("the counter advances
+  // past every observed op"; "`apply_update` is idempotent … and buffers ops whose
+  // parent/target or `prev` has not arrived yet"), and lazily-rs, -go, -py, -zig
+  // and -js all implement exactly this shape. tests/test_lossless_tree_apply_update.cpp
+  // pins both directly, since the corpus cannot.
   void apply_update(const TreeUpdate& update) {
     for (auto& op : update.ops) {
+      // Advance BEFORE the idempotence skip: an op we already hold still tells
+      // us a peer's clock ran that far, and the four reference bindings all
+      // advance unconditionally.
+      if (op.id.counter > counter_) counter_ = op.id.counter;
       if (frontier_.contains(op.id)) continue; // already known — idempotent
-      apply_op(op);
-      record(op); // observe into the frontier AND append to the log so this
-                  // replica can forward the op transitively (anti-entropy).
+      buffered_.push_back(op);
     }
+    drain_buffered();
   }
 
   // Observe a locally-produced or newly-applied op into this replica's frontier
@@ -419,6 +455,8 @@ public:
     clone.children_ = children_;
     clone.log_ = log_;
     clone.frontier_ = frontier_;
+    clone.buffered_ = buffered_; // matches lazily-rs `fork`: undelivered
+                                 // dependencies survive the fork.
     return clone;
   }
 
@@ -435,9 +473,58 @@ private:
   std::unordered_map<OpId, std::vector<OpId>> children_;
   std::vector<TreeOp> log_;
   TreeVersionFrontier frontier_;
+  // Ops received whose dependencies have not arrived yet. Drained (and retried)
+  // by `drain_buffered`; an op leaves this vector only by being applied.
   std::vector<TreeOp> buffered_;
 
   OpId next_id() { return {++counter_, peer_}; }
+
+  // Retry the buffer until a full pass applies nothing new. One pass can unblock
+  // ops earlier in the same pass (a parent delivered after its child), so the
+  // loop repeats rather than draining once.
+  void drain_buffered() {
+    for (;;) {
+      bool progressed = false;
+      std::vector<TreeOp> pending;
+      pending.swap(buffered_);
+      for (auto& op : pending) {
+        if (frontier_.contains(op.id)) continue;
+        if (dependencies_ready(op)) {
+          apply_op(op);
+          record(op); // observe into the frontier AND append to the log so this
+                      // replica can forward the op transitively (anti-entropy).
+          progressed = true;
+        } else {
+          buffered_.push_back(std::move(op));
+        }
+      }
+      if (!progressed) break;
+    }
+  }
+
+  // What an op needs present before `apply_op` can do anything but drop it.
+  // Split and merge reseed a leaf's text destructively, so per-leaf text ops form
+  // a causal chain: each carries the prior text-op id (`prev`) and waits for it.
+  bool dependencies_ready(const TreeOp& op) const {
+    if (auto* k = std::get_if<TreeOpCreateNode>(&op.kind)) {
+      return nodes_.count(k->parent) > 0;
+    }
+    if (auto* k = std::get_if<TreeOpTombstone>(&op.kind)) {
+      return nodes_.count(k->node) > 0;
+    }
+    if (auto* k = std::get_if<TreeOpReorder>(&op.kind)) {
+      return nodes_.count(k->node) > 0;
+    }
+    if (auto* k = std::get_if<TreeOpLeafEdit>(&op.kind)) {
+      return nodes_.count(k->node) > 0 && frontier_.contains(k->prev);
+    }
+    if (auto* k = std::get_if<TreeOpSplitLeaf>(&op.kind)) {
+      return nodes_.count(k->node) > 0 && frontier_.contains(k->prev);
+    }
+    auto& k = std::get<TreeOpMergeLeaves>(op.kind);
+    return nodes_.count(k.left) > 0 && nodes_.count(k.right) > 0 &&
+           frontier_.contains(k.prev_left) && frontier_.contains(k.prev_right);
+  }
 
   const TreeSortKey* find_right_sibling(const OpId& parent, const OpId* after) const {
     auto it = children_.find(parent);
