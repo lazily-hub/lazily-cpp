@@ -355,6 +355,18 @@ add_executable(test_lossless_tree_conformance test_lossless_tree_conformance.cpp
 target_link_libraries(test_lossless_tree_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(LosslessTreeConformance test_lossless_tree_conformance)
 
+# `diff` returns ops in canonical (counter, peer) order — a cross-binding
+# contract, because the shared corpus addresses the returned ops POSITIONALLY
+# (`deliver.only: [0, 2]` in non_contiguous_anti_entropy.json). Reversing or
+# deleting the sort leaves the corpus green, so the order needs a direct test.
+# Not a conformance suite: it reads no fixture and its include closure never
+# reaches the skip-or-require seam, so it registers with a bare add_test() and
+# the guard at the bottom of this file correctly leaves it alone.
+# #lzdifforderallbindings
+add_executable(test_lossless_tree_diff_order test_lossless_tree_diff_order.cpp)
+target_link_libraries(test_lossless_tree_diff_order PRIVATE lazily)
+add_test(NAME lossless_tree_diff_order COMMAND test_lossless_tree_diff_order)
+
 add_executable(test_command_conformance test_command_conformance.cpp)
 target_link_libraries(test_command_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(CommandConformance test_command_conformance)

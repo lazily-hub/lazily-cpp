@@ -368,6 +368,21 @@ public:
     return it->second.text->text();
   }
 
+  // Ops this replica holds that `their` frontier lacks, in canonical
+  // (counter, peer) order.
+  //
+  // The sort is a CROSS-BINDING CONTRACT, not a local tidiness choice. The
+  // shared corpus addresses the returned ops POSITIONALLY —
+  // `lossless-tree/non_contiguous_anti_entropy.json` says
+  // `deliver.only: [0, 2]`, which indexes into whatever `diff` returns — so the
+  // fixture only means the same thing in every binding while every binding
+  // returns the same order. lazily-rs, -py, -js, -go and -zig all sort here;
+  // lazily-cpp returned raw LOG order until #lzdifforderallbindings, and log
+  // order is arrival order: a remote op with a lower counter that arrives after
+  // a local op with a higher one is appended LAST by `record` while sorting
+  // EARLIER. The corpus cannot catch the difference (applying an update is
+  // order-tolerant by design, and two indices select the same SET either way),
+  // so tests/test_lossless_tree_diff_order.cpp pins it directly.
   TreeUpdate diff(const TreeVersionFrontier& their) const {
     TreeUpdate update;
     for (auto& op : log_) {
@@ -375,6 +390,8 @@ public:
         update.ops.push_back(op);
       }
     }
+    std::sort(update.ops.begin(), update.ops.end(),
+              [](const TreeOp& a, const TreeOp& b) { return a.id.compare(b.id) < 0; });
     return update;
   }
 
