@@ -80,22 +80,19 @@ MIN_FIXTURES="${MIN_FIXTURES:-137}"
 # does not read at all would make this guard permanently red, and omitting one it
 # does read would let that runner vanish unnoticed — which is the whole point.
 #
-# Deliberately ABSENT, with reasons (open gaps, not oversights). `codec` left
-# this list in #lzcppjsoncodec and is now fully replayed: json_codec.hpp is the
-# `json` REFERENCE codec and msgpack_codec.hpp is the `msgpack` CROSS-LANGUAGE
-# BINARY DEFAULT (#lzcppmsgpackwire), so both halves of the frame-codec
-# obligation go THROUGH a real codec and neither is named in KNOWN_UNCOVERED:
-#   signaling  (1)  anti_spoof_session.json IS replayed by
-#                   test_signaling_conformance.cpp. frames.json is not: it needs
-#                   signaling wire serde, which this binding does not have.
-#   agent-doc  (2)  IPC wire snapshots of the agent-doc state projection — an
-#                   application schema carried on the IPC plane, not a
-#                   binding-level reactive concern.
-#   ipc        (1)  arena_blob.json locks the concrete 40-byte shared-memory
-#                   arena host layout. C++ implements an in-process arena with
-#                   the same descriptor semantics but not that mapped header.
-#                   The seven Snapshot/Delta fixtures are replayed by
-#                   test_ipc.cpp.
+# This list carried its complement as PROSE until #lzledgeragreementaudit: a
+# comment naming the areas deliberately left out, with reasons. That was the same
+# defect this script exists to catch, one level up. The completeness loop below
+# walks only the arrays, so an area in neither one is invisible to EVERY rung —
+# not replayed, not excused, not counted, not named. `egress` sat in exactly that
+# state with four fixtures: absent from this list, absent from KNOWN_UNCOVERED,
+# and absent even from the prose. Nothing here could have reported it, and the
+# guard printed OK. Every sibling binding names those four in KNOWN_UNCOVERED;
+# this one alone had no ledger entry to be stale.
+#
+# So the complement is now an ARRAY, checked in both directions against the
+# corpus and the manifest, and every fixture inside it is named in
+# KNOWN_UNCOVERED with a reason. A prose comment cannot be falsified by a run.
 REQUIRED_AREAS=(
 codec
 collections
@@ -116,25 +113,53 @@ lossless-tree
   reliable-sync
   resilience
   service
+  signaling
   statechart
   stdlib
   temporal
   windowing
 )
 
-# Fixtures inside a REQUIRED area that this binding does NOT yet replay, each
-# with the reason it is outstanding. This list is the honest ledger of the gap:
-# a fixture is either replayed or named here, never silently absent. Entries are
-# verified BOTH to still exist on disk and to still be unread, so neither a
-# fixture renamed/deleted upstream nor one this suite started replaying can rot
-# into a permanent excuse.
+# Areas this binding replays NOTHING from. The complement of REQUIRED_AREAS, and
+# the two together must cover the corpus exactly — see the partition check below.
+#
+# An entry here excuses the AREA from the "some fixture replayed" rung only. It
+# does NOT excuse the fixtures: each one is still named in KNOWN_UNCOVERED with
+# its own reason, so the stale-ledger arms keep verifying it exists upstream and
+# stays unread. An area is the unit of "no runner"; a fixture is the unit of the
+# claim.
+EXCUSED_AREAS=(
+  # IPC wire snapshots of the agent-doc state projection — an application schema
+  # carried on the IPC plane, not a binding-level reactive concern.
+  agent-doc
+  # Reactive egress is Rust-only; this binding has no egress replay runner.
+  egress
+  # The experimental protobuf-v1 generator pilot is Rust/Kotlin/TypeScript.
+  protobuf
+)
+
+# Fixtures inside a REQUIRED or EXCUSED area that this binding does NOT yet
+# replay, each with the reason it is outstanding. This list is the honest ledger
+# of the gap: a fixture is either replayed or named here, never silently absent.
+# Entries are verified BOTH to still exist on disk and to still be unread, so
+# neither a fixture renamed/deleted upstream nor one this suite started replaying
+# can rot into a permanent excuse.
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
+  # agent-doc — IPC wire snapshots of the agent-doc state projection, an
+  # application schema on the IPC plane rather than a binding-level concern.
+  "agent-doc/delta_agent_doc_state.json"
+  "agent-doc/snapshot_agent_doc_state.json"
   # Register CRDTs (LWW / MV / PnCounter + the CellCrdt projection bit) are
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
   "collections/registers_convergence.json"
+  # egress — reactive egress is Rust-only; there is no C++ egress replay runner.
+  "egress/egress_generation_fence.json"
+  "egress/egress_inflight_window.json"
+  "egress/egress_ordered_ack.json"
+  "egress/egress_retry_budget.json"
 # ipc — the C++ arena is an in-process host and does not implement the
 # canonical mapped 40-byte LZSH header asserted by this fixture.
 "arena_blob.json"
@@ -147,6 +172,10 @@ KNOWN_UNCOVERED=(
   "reliable-sync/liveness_lease_eviction.json"
   # The canonical journal-decoder trace has no C++ replay runner yet.
   "reliable-sync/outbox_journal_decode.json"
+  # signaling — anti_spoof_session.json IS replayed by
+  # test_signaling_conformance.cpp; frames.json needs signaling wire serde,
+  # which this binding does not have.
+  "signaling/frames.json"
 )
 
 # ── per-scenario ledger ────────────────────────────────────────────────────
@@ -257,6 +286,56 @@ status=1
 fi
 done
 
+# The two area arrays must PARTITION the corpus (#lzledgeragreementaudit). Every
+# other rung in this script iterates an array, so a corpus directory named in
+# neither is unreachable by all of them at once: its fixtures are never demanded,
+# never excused, and never counted, and the guard still prints OK. That is not a
+# hypothetical — `egress/` shipped four fixtures in exactly that state, and the
+# only thing that ever mentioned the omission was a prose comment no run could
+# falsify.
+#
+# Checked in both directions. A NEW upstream area fails closed here rather than
+# vanishing, and an array entry naming a directory the corpus no longer has fails
+# as stale. `ipc` is the one deliberate non-directory: its fixtures live at the
+# corpus root and are matched by name above, so it is exempt from the second arm.
+corpus_areas="$(cd "$conformance_dir" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)"
+while IFS= read -r area; do
+  [[ -n "$area" ]] || continue
+  listed=0
+  for known in "${REQUIRED_AREAS[@]}" "${EXCUSED_AREAS[@]}"; do
+    [[ "$known" == "$area" ]] && { listed=1; break; }
+  done
+  if (( listed == 0 )); then
+    echo "ERROR: conformance area '$area' is in neither REQUIRED_AREAS nor EXCUSED_AREAS." >&2
+    echo "       Every rung below walks those arrays, so this area's fixtures are invisible" >&2
+    echo "       to all of them — not replayed, not excused, not counted. Add it to" >&2
+    echo "       REQUIRED_AREAS once a runner opens it, or to EXCUSED_AREAS with a reason" >&2
+    echo "       and each of its fixtures in KNOWN_UNCOVERED." >&2
+    status=1
+  fi
+done <<< "$corpus_areas"
+
+for area in "${REQUIRED_AREAS[@]}" "${EXCUSED_AREAS[@]}"; do
+  [[ "$area" == "ipc" ]] && continue
+  if [[ ! -d "$conformance_dir/$area" ]]; then
+    echo "ERROR: area '$area' is listed here but is not in the canonical corpus." >&2
+    echo "       It was renamed or removed upstream — prune the entry." >&2
+    status=1
+  fi
+done
+
+# An EXCUSED area that DID replay something is a stale excuse, and it understates
+# coverage exactly the way a stale KNOWN_UNCOVERED entry does. Same both-directions
+# rule, same reason: an excuse nobody can falsify is not evidence.
+for area in "${EXCUSED_AREAS[@]}"; do
+  if grep -Eq "^${area}/" "$replayed"; then
+    echo "ERROR: EXCUSED_AREAS lists '$area', but the suite DID replay from it." >&2
+    echo "       Move it to REQUIRED_AREAS and prune its KNOWN_UNCOVERED entries so the" >&2
+    echo "       ledger stops claiming a gap this binding closed." >&2
+    status=1
+  fi
+done
+
 # Stale-ledger check, both directions. An excuse is only honest while the fixture
 # still EXISTS upstream and is still UNREAD by this suite:
 #
@@ -287,9 +366,12 @@ for excused in "${KNOWN_UNCOVERED[@]}"; do
   fi
 done
 
-# Completeness: every canonical fixture in a required area is replayed, or named
-# in KNOWN_UNCOVERED. This is the check that catches the corpus GROWING.
-for area in "${REQUIRED_AREAS[@]}"; do
+# Completeness: every canonical fixture in a required OR excused area is
+# replayed, or named in KNOWN_UNCOVERED. This is the check that catches the
+# corpus GROWING. Excused areas are walked too — "no runner for this area" is not
+# a licence to stop accounting for the fixtures in it, and the partition check
+# above is what makes this loop's reach equal to the corpus.
+for area in "${REQUIRED_AREAS[@]}" "${EXCUSED_AREAS[@]}"; do
 if [[ "$area" == "ipc" ]]; then
 fixture_ids="$(cd "$conformance_dir" &&
   find . -maxdepth 1 -type f \( -name 'arena_blob.json' -o -name 'snapshot_*.json' -o -name 'delta_*.json' \) \
@@ -387,6 +469,6 @@ if [[ -s "$unidentified_scenarios" ]]; then
 fi
 
 echo "conformance coverage OK: $count canonical fixtures replayed across ${#REQUIRED_AREAS[@]} areas" \
-     "(${#KNOWN_UNCOVERED[@]} fixtures listed as known-uncovered)"
+     "(${#EXCUSED_AREAS[@]} areas excused, ${#KNOWN_UNCOVERED[@]} fixtures listed as known-uncovered)"
 echo "scenario coverage OK: $scenario_count of $(wc -l < "$declared_scenarios" | tr -d ' ')" \
      "declared scenarios replayed (${#SCENARIO_EXCUSES[@]} excused)"
