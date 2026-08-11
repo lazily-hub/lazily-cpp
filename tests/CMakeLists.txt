@@ -26,21 +26,22 @@ endif()
 #
 # The suites below read fixtures from the sibling lazily-spec checkout rather
 # than from a copy inside this repo; the rationale, the path derivation, and the
-# absence-is-a-SKIP contract are documented at the LAZILY_SPEC_CONFORMANCE_DIR
+# absence-is-a-FAILURE contract are documented at the LAZILY_SPEC_CONFORMANCE_DIR
 # block further down, which this helper is the registration half of.
 #
-# Registration is ONE call, deliberately. Three things must be true of every
-# suite that reads the checkout — the corpus path is baked in, the test exists,
-# and ctest reads its exit-77 as SKIP — and they used to live in three separate
-# places: a target list, an `add_test()`, and a hand-maintained list of ctest
-# NAMES passed to `set_tests_properties(... SKIP_RETURN_CODE 77)`. The names
-# list drifted from the target list three separate times (four targets, then
-# three, then six), and each drift turned "no sibling checkout" from a skip into
-# a hard ctest FAILURE for those suites. The first two were repaired by editing
-# the list again, which is precisely what left a third instance possible. So the
-# list is gone: the three properties are inseparable now because there is one
-# place to state them. The guard at the bottom of this file closes the remaining
-# hole — a corpus reader registered with a bare `add_test()`.
+# Registration is ONE call, deliberately. Two things must be true of every suite
+# that reads the checkout — the corpus path is baked in, and the test exists —
+# and they used to live in three separate places: a target list, an
+# `add_test()`, and a hand-maintained list of ctest NAMES passed to
+# `set_tests_properties(... SKIP_RETURN_CODE 77)`. The names list drifted from
+# the target list three separate times (four targets, then three, then six). The
+# list is gone: the properties are inseparable now because there is one place to
+# state them. The guard at the bottom of this file closes the remaining hole — a
+# corpus reader registered with a bare `add_test()`.
+#
+# SKIP_RETURN_CODE 77 used to be the third property. It is gone too
+# (#lzcppsiblingskipvsfail): a missing corpus is now a hard failure from
+# `require_spec_checkout()`, so there is no 77 left to translate.
 set(LAZILY_SPEC_CONFORMANCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../../lazily-spec/conformance")
 
@@ -48,10 +49,9 @@ function(lazily_add_spec_conformance_test _ctest_name _target)
   target_compile_definitions(${_target} PRIVATE
     LAZILY_SPEC_CONFORMANCE_DIR="${LAZILY_SPEC_CONFORMANCE_DIR}")
   add_test(NAME ${_ctest_name} COMMAND ${_target})
-  # `require_spec_checkout_or_skip()` (tests/test_spec_fixture.hpp) exits 77 to
-  # mean SKIP. Without SKIP_RETURN_CODE, ctest reads that 77 as a FAILURE and an
-  # absent sibling checkout looks like a broken build instead of a skipped suite.
-  set_tests_properties(${_ctest_name} PROPERTIES SKIP_RETURN_CODE 77)
+  # No SKIP_RETURN_CODE. `require_spec_checkout()` (tests/test_spec_fixture.hpp)
+  # exits 1 on an absent corpus and ctest reports the FAILURE that is
+  # (#lzcppsiblingskipvsfail).
   set_property(GLOBAL APPEND PROPERTY LAZILY_SPEC_CONFORMANCE_TARGETS ${_target})
 endfunction()
 
@@ -430,25 +430,23 @@ lazily_add_spec_conformance_test(ReactiveGraphConformance test_reactive_graph_co
 # relative arrangement LAZILY_FORMAL_DIR above relies on. Nothing is absolute in
 # the source; CMake derives it from the source tree location.
 #
-# Absence is a SKIP (CTest exit 77) with an explicit message rather than a
-# silent pass. CI asserts the directory exists so a skip cannot go unnoticed
-# there, and each suite additionally asserts a positive distinct-fixture count.
-# Every suite above registers through lazily_add_spec_conformance_test(), which
-# states all three of those properties in one call. What used to stand here were
-# the two lists that stated them separately -- a list of TARGETS carrying the
-# compile define, and a list of ctest NAMES carrying SKIP_RETURN_CODE 77 -- and
-# the second drifted from the first three separate times. Each drift meant that
-# for the missed suites an absent sibling checkout was reported as a hard ctest
-# FAILURE rather than a skip, so a checkout without the sibling read as a broken
-# build. Twice that was repaired by editing the names list again; the third time
-# the lists were removed instead, which is why there is nothing to keep in sync
+# Absence is a hard FAILURE with an explicit message (#lzcppsiblingskipvsfail),
+# never a skip and never a silent pass; CI asserts the directory exists so the
+# missing input is named before a job spends time on it, and each suite
+# additionally asserts a positive distinct-fixture count. Every suite above
+# registers through lazily_add_spec_conformance_test(), which states those
+# properties in one call. What used to stand here were the two lists that stated
+# them separately -- a list of TARGETS carrying the compile define, and a list of
+# ctest NAMES carrying SKIP_RETURN_CODE 77 -- and the second drifted from the
+# first three separate times. That drift class is gone with the skip itself:
+# there is no 77 to translate any more, so there is nothing to keep in sync
 # below this point.
 #
 # The guard below covers the one case the helper cannot: a NEW corpus reader
 # wired up with a bare add_test(). Membership is derived from the SOURCES rather
 # than declared -- a target whose transitive local-include closure reaches
-# `require_spec_checkout_or_skip` reads the corpus by construction and must
-# therefore have been registered. Configure fails and names it when it was not.
+# `require_spec_checkout` reads the corpus by construction and must therefore
+# have been registered. Configure fails and names it when it was not.
 #
 # (tests/test_spec_fixture.hpp additionally #errors when LAZILY_SPEC_CONFORMANCE_DIR
 # is undefined, so an unregistered reader already fails to BUILD. That covers the
@@ -479,7 +477,7 @@ function(_lazily_target_reads_spec_corpus _target _out)
     # snapshot of the tree is a guard that stops guarding after the first edit.
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_file}")
     file(READ "${_file}" _text)
-    if(_text MATCHES "require_spec_checkout_or_skip")
+    if(_text MATCHES "require_spec_checkout")
       set(_reads TRUE)
     endif()
     # Follow local includes only ("..."); a system include cannot reach the seam.
@@ -515,13 +513,12 @@ if(_lazily_unregistered)
     "unregistered canonical-conformance runner(s):\n  "
     "${_lazily_unregistered_pretty}\n"
     "Each reads the sibling lazily-spec checkout through "
-    "require_spec_checkout_or_skip(), which exits 77 to mean SKIP. Added with a "
-    "bare add_test(), that 77 has no SKIP_RETURN_CODE behind it, so ctest "
-    "reports a FAILURE and a checkout without the sibling looks like a broken "
-    "build. Register with "
+    "require_spec_checkout(). Added with a bare add_test(), the corpus path is "
+    "never baked in, so the runner falls back to whatever "
+    "LAZILY_SPEC_CONFORMANCE_DIR the seam header was compiled with -- and it is "
+    "invisible to the coverage guard's registered-suite count. Register with "
     "lazily_add_spec_conformance_test(<ctest-name> <target>) instead of "
-    "add_test() -- it bakes in the corpus path, adds the test, and sets "
-    "SKIP_RETURN_CODE 77 together.")
+    "add_test() -- it bakes in the corpus path and adds the test together.")
 endif()
 
 list(LENGTH _lazily_registered _lazily_registered_count)
@@ -532,7 +529,7 @@ if(_lazily_registered_count EQUAL 0)
 endif()
 message(STATUS
   "lazily-cpp: ${_lazily_registered_count} canonical-conformance suite(s) registered "
-  "(corpus ${LAZILY_SPEC_CONFORMANCE_DIR}, absence = ctest SKIP)")
+  "(corpus ${LAZILY_SPEC_CONFORMANCE_DIR}, absence = hard failure)")
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
 # build`). Skips gracefully (CTest exit code 77) when the sibling checkout or

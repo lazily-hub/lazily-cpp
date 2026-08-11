@@ -57,9 +57,11 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Build
         run: cmake --build build --parallel
-      # The conformance suites SKIP (CTest exit 77) when the sibling checkout is
-      # absent, which ctest reports as success. Assert the corpus is present so
-      # a skip can never pass silently in CI.
+      # The conformance suites now REFUSE to run when the sibling checkout is
+      # absent (#lzcppsiblingskipvsfail), so a corpus-less job cannot go green.
+      # This step stays because a refusal 36 suites deep names the symptom late:
+      # assert the corpus up front, per area, so a partial clone is reported as
+      # the missing input it is rather than as a wall of failing tests.
       - name: Assert canonical conformance fixtures are present (#lzspecconf)
         run: |
           for area in coordination crdt-tree membership presence rateshape \
@@ -85,17 +87,6 @@ jobs:
       # was the one gate living exclusively on developer machines.
       - name: Interop peer self-check (#lzinteroppeerci)
         run: ./build/lazily_interop_peer --self-check
-      # An absence guard proves the corpus exists; it cannot prove the suites
-      # read it. Fail the run if ctest reported any conformance test as skipped.
-      - name: Assert no conformance suite was skipped (#lzspecconf)
-        shell: bash
-        run: |
-          ctest --test-dir build -R Conformance --output-on-failure --no-tests=error \
-            | tee ctest-conformance.log
-          if grep -q "Skipped" ctest-conformance.log; then
-            echo "::error::a conformance suite skipped — it validated nothing"
-            exit 1
-          fi
       # ── the two guards that do NOT live inside the test binary ────────────
       #
       # Four conformance guards exist per binding. The unconsumed-assertion-key
@@ -120,10 +111,11 @@ jobs:
           fi
           echo "manifest records: $(wc -l < "$LAZILY_CONFORMANCE_MANIFEST")"
       # Fixture-level coverage plus the per-scenario replay ledger. The script
-      # SKIPs (exit 0) when the sibling corpus is absent; that is a pass-shaped
-      # non-result, so treat a SKIP as a CI failure — the corpus is cloned and
-      # asserted present above, so a SKIP here means path resolution broke, not
-      # that there was nothing to check (#lzguardsnotinci).
+      # used to SKIP (exit 0) on an absent corpus, and this step grepped its log
+      # for that SKIP line. It refuses instead now (#lzcppsiblingskipvsfail), so
+      # the grep is gone and the fail-closed behaviour is proven directly, by the
+      # step further down that points every corpus guard at a path that does not
+      # exist and requires each one to redden.
       #
       # The manifest is passed through $LAZILY_CONFORMANCE_MANIFEST, the job-level
       # env var every other step here uses. This step used to hardcode a second
@@ -136,15 +128,14 @@ jobs:
       - name: Assert canonical fixtures and scenarios were replayed (#lzguardsnotinci)
         shell: bash
         run: |
-          ./scripts/check-conformance-coverage.sh "$LAZILY_CONFORMANCE_MANIFEST" \
-            2>&1 | tee conformance-coverage.log
-          if grep -q '^SKIP:' conformance-coverage.log; then
-            echo "::error::the conformance coverage guard SKIPPED — it audited nothing"
-            exit 1
-          fi
+          ./scripts/check-conformance-coverage.sh "$LAZILY_CONFORMANCE_MANIFEST"
 
+      # Invoked through make rather than by spelling the python command a second
+      # time: the target now carries an explicit sibling precondition in front of
+      # the checker, and two commands in a recipe CI only half-runs is the very
+      # drift the reachability guard at the end of this job exists to catch.
       - name: Assertion observation ordering (#lzassertordering)
-        run: python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding cpp --root .
+        run: make assertion-ordering-check
 
       # The corpus-derivable half of the WASM.md matrix audit
       # (#lzcppwasmguardlocal). The full audit needs the emsdk manifests and so
@@ -164,6 +155,58 @@ jobs:
             echo "::error::the corpus-column guard exited 0 without reaching its verdict"
             exit 1
           }
+
+      # ── the fail-closed policy, proven rather than declared ────────────────
+      #
+      # Every gate above reads the canonical corpus out of a sibling checkout,
+      # and this repo used to answer "sibling absent" two ways: the ctest suites
+      # and two of the scripts SKIPped with exit 0, while check-wasm-corpus-column.sh
+      # and assertion-ordering-check failed. They all refuse now
+      # (#lzcppsiblingskipvsfail) — and a policy that is only asserted in comments
+      # is one edit from being untrue, so it is exercised here.
+      #
+      # Each guard is run against a corpus path that does not exist and must
+      # both exit non-zero AND say why. The second half is not decoration: with
+      # the corpus absent every one of these has some downstream reason to fail
+      # (an empty manifest, an unrun tier), and a guard failing for the wrong
+      # reason would let a reintroduced skip pass this step. So the refusal
+      # message is what is matched, not the exit code alone.
+      #
+      # Run last among the gates so nothing here can disturb the evidence the
+      # real runs above produced; it writes its own manifest to a scratch path.
+      - name: Fail-closed proof — the corpus guards refuse an absent corpus (#lzcppsiblingskipvsfail)
+        shell: bash
+        run: |
+          absent="$RUNNER_TEMP/no-such-corpus"
+          rm -rf "$absent"
+          refuse() {
+            local label="$1"; shift
+            local out rc=0
+            out=$(LAZILY_SPEC_CONFORMANCE_DIR="$absent" \
+                  LAZILY_CONFORMANCE_MANIFEST="$RUNNER_TEMP/failclosed-manifest.txt" \
+                  "$@" 2>&1) || rc=$?
+            if (( rc == 0 )); then
+              echo "$out"
+              echo "::error::$label exited 0 with the canonical corpus absent — it skipped instead of refusing"
+              exit 1
+            fi
+            if ! grep -q "canonical conformance corpus not found" <<<"$out"; then
+              echo "$out"
+              echo "::error::$label reddened with the corpus absent, but not because of the corpus — the refusal message is missing, so this proves nothing"
+              exit 1
+            fi
+            echo "$label: refused an absent corpus (exit $rc)"
+          }
+          refuse "ctest ReactiveGraphConformance" \
+            ctest --test-dir build -R ReactiveGraphConformance --output-on-failure --no-tests=error
+          refuse "check-conformance-coverage.sh" \
+            ./scripts/check-conformance-coverage.sh "$RUNNER_TEMP/failclosed-manifest.txt"
+          refuse "check-wasm-corpus-column.sh" ./scripts/check-wasm-corpus-column.sh
+          refuse "check-wasm-tiers.sh" ./scripts/check-wasm-tiers.sh
+          # The ordering checker lives in the sibling's scripts/ rather than its
+          # conformance/, so it is redirected by sibling root, not corpus dir.
+          refuse "make assertion-ordering-check" \
+            make assertion-ordering-check LAZILY_SPEC_DIR="$RUNNER_TEMP/no-such-sibling"
 
       # The gate that keeps every step above honest (#lzcheckcireachguard). It
       # compares `make check`'s prerequisite closure against the run: bodies in
@@ -201,13 +244,15 @@ jobs:
       - name: Fetch canonical lazily-spec conformance fixtures (#lzspecconf)
         run: git clone --depth 1 https://github.com/lazily-hub/lazily-spec.git ../lazily-spec
 
-      # Assert the corpus is really there before anything runs. The suites SKIP
-      # (exit 77) on a missing sibling checkout, and a job full of skips is
-      # green — the same vacuous pass the native job guards against.
+      # Assert the corpus is really there before anything runs. The suites refuse
+      # a missing sibling checkout now rather than skipping over it
+      # (#lzcppsiblingskipvsfail), so this is no longer what stands between the
+      # job and a vacuous pass — it is what names the missing input before an
+      # emsdk install and two full tier builds fail for a reason nobody reads.
       - name: Assert the canonical corpus is present
         run: |
           test -d ../lazily-spec/conformance || {
-            echo "::error::canonical conformance corpus missing; the wasm suites would SKIP and the job would pass over nothing"
+            echo "::error::canonical conformance corpus missing; the wasm suites cannot replay anything"
             exit 1
           }
 

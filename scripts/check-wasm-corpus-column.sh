@@ -60,7 +60,7 @@ fail() {
 # ── the corpus side ─────────────────────────────────────────────────────────
 counts=""
 if ! counts="$(wasm_corpus_counts "$conformance_dir")"; then
-	echo "ERROR: canonical conformance corpus not readable at '$conformance_dir'." >&2
+	echo "ERROR: canonical conformance corpus not found or not readable at '$conformance_dir'." >&2
 	echo "       git clone https://github.com/lazily-hub/lazily-spec.git ../lazily-spec" >&2
 	echo "       (or point LAZILY_SPEC_CONFORMANCE_DIR at a checkout)" >&2
 	echo "       This is a hard failure, not a skip: without the corpus this guard" >&2

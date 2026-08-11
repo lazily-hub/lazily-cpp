@@ -1371,10 +1371,10 @@ void probe_async_stub() {
 } // namespace
 
 int main() {
-  // Absence is an explicit CTest SKIP (exit 77), never a silent pass. CI also
-  // asserts the directory exists and that no Conformance test reported
-  // "Skipped", because ctest treats a skip as success.
-  lazily_test::require_spec_checkout_or_skip(kArea);
+  // Absence is an explicit refusal, never a skip and never a silent pass
+  // (#lzcppsiblingskipvsfail). CI additionally asserts the directory exists, so
+  // the refusal names the missing input before a whole job spends time on it.
+  lazily_test::require_spec_checkout(kArea);
 
   // The fixture set on disk must be exactly the one this runner knows about,
   // so an upstream addition cannot arrive unexecuted.

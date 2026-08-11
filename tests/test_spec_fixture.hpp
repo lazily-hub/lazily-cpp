@@ -9,8 +9,21 @@
 //
 // There is deliberately NO fallback to a local copy. A fallback is precisely
 // what makes drift invisible — the suite would go green against stale data and
-// nobody would learn. Absence is a SKIP (CTest exit 77) with an explicit
-// message, and CI asserts the directory exists so a skip cannot pass silently.
+// nobody would learn.
+//
+// Absence is a HARD FAILURE, not a skip (#lzcppsiblingskipvsfail). It used to be
+// a SKIP (CTest exit 77), and that was measured rather than argued: with the
+// corpus absent, 25 of this repo's 62 ctest targets execute and 37 skip, 0 of the
+// 139 canonical fixtures and 0 of the 149 scenarios are replayed, and the whole
+// cross-binding conformance layer — 654 of the suite's 927 assertion sites —
+// contributes nothing. `make check` is the pre-commit gate; a green there over
+// that state is a false green, and it is the same false green that let 9b0ff08
+// pass locally and land red on CI. The skip also protected nothing that worked:
+// since bd2380a a checkout without the sibling has failed `make check` anyway,
+// at `assertion-ordering-check`, which runs a script out of the same sibling.
+//
+// So the corpus is a REQUIRED input, answered the same way by every guard that
+// touches it: refuse, name the path, and say how to get it.
 //
 // The spec directory is baked in at configure time from
 // `LAZILY_SPEC_CONFORMANCE_DIR` (see tests/CMakeLists.txt) so the path resolves
@@ -312,23 +325,27 @@ inline std::filesystem::path spec_conformance_dir() {
   return std::filesystem::path(LAZILY_SPEC_CONFORMANCE_DIR);
 }
 
-// Exit 77 (CTest SKIP) when the sibling spec checkout is absent. Called before
-// any fixture read so a missing sibling is an explicit skip, never a pass.
-inline void require_spec_checkout_or_skip(const std::string& area) {
+// Fail when the sibling spec checkout is absent. Called before any fixture read,
+// so a missing sibling is a refusal — never a skip and never a pass
+// (#lzcppsiblingskipvsfail).
+inline void require_spec_checkout(const std::string& area) {
   const auto dir = spec_conformance_dir() / area;
   if (!std::filesystem::is_directory(dir)) {
-    std::cout << "SKIP: canonical conformance fixtures not found at " << dir
-              << " — clone the lazily-spec sibling "
-                 "(git clone https://github.com/lazily-hub/lazily-spec.git "
-                 "../lazily-spec) to run the "
-              << area << " conformance suite" << std::endl;
-    std::exit(77);
+    std::cerr << "ERROR: canonical conformance corpus not found at " << dir << "\n"
+              << "       git clone https://github.com/lazily-hub/lazily-spec.git "
+                 "../lazily-spec\n"
+              << "       (or point LAZILY_SPEC_CONFORMANCE_DIR at a checkout)\n"
+              << "       The canonical corpus is a REQUIRED input, not an optional one:\n"
+              << "       without it the " << area
+              << " suite replays nothing, and a run that replays\n"
+              << "       nothing must not report success." << std::endl;
+    std::exit(1);
   }
 }
 
 // Read a canonical fixture's raw text, recording that it was actually opened.
 inline std::string spec_fixture_text(const std::string& area, const std::string& name) {
-  require_spec_checkout_or_skip(area);
+  require_spec_checkout(area);
   const auto path = spec_conformance_dir() / area / name;
   std::ifstream input(path);
   REQUIRE(input, "canonical conformance fixture missing from the lazily-spec sibling "

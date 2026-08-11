@@ -343,7 +343,7 @@ int main() {
   REQUIRE(history_is_deep("deep") && !history_is_deep("shallow"),
           "history depth spellings must map to distinct depths");
 
-  lazily_test::require_spec_checkout_or_skip(kArea);
+  lazily_test::require_spec_checkout(kArea);
 
   // The fixture list is checked against the corpus rather than trusted: a file
   // landing upstream that this runner does not replay fails here instead of

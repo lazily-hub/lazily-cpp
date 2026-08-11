@@ -44,7 +44,8 @@ set(_conformance_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../lazily-spec/conformance"
 # place for the replay to quietly stop being a replay.
 #
 # EXIT_RUNTIME makes the process exit code the C++ return value, so ctest sees a
-# real pass/fail — and so the suite's CTest SKIP (exit 77) still means skip.
+# real pass/fail — and so the seam's refusal on an absent corpus (exit 1) still
+# reaches ctest as a failure rather than being swallowed by the runtime.
 set(_wasm_link_flags
   "-sNODERAWFS=1"
   "-sEXIT_RUNTIME=1"
@@ -102,8 +103,9 @@ foreach(_line IN LISTS _tier_lines)
 
   # CMAKE_CROSSCOMPILING_EMULATOR is set to node by the Emscripten toolchain, so
   # ctest runs `node <target>.js` without this file naming a runtime.
+  # No SKIP_RETURN_CODE: an absent canonical corpus is a hard failure here as it
+  # is natively (#lzcppsiblingskipvsfail).
   add_test(NAME ${_ctest_name} COMMAND ${_target})
-  set_tests_properties(${_ctest_name} PROPERTIES SKIP_RETURN_CODE 77)
   list(APPEND _built_targets ${_target})
 endforeach()
 

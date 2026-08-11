@@ -15,6 +15,16 @@ wasm wasm-core wasm-threaded wasm-matrix wasm-bench wasm-corpus-column
 
 BUILD_DIR ?= build
 
+# The sibling lazily-spec checkout. Every gate below that reads it treats its
+# absence as a hard FAILURE, never a skip (#lzcppsiblingskipvsfail): measured on
+# this tree, a corpus-less run executes 25 of 62 ctest targets and skips 37,
+# replays 0 of 139 canonical fixtures and 0 of 149 scenarios, and leaves 654 of
+# the suite's 927 assertion sites unrun. `make check` is the pre-commit gate, so
+# a green there over that state is a false green — the one that let 9b0ff08 pass
+# locally and land red on CI. Named as a variable so the refusal itself is
+# testable: CI points it at a non-existent path and asserts the gate reddens.
+LAZILY_SPEC_DIR ?= ../lazily-spec
+
 # Emscripten/wasm32 (`#lzcppwasm`). Separate build dirs per tier so a wasm
 # configure never clobbers the native one and `make check` stays unaffected.
 WASM_CORE_DIR ?= build_wasm_core
@@ -114,8 +124,20 @@ wasm-corpus-column:
 	./scripts/check-wasm-corpus-column.sh
 
 # Full local gate — run before committing.
+# Assertion observation ordering (#lzassertordering). The checker itself lives in
+# the sibling, so this gate has always been fail-closed — but only by accident,
+# via python3's "can't open file" errno. State it (#lzcppsiblingskipvsfail): an
+# absent sibling gets the same refusal wording as every other corpus guard rather
+# than an interpreter traceback that reads like a broken toolchain.
 assertion-ordering-check:
-	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding cpp --root .
+	@test -f $(LAZILY_SPEC_DIR)/scripts/check-assertion-ordering.py || { \
+	  echo "ERROR: canonical conformance corpus not found at '$(LAZILY_SPEC_DIR)' (sibling checkout)."; \
+	  echo "       git clone https://github.com/lazily-hub/lazily-spec.git ../lazily-spec"; \
+	  echo "       (or override LAZILY_SPEC_DIR=/path/to/lazily-spec)"; \
+	  echo "       This is a hard failure, not a skip: the ordering checker lives in"; \
+	  echo "       the sibling, so without it this gate verifies nothing."; \
+	  exit 1; }
+	python3 $(LAZILY_SPEC_DIR)/scripts/check-assertion-ordering.py --binding cpp --root .
 
 check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check wasm-corpus-column
 	@echo "lazily-cpp: check OK"

@@ -84,7 +84,7 @@ conformance_dir="${LAZILY_SPEC_CONFORMANCE_DIR:-$repo_root/../lazily-spec/confor
 # and every one of those citations is prose. STRING LITERALS ARE NOT EXEMPT,
 # including diagnostic ones: the scan cannot tell a message from a path, so the
 # rule is that prose belongs in a comment. That costs nothing today —
-# require_spec_checkout_or_skip's clone hint spells only `../lazily-spec`, not
+# require_spec_checkout's clone hint spells only `../lazily-spec`, not
 # the fragment — and it keeps the rule stateable in one sentence.
 #
 # The allowlist is three entries and each is load-bearing except the seam, which
@@ -353,14 +353,25 @@ then
   exit 1
 fi
 
-# Absence of the sibling checkout is a clean SKIP, consistent with the suites
-# themselves (CTest SKIP_RETURN_CODE 77 via require_spec_checkout_or_skip). It is
-# NOT a pass: nothing was verified and the message says so.
+# Absence of the sibling checkout is a hard FAILURE, consistent with the suites
+# themselves (require_spec_checkout in tests/test_spec_fixture.hpp) and with
+# every other guard in this repo that reads the corpus (#lzcppsiblingskipvsfail).
+#
+# It used to exit 0 with a SKIP line. That was measured, not argued: with the
+# corpus absent, 25 of 62 ctest targets run and 37 skip, 0 of 139 canonical
+# fixtures and 0 of 149 scenarios are replayed, and this guard's whole job — the
+# MIN_FIXTURES / MIN_SCENARIOS floors, the per-area coverage audit, the
+# declared-vs-replayed scenario ledger — is skipped along with them. `make check`
+# is the pre-commit gate; a green there over that state is a false green, and it
+# is the one that let 9b0ff08 pass locally and land red on CI.
 if [[ ! -d "$conformance_dir" ]]; then
-  echo "SKIP: canonical conformance corpus not found at '$conformance_dir'"
-  echo "      clone the sibling checkout to run the conformance coverage guard:"
-  echo "      git clone https://github.com/lazily-hub/lazily-spec.git ../lazily-spec"
-  exit 0
+  echo "ERROR: canonical conformance corpus not found at '$conformance_dir'." >&2
+  echo "       git clone https://github.com/lazily-hub/lazily-spec.git ../lazily-spec" >&2
+  echo "       (or point LAZILY_SPEC_CONFORMANCE_DIR at a checkout)" >&2
+  echo "       This is a hard failure, not a skip: without the corpus this guard" >&2
+  echo "       audits nothing and would report OK over an unreplayed suite." >&2
+  echo "conformance coverage FAILED: canonical corpus absent" >&2
+  exit 1
 fi
 
 # Minimum total DISTINCT fixtures replayed. EXACT: 139 is what the suite really

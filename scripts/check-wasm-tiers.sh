@@ -113,14 +113,29 @@ require_manifest() {
   fi
 }
 
+# The corpus is checked BEFORE the manifests, and it is a hard FAILURE rather
+# than the SKIP it used to be (#lzcppsiblingskipvsfail). Both halves matter.
+#
+# Fail, because this guard's entire job is comparing the committed matrix to the
+# canonical corpus; with no corpus there is nothing to compare and exiting 0 is
+# a pass-shaped non-result — the same false green check-wasm-corpus-column.sh
+# already refuses, and the two must not answer the same question two ways.
+#
+# First, because an absent corpus also means the tiers replayed nothing, so
+# require_manifest would fire on the DOWNSTREAM symptom and the diagnostic would
+# name the manifest rather than the missing input that caused it.
+if [[ ! -d "$conformance_dir" ]]; then
+  echo "ERROR: canonical conformance corpus not found at '$conformance_dir'." >&2
+  echo "       git clone https://github.com/lazily-hub/lazily-spec.git ../lazily-spec" >&2
+  echo "       (or point LAZILY_SPEC_CONFORMANCE_DIR at a checkout)" >&2
+  echo "       This is a hard failure, not a skip: without the corpus this guard" >&2
+  echo "       would compare the committed matrix against nothing and pass." >&2
+  echo "wasm tier/matrix guard: FAILED" >&2
+  exit 1
+fi
+
 require_manifest "$core_manifest" core "$MIN_CORE_FIXTURES"
 require_manifest "$threaded_manifest" threaded "$MIN_THREADED_FIXTURES"
-
-if [[ ! -d "$conformance_dir" ]]; then
-  echo "SKIP: canonical conformance corpus not found at '$conformance_dir'"
-  echo "      git clone https://github.com/lazily-hub/lazily-spec.git ../lazily-spec"
-  exit 0
-fi
 
 # ── the conf agrees with what was actually built ────────────────────────────
 #
