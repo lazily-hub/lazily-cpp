@@ -22,6 +22,39 @@ if(EMSCRIPTEN)
   return()
 endif()
 
+# ── Canonical conformance registration (#lzcorpusabsencehandling) ──────────
+#
+# The suites below read fixtures from the sibling lazily-spec checkout rather
+# than from a copy inside this repo; the rationale, the path derivation, and the
+# absence-is-a-SKIP contract are documented at the LAZILY_SPEC_CONFORMANCE_DIR
+# block further down, which this helper is the registration half of.
+#
+# Registration is ONE call, deliberately. Three things must be true of every
+# suite that reads the checkout — the corpus path is baked in, the test exists,
+# and ctest reads its exit-77 as SKIP — and they used to live in three separate
+# places: a target list, an `add_test()`, and a hand-maintained list of ctest
+# NAMES passed to `set_tests_properties(... SKIP_RETURN_CODE 77)`. The names
+# list drifted from the target list three separate times (four targets, then
+# three, then six), and each drift turned "no sibling checkout" from a skip into
+# a hard ctest FAILURE for those suites. The first two were repaired by editing
+# the list again, which is precisely what left a third instance possible. So the
+# list is gone: the three properties are inseparable now because there is one
+# place to state them. The guard at the bottom of this file closes the remaining
+# hole — a corpus reader registered with a bare `add_test()`.
+set(LAZILY_SPEC_CONFORMANCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../lazily-spec/conformance")
+
+function(lazily_add_spec_conformance_test _ctest_name _target)
+  target_compile_definitions(${_target} PRIVATE
+    LAZILY_SPEC_CONFORMANCE_DIR="${LAZILY_SPEC_CONFORMANCE_DIR}")
+  add_test(NAME ${_ctest_name} COMMAND ${_target})
+  # `require_spec_checkout_or_skip()` (tests/test_spec_fixture.hpp) exits 77 to
+  # mean SKIP. Without SKIP_RETURN_CODE, ctest reads that 77 as a FAILURE and an
+  # absent sibling checkout looks like a broken build instead of a skipped suite.
+  set_tests_properties(${_ctest_name} PROPERTIES SKIP_RETURN_CODE 77)
+  set_property(GLOBAL APPEND PROPERTY LAZILY_SPEC_CONFORMANCE_TARGETS ${_target})
+endfunction()
+
 add_executable(test_smoke test_smoke.cpp)
 target_link_libraries(test_smoke PRIVATE lazily)
 add_test(NAME smoke COMMAND test_smoke)
@@ -35,7 +68,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_link_options(test_stdlib_conformance PRIVATE
     -fsanitize=address,undefined)
 endif()
-add_test(NAME StdlibConformance COMMAND test_stdlib_conformance)
+lazily_add_spec_conformance_test(StdlibConformance test_stdlib_conformance)
 
 add_executable(test_core test_core.cpp)
 target_link_libraries(test_core PRIVATE lazily)
@@ -92,7 +125,7 @@ add_test(NAME statechart COMMAND test_statechart)
 # and never opens the corpus).
 add_executable(test_statechart_conformance test_statechart_conformance.cpp)
 target_link_libraries(test_statechart_conformance PRIVATE lazily)
-add_test(NAME StatechartConformance COMMAND test_statechart_conformance)
+lazily_add_spec_conformance_test(StatechartConformance test_statechart_conformance)
 
 add_executable(test_collections test_collections.cpp)
 target_link_libraries(test_collections PRIVATE lazily)
@@ -103,20 +136,19 @@ add_test(NAME collections COMMAND test_collections)
 add_executable(test_collections_fixture_conformance
   test_collections_fixture_conformance.cpp)
 target_link_libraries(test_collections_fixture_conformance PRIVATE lazily)
-add_test(NAME CollectionsFixtureConformance
-  COMMAND test_collections_fixture_conformance)
+lazily_add_spec_conformance_test(CollectionsFixtureConformance test_collections_fixture_conformance)
 
 # Replays ../lazily-spec/conformance/receipts/ — one canonical fixture the
 # binding had no runner for in any form.
 add_executable(test_receipts_conformance test_receipts_conformance.cpp)
 target_link_libraries(test_receipts_conformance PRIVATE lazily)
-add_test(NAME ReceiptsConformance COMMAND test_receipts_conformance)
+lazily_add_spec_conformance_test(ReceiptsConformance test_receipts_conformance)
 
 # Replays ../lazily-spec/conformance/distributed/anti_entropy_converge.json —
 # CRDT-plane convergence, applied-op accounting, idempotence, order independence.
 add_executable(test_distributed_conformance test_distributed_conformance.cpp)
 target_link_libraries(test_distributed_conformance PRIVATE lazily)
-add_test(NAME DistributedConformance COMMAND test_distributed_conformance)
+lazily_add_spec_conformance_test(DistributedConformance test_distributed_conformance)
 
 # Replays ../lazily-spec/conformance/codec/frame_roundtrip_json.json THROUGH the
 # json reference codec (#lzcppjsoncodec). Every other conformance binary replays
@@ -124,13 +156,13 @@ add_test(NAME DistributedConformance COMMAND test_distributed_conformance)
 # that could have caught lazily-cpp shipping codec.hpp while speaking no JSON.
 add_executable(test_codec_conformance test_codec_conformance.cpp)
 target_link_libraries(test_codec_conformance PRIVATE lazily)
-add_test(NAME CodecConformance COMMAND test_codec_conformance)
+lazily_add_spec_conformance_test(CodecConformance test_codec_conformance)
 
 # Replays capability_handshake.json through the production negotiation API,
 # retaining the common ceiling and mutual fragmentation state.
 add_executable(test_capability_conformance test_capability_conformance.cpp)
 target_link_libraries(test_capability_conformance PRIVATE lazily)
-add_test(NAME CapabilityConformance COMMAND test_capability_conformance)
+lazily_add_spec_conformance_test(CapabilityConformance test_capability_conformance)
 
 # Replays ../lazily-spec/conformance/codec/nodeid_exact_range.json through BOTH
 # codecs (#lzspecdecoderbound). The clause it carries — a decoder that cannot
@@ -142,7 +174,7 @@ add_test(NAME CapabilityConformance COMMAND test_capability_conformance)
 # every caller guards a decode with.
 add_executable(test_nodeid_exact_range_conformance test_nodeid_exact_range_conformance.cpp)
 target_link_libraries(test_nodeid_exact_range_conformance PRIVATE lazily)
-add_test(NAME NodeIdExactRangeConformance COMMAND test_nodeid_exact_range_conformance)
+lazily_add_spec_conformance_test(NodeIdExactRangeConformance test_nodeid_exact_range_conformance)
 
 # Replays ../lazily-spec/conformance/codec/nodekey_null_leniency.json through
 # BOTH codecs (#lzkeynullstrict). Omit-when-absent binds the ENCODER; a decoder
@@ -152,7 +184,7 @@ add_test(NAME NodeIdExactRangeConformance COMMAND test_nodeid_exact_range_confor
 # produced frame's FIELD SET, which no assertion over a decoded value can reach.
 add_executable(test_nodekey_null_leniency_conformance test_nodekey_null_leniency_conformance.cpp)
 target_link_libraries(test_nodekey_null_leniency_conformance PRIVATE lazily)
-add_test(NAME NodeKeyNullLeniencyConformance COMMAND test_nodekey_null_leniency_conformance)
+lazily_add_spec_conformance_test(NodeKeyNullLeniencyConformance test_nodekey_null_leniency_conformance)
 
 # Replays ../lazily-spec/conformance/codec/blob_backend_discriminator.json
 # through BOTH codecs (#lzblobbackendstrict). The clause splits the two forms a
@@ -167,8 +199,7 @@ add_test(NAME NodeKeyNullLeniencyConformance COMMAND test_nodekey_null_leniency_
 add_executable(test_blob_backend_discriminator_conformance
   test_blob_backend_discriminator_conformance.cpp)
 target_link_libraries(test_blob_backend_discriminator_conformance PRIVATE lazily)
-add_test(NAME BlobBackendDiscriminatorConformance
-  COMMAND test_blob_backend_discriminator_conformance)
+lazily_add_spec_conformance_test(BlobBackendDiscriminatorConformance test_blob_backend_discriminator_conformance)
 
 add_executable(test_crdt test_crdt.cpp)
 target_link_libraries(test_crdt PRIVATE lazily)
@@ -176,11 +207,11 @@ add_test(NAME crdt COMMAND test_crdt)
 
 add_executable(test_crdt_tree test_crdt_tree.cpp)
 target_link_libraries(test_crdt_tree PRIVATE lazily)
-add_test(NAME CrdtTreeConformance COMMAND test_crdt_tree)
+lazily_add_spec_conformance_test(CrdtTreeConformance test_crdt_tree)
 
 add_executable(test_ipc test_ipc.cpp)
 target_link_libraries(test_ipc PRIVATE lazily lazily_ffi)
-add_test(NAME ipc COMMAND test_ipc)
+lazily_add_spec_conformance_test(ipc test_ipc)
 
 add_executable(test_queue test_queue.cpp)
 target_link_libraries(test_queue PRIVATE lazily)
@@ -192,7 +223,7 @@ add_test(NAME work_queue COMMAND test_work_queue)
 
 add_executable(test_work_queue_conformance test_work_queue_conformance.cpp)
 target_link_libraries(test_work_queue_conformance PRIVATE lazily)
-add_test(NAME WorkQueueConformance COMMAND test_work_queue_conformance)
+lazily_add_spec_conformance_test(WorkQueueConformance test_work_queue_conformance)
 
 add_executable(test_concurrency test_concurrency.cpp)
 target_link_libraries(test_concurrency PRIVATE lazily)
@@ -220,11 +251,11 @@ add_test(NAME async_reactive_family COMMAND test_async_reactive_family)
 
 # Replays the canonical materialization fixture bytes (the hand-mirrored copies
 # in test_reactive_family cannot detect drift). Reads the sibling lazily-spec
-# checkout, so it lives in the LAZILY_SPEC_CONFORMANCE_TESTS list below and
-# skips (77) when that checkout is absent.
+# checkout, so it registers through lazily_add_spec_conformance_test() and skips
+# (77) when that checkout is absent.
 add_executable(test_materialization_conformance test_materialization_conformance.cpp)
 target_link_libraries(test_materialization_conformance PRIVATE lazily)
-add_test(NAME MaterializationConformance COMMAND test_materialization_conformance)
+lazily_add_spec_conformance_test(MaterializationConformance test_materialization_conformance)
 
 # The thread-safe / async shells of the same two fixtures. Separate binary
 # because ThreadSafeContext and AsyncContext force the -pthread wasm tier while
@@ -233,23 +264,23 @@ add_test(NAME MaterializationConformance COMMAND test_materialization_conformanc
 # test_materialization_replay.hpp.
 add_executable(test_materialization_family_conformance test_materialization_family_conformance.cpp)
 target_link_libraries(test_materialization_family_conformance PRIVATE lazily)
-add_test(NAME MaterializationFamilyConformance COMMAND test_materialization_family_conformance)
+lazily_add_spec_conformance_test(MaterializationFamilyConformance test_materialization_family_conformance)
 
 add_executable(test_collections_family_conformance test_collections_family_conformance.cpp)
 target_link_libraries(test_collections_family_conformance PRIVATE lazily)
-add_test(NAME CollectionsFamilyConformance COMMAND test_collections_family_conformance)
+lazily_add_spec_conformance_test(CollectionsFamilyConformance test_collections_family_conformance)
 
 add_executable(test_signaling_conformance test_signaling_conformance.cpp)
 target_link_libraries(test_signaling_conformance PRIVATE lazily)
-add_test(NAME SignalingConformance COMMAND test_signaling_conformance)
+lazily_add_spec_conformance_test(SignalingConformance test_signaling_conformance)
 
 add_executable(test_queue_conformance test_queue_conformance.cpp)
 target_link_libraries(test_queue_conformance PRIVATE lazily)
-add_test(NAME QueueConformance COMMAND test_queue_conformance)
+lazily_add_spec_conformance_test(QueueConformance test_queue_conformance)
 
 add_executable(test_queue_family_conformance test_queue_family_conformance.cpp)
 target_link_libraries(test_queue_family_conformance PRIVATE lazily)
-add_test(NAME QueueFamilyConformance COMMAND test_queue_family_conformance)
+lazily_add_spec_conformance_test(QueueFamilyConformance test_queue_family_conformance)
 
 # Transport-agnostic reactive ingress (`#designimplementtransport`). The algebra
 # invariants + shell reactivity live in test_ingress; the canonical corpus replay
@@ -261,19 +292,19 @@ add_test(NAME ingress COMMAND test_ingress)
 
 add_executable(test_ingress_conformance test_ingress_conformance.cpp)
 target_link_libraries(test_ingress_conformance PRIVATE lazily)
-add_test(NAME IngressConformance COMMAND test_ingress_conformance)
+lazily_add_spec_conformance_test(IngressConformance test_ingress_conformance)
 
 add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
-add_test(NAME family_sync COMMAND test_family_sync)
+lazily_add_spec_conformance_test(family_sync test_family_sync)
 
 add_executable(test_reliable_sync test_reliable_sync.cpp)
 target_link_libraries(test_reliable_sync PRIVATE lazily)
-add_test(NAME reliable_sync COMMAND test_reliable_sync)
+lazily_add_spec_conformance_test(reliable_sync test_reliable_sync)
 
 add_executable(test_outbox_store test_outbox_store.cpp)
 target_link_libraries(test_outbox_store PRIVATE lazily)
-add_test(NAME OutboxStoreConformance COMMAND test_outbox_store)
+lazily_add_spec_conformance_test(OutboxStoreConformance test_outbox_store)
 
 # Realtime + distributed primitive families (#lztime / #lzrateshape / #lzmemb /
 # #lzcoord / #lzpresence / #lzwindow / #lzresilience / #lzservice). Each replays
@@ -282,51 +313,51 @@ add_test(NAME OutboxStoreConformance COMMAND test_outbox_store)
 # block below (#lzspecconf).
 add_executable(test_temporal_conformance test_temporal_conformance.cpp)
 target_link_libraries(test_temporal_conformance PRIVATE lazily)
-add_test(NAME TemporalConformance COMMAND test_temporal_conformance)
+lazily_add_spec_conformance_test(TemporalConformance test_temporal_conformance)
 
 add_executable(test_rateshape_conformance test_rateshape_conformance.cpp)
 target_link_libraries(test_rateshape_conformance PRIVATE lazily)
-add_test(NAME RateshapeConformance COMMAND test_rateshape_conformance)
+lazily_add_spec_conformance_test(RateshapeConformance test_rateshape_conformance)
 
 add_executable(test_membership_conformance test_membership_conformance.cpp)
 target_link_libraries(test_membership_conformance PRIVATE lazily)
-add_test(NAME MembershipConformance COMMAND test_membership_conformance)
+lazily_add_spec_conformance_test(MembershipConformance test_membership_conformance)
 
 add_executable(test_coordination_conformance test_coordination_conformance.cpp)
 target_link_libraries(test_coordination_conformance PRIVATE lazily)
-add_test(NAME CoordinationConformance COMMAND test_coordination_conformance)
+lazily_add_spec_conformance_test(CoordinationConformance test_coordination_conformance)
 
 add_executable(test_presence_conformance test_presence_conformance.cpp)
 target_link_libraries(test_presence_conformance PRIVATE lazily)
-add_test(NAME PresenceConformance COMMAND test_presence_conformance)
+lazily_add_spec_conformance_test(PresenceConformance test_presence_conformance)
 
 add_executable(test_windowing_conformance test_windowing_conformance.cpp)
 target_link_libraries(test_windowing_conformance PRIVATE lazily)
-add_test(NAME WindowingConformance COMMAND test_windowing_conformance)
+lazily_add_spec_conformance_test(WindowingConformance test_windowing_conformance)
 
 add_executable(test_resilience_conformance test_resilience_conformance.cpp)
 target_link_libraries(test_resilience_conformance PRIVATE lazily)
-add_test(NAME ResilienceConformance COMMAND test_resilience_conformance)
+lazily_add_spec_conformance_test(ResilienceConformance test_resilience_conformance)
 
 add_executable(test_service_conformance test_service_conformance.cpp)
 target_link_libraries(test_service_conformance PRIVATE lazily)
-add_test(NAME ServiceConformance COMMAND test_service_conformance)
+lazily_add_spec_conformance_test(ServiceConformance test_service_conformance)
 
 add_executable(test_seqcrdt_conformance test_seqcrdt_conformance.cpp)
 target_link_libraries(test_seqcrdt_conformance PRIVATE lazily)
-add_test(NAME SeqCrdtConformance COMMAND test_seqcrdt_conformance)
+lazily_add_spec_conformance_test(SeqCrdtConformance test_seqcrdt_conformance)
 
 add_executable(test_topic_conformance test_topic_conformance.cpp)
 target_link_libraries(test_topic_conformance PRIVATE lazily)
-add_test(NAME TopicConformance COMMAND test_topic_conformance)
+lazily_add_spec_conformance_test(TopicConformance test_topic_conformance)
 
 add_executable(test_lossless_tree_conformance test_lossless_tree_conformance.cpp)
 target_link_libraries(test_lossless_tree_conformance PRIVATE lazily)
-add_test(NAME LosslessTreeConformance COMMAND test_lossless_tree_conformance)
+lazily_add_spec_conformance_test(LosslessTreeConformance test_lossless_tree_conformance)
 
 add_executable(test_command_conformance test_command_conformance.cpp)
 target_link_libraries(test_command_conformance PRIVATE lazily)
-add_test(NAME CommandConformance COMMAND test_command_conformance)
+lazily_add_spec_conformance_test(CommandConformance test_command_conformance)
 
 # Reactive-graph disposal/teardown + invalidation corpus (#lzspecedgeindex).
 # Replays ../lazily-spec/conformance/reactive-graph/. lazily-cpp replayed NONE
@@ -334,7 +365,7 @@ add_test(NAME CommandConformance COMMAND test_command_conformance)
 # invalidation-cascade defect shipped undetected in two other bindings.
 add_executable(test_reactive_graph_conformance test_reactive_graph_conformance.cpp)
 target_link_libraries(test_reactive_graph_conformance PRIVATE lazily)
-add_test(NAME ReactiveGraphConformance COMMAND test_reactive_graph_conformance)
+lazily_add_spec_conformance_test(ReactiveGraphConformance test_reactive_graph_conformance)
 
 # Canonical conformance fixtures (#lzspecconf).
 #
@@ -355,88 +386,106 @@ add_test(NAME ReactiveGraphConformance COMMAND test_reactive_graph_conformance)
 # Absence is a SKIP (CTest exit 77) with an explicit message rather than a
 # silent pass. CI asserts the directory exists so a skip cannot go unnoticed
 # there, and each suite additionally asserts a positive distinct-fixture count.
-set(LAZILY_SPEC_CONFORMANCE_TESTS
-    test_ipc
-    test_stdlib_conformance
-  test_crdt_tree
-  test_family_sync
-  test_reliable_sync
-  test_outbox_store
-  test_temporal_conformance
-  test_rateshape_conformance
-  test_membership_conformance
-  test_coordination_conformance
-  test_presence_conformance
-  test_windowing_conformance
-  test_resilience_conformance
-  test_service_conformance
-  test_seqcrdt_conformance
-  test_topic_conformance
-  test_lossless_tree_conformance
-  test_command_conformance
-  test_materialization_conformance
-  test_materialization_family_conformance
-  test_collections_fixture_conformance
-  test_collections_family_conformance
-  test_queue_conformance
-  test_work_queue_conformance
-  test_signaling_conformance
-  test_queue_family_conformance
-  test_ingress_conformance
-  test_reactive_graph_conformance
-  test_statechart_conformance
-  test_receipts_conformance
-  test_distributed_conformance
-  test_codec_conformance
-  test_capability_conformance
-  test_nodeid_exact_range_conformance
-  test_nodekey_null_leniency_conformance
-  test_blob_backend_discriminator_conformance)
+# Every suite above registers through lazily_add_spec_conformance_test(), which
+# states all three of those properties in one call. What used to stand here were
+# the two lists that stated them separately -- a list of TARGETS carrying the
+# compile define, and a list of ctest NAMES carrying SKIP_RETURN_CODE 77 -- and
+# the second drifted from the first three separate times. Each drift meant that
+# for the missed suites an absent sibling checkout was reported as a hard ctest
+# FAILURE rather than a skip, so a checkout without the sibling read as a broken
+# build. Twice that was repaired by editing the names list again; the third time
+# the lists were removed instead, which is why there is nothing to keep in sync
+# below this point.
+#
+# The guard below covers the one case the helper cannot: a NEW corpus reader
+# wired up with a bare add_test(). Membership is derived from the SOURCES rather
+# than declared -- a target whose transitive local-include closure reaches
+# `require_spec_checkout_or_skip` reads the corpus by construction and must
+# therefore have been registered. Configure fails and names it when it was not.
+#
+# (tests/test_spec_fixture.hpp additionally #errors when LAZILY_SPEC_CONFORMANCE_DIR
+# is undefined, so an unregistered reader already fails to BUILD. That covers the
+# same hole one stage later and only for translation units that include the seam
+# header; this one fails at configure time and says what to do about it.)
+function(_lazily_target_reads_spec_corpus _target _out)
+  get_target_property(_sources ${_target} SOURCES)
+  if(NOT _sources)
+    set(${_out} FALSE PARENT_SCOPE)
+    return()
+  endif()
+  set(_pending "")
+  foreach(_source IN LISTS _sources)
+    get_filename_component(_abs "${_source}" ABSOLUTE
+                           BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    list(APPEND _pending "${_abs}")
+  endforeach()
 
-foreach(_target IN LISTS LAZILY_SPEC_CONFORMANCE_TESTS)
-  target_compile_definitions(${_target} PRIVATE
-    LAZILY_SPEC_CONFORMANCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../lazily-spec/conformance")
+  set(_seen "")
+  set(_reads FALSE)
+  while(_pending)
+    list(POP_FRONT _pending _file)
+    if(NOT EXISTS "${_file}" OR "${_file}" IN_LIST _seen)
+      continue()
+    endif()
+    list(APPEND _seen "${_file}")
+    # Re-configure when a scanned source changes; a guard reading a stale
+    # snapshot of the tree is a guard that stops guarding after the first edit.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_file}")
+    file(READ "${_file}" _text)
+    if(_text MATCHES "require_spec_checkout_or_skip")
+      set(_reads TRUE)
+    endif()
+    # Follow local includes only ("..."); a system include cannot reach the seam.
+    string(REGEX MATCHALL "#[ \t]*include[ \t]*\"[^\"]+\"" _includes "${_text}")
+    get_filename_component(_dir "${_file}" DIRECTORY)
+    foreach(_include IN LISTS _includes)
+      string(REGEX REPLACE "^#[ \t]*include[ \t]*\"([^\"]+)\"$" "\\1"
+             _relative "${_include}")
+      get_filename_component(_abs "${_dir}/${_relative}" ABSOLUTE)
+      list(APPEND _pending "${_abs}")
+    endforeach()
+  endwhile()
+  set(${_out} ${_reads} PARENT_SCOPE)
+endfunction()
+
+get_property(_lazily_registered GLOBAL PROPERTY LAZILY_SPEC_CONFORMANCE_TARGETS)
+get_property(_lazily_dir_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+set(_lazily_unregistered "")
+foreach(_target IN LISTS _lazily_dir_targets)
+  get_target_property(_type ${_target} TYPE)
+  if(NOT _type STREQUAL "EXECUTABLE")
+    continue()
+  endif()
+  _lazily_target_reads_spec_corpus(${_target} _reads)
+  if(_reads AND NOT "${_target}" IN_LIST _lazily_registered)
+    list(APPEND _lazily_unregistered ${_target})
+  endif()
 endforeach()
 
-set_tests_properties(
-    ipc
-    StdlibConformance
-  CrdtTreeConformance
-  reliable_sync
-  OutboxStoreConformance
-  TemporalConformance
-  RateshapeConformance
-  MembershipConformance
-  CoordinationConformance
-  PresenceConformance
-  WindowingConformance
-  ResilienceConformance
-  ServiceConformance
-  MaterializationConformance
-  CollectionsFixtureConformance
-  ReactiveGraphConformance
-  IngressConformance
-  # These four read the sibling checkout exactly like the rest but were missing
-  # from this list, so an absent lazily-spec turned their exit-77 SKIP into a
-  # hard ctest FAILURE instead of a skip.
-  SeqCrdtConformance
-  TopicConformance
-  WorkQueueConformance
-  LosslessTreeConformance
-  CommandConformance
-  StatechartConformance
-  ReceiptsConformance
-  DistributedConformance
-  CodecConformance
-  CapabilityConformance
-  # Same omission as the four above, spotted while adding the third of them: all
-  # three read the sibling checkout through `require_spec_checkout_or_skip`, so
-  # without SKIP_RETURN_CODE their exit-77 SKIP is a hard ctest FAILURE whenever
-  # lazily-spec is absent.
-  NodeIdExactRangeConformance
-  NodeKeyNullLeniencyConformance
-  BlobBackendDiscriminatorConformance
-  PROPERTIES SKIP_RETURN_CODE 77)
+if(_lazily_unregistered)
+  string(REPLACE ";" "\n  " _lazily_unregistered_pretty "${_lazily_unregistered}")
+  message(FATAL_ERROR
+    "unregistered canonical-conformance runner(s):\n  "
+    "${_lazily_unregistered_pretty}\n"
+    "Each reads the sibling lazily-spec checkout through "
+    "require_spec_checkout_or_skip(), which exits 77 to mean SKIP. Added with a "
+    "bare add_test(), that 77 has no SKIP_RETURN_CODE behind it, so ctest "
+    "reports a FAILURE and a checkout without the sibling looks like a broken "
+    "build. Register with "
+    "lazily_add_spec_conformance_test(<ctest-name> <target>) instead of "
+    "add_test() -- it bakes in the corpus path, adds the test, and sets "
+    "SKIP_RETURN_CODE 77 together.")
+endif()
+
+list(LENGTH _lazily_registered _lazily_registered_count)
+if(_lazily_registered_count EQUAL 0)
+  message(FATAL_ERROR
+    "no canonical-conformance suite registered -- lazily_add_spec_conformance_test() "
+    "was never called, so the corpus is replayed by nothing.")
+endif()
+message(STATUS
+  "lazily-cpp: ${_lazily_registered_count} canonical-conformance suite(s) registered "
+  "(corpus ${LAZILY_SPEC_CONFORMANCE_DIR}, absence = ctest SKIP)")
 
 # Gates the suite on the sibling lazily-formal Lean model compiling (`lake
 # build`). Skips gracefully (CTest exit code 77) when the sibling checkout or

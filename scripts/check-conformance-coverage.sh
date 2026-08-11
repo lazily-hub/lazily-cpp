@@ -60,8 +60,9 @@ conformance_dir="${LAZILY_SPEC_CONFORMANCE_DIR:-$repo_root/../lazily-spec/confor
 #
 # This binding already has the strongest structural guard of the family, and it
 # is not a text scan: tests/test_spec_fixture.hpp #errors when the macro is
-# undefined, so a conformance runner that forgets to register in
-# LAZILY_SPEC_CONFORMANCE_TESTS cannot even compile. That guard has exactly one
+# undefined, so a conformance runner that forgets to register through
+# lazily_add_spec_conformance_test() (tests/CMakeLists.txt) cannot even compile.
+# That guard has exactly one
 # hole — it only reaches translation units that INCLUDE the seam header. A
 # source that spells the root itself and never touches the seam builds clean and
 # reads the default corpus no matter what the override says.
