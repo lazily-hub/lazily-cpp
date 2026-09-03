@@ -56,6 +56,16 @@ invalidation and effect reruns happen once after the outermost batch exits.
 > public layer: code uses `Source<T, M>` / `Computed<T>` / `Effect` and the
 > corresponding `Context` constructors.
 
+### Latest-durable projection egress
+
+`LatestDurableProjectionCore<K, T>` is the deterministic state-machine core for
+publishing each key's latest desired projection to a durable sink. It provides
+monotone epochs, one in-flight write per key, pending supersession, retryable
+failure, reconnect generation fencing, and a monotone `durable_through`
+frontier. `LatestDurableProjection`, `ThreadSafeLatestDurableProjection`, and
+`AsyncLatestDurableProjection` add reactive entry and generation handles for
+their corresponding execution models.
+
 ## Feature Set
 
 Coverage by feature family across every binding, generated from

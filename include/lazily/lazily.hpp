@@ -18,6 +18,7 @@
 #include <lazily/ipc.hpp>
 #include <lazily/json.hpp>
 #include <lazily/json_codec.hpp>
+#include <lazily/latest_durable_projection.hpp>
 #include <lazily/lossless_tree_crdt.hpp>
 #include <lazily/membership.hpp>
 #include <lazily/merge.hpp>

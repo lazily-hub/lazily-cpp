@@ -56,7 +56,7 @@ write_mode=0
 # green — a drop means a replay stopped running. These are the positive
 # assertion that fixtures ran, without which "0 replayed" reads as success.
 MIN_CORE_FIXTURES="${MIN_CORE_FIXTURES:-86}"
-MIN_THREADED_FIXTURES="${MIN_THREADED_FIXTURES:-44}"
+MIN_THREADED_FIXTURES="${MIN_THREADED_FIXTURES:-47}"
 
 # ── the one narrowing ledger ────────────────────────────────────────────────
 #
@@ -77,7 +77,6 @@ WASM_ABSENT_REASONS=(
   "reliable-sync|the durable outbox is file-backed (unistd.h/fcntl.h); reliable_sync.hpp refuses to compile under __EMSCRIPTEN__"
   "distributed|resolves ShmBlobRef through transport.hpp's ShmBackend — POSIX shm_open/mmap has no wasm implementation"
   "(root)|the top-level snapshot_*/delta_* frames are replayed by the ipc and reliable-sync suites, both native-only"
-  "egress|lazily-cpp has no egress runner in ANY target, native included — a binding gap, not a wasm limit"
   "protobuf|lazily-cpp ships no protobuf codec in ANY target, native included — a binding gap, not a wasm limit"
   "agent-doc|agent-doc session fixtures are not a lazily library family and no binding replays them"
 )

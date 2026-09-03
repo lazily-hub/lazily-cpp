@@ -64,7 +64,7 @@ jobs:
       # the missing input it is rather than as a wall of failing tests.
       - name: Assert canonical conformance fixtures are present (#lzspecconf)
         run: |
-          for area in coordination crdt-tree membership presence rateshape \
+          for area in coordination crdt-tree egress membership presence rateshape \
                       reactive-graph reliable-sync resilience service \
                       temporal windowing; do
             test -d "../lazily-spec/conformance/$area" || {

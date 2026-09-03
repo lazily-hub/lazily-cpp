@@ -65,6 +65,7 @@
 #include <lazily/cell.hpp>
 #include <lazily/collections.hpp>
 #include <lazily/keyed_order.hpp>
+#include <lazily/latest_durable_projection_core.hpp>
 #include <lazily/statechart.hpp>
 
 // Marks a translation unit as having taken the narrow-include contract, so a

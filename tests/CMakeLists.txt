@@ -294,6 +294,10 @@ add_executable(test_ingress_conformance test_ingress_conformance.cpp)
 target_link_libraries(test_ingress_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(IngressConformance test_ingress_conformance)
 
+add_executable(test_latest_durable_projection test_latest_durable_projection.cpp)
+target_link_libraries(test_latest_durable_projection PRIVATE lazily)
+lazily_add_spec_conformance_test(LatestDurableProjection test_latest_durable_projection)
+
 add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
 lazily_add_spec_conformance_test(family_sync test_family_sync)

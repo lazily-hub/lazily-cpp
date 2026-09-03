@@ -395,8 +395,11 @@ fi
 # so CI's clone carries them. Set to what the guard REPORTED after the change,
 # not to 137+2 — those happen to agree here only because nothing else moved.
 #
-# Confirmed by a local green `make check`. Verified exact: 140 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-139}"
+# 139 -> 140: lazily-spec v0.38.0 added the latest-durable projection fixture,
+# replayed by tests/test_latest_durable_projection.cpp.
+#
+# Confirmed by a local green `make check`. Verified exact: 141 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-140}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -421,8 +424,9 @@ codec
 collections
 coordination
 crdt-tree
-distributed
-familysync
+  distributed
+  egress
+  familysync
 ingress
 ipc
 lossless-tree
@@ -455,8 +459,6 @@ EXCUSED_AREAS=(
   # IPC wire snapshots of the agent-doc state projection — an application schema
   # carried on the IPC plane, not a binding-level reactive concern.
   agent-doc
-  # Reactive egress is Rust-only; this binding has no egress replay runner.
-  egress
   # The experimental protobuf-v1 generator pilot is Rust/Kotlin/TypeScript.
   protobuf
 )
@@ -478,7 +480,8 @@ KNOWN_UNCOVERED=(
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
   "collections/registers_convergence.json"
-  # egress — reactive egress is Rust-only; there is no C++ egress replay runner.
+  # egress — the legacy FIFO stream contract remains distinct from the
+  # latest-durable per-key projection implemented by this binding.
   "egress/egress_generation_fence.json"
   "egress/egress_inflight_window.json"
   "egress/egress_ordered_ack.json"
