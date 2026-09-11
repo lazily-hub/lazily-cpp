@@ -461,6 +461,9 @@ EXCUSED_AREAS=(
   agent-doc
   # The experimental protobuf-v1 generator pilot is Rust/Kotlin/TypeScript.
   protobuf
+  # Replay-equivalence proof — an optional (MAY) row with lazily-py as the
+  # reference implementation; this binding has no harness yet.
+  replay
 )
 
 # Fixtures inside a REQUIRED or EXCUSED area that this binding does NOT yet
@@ -472,6 +475,13 @@ EXCUSED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
+  # Replay-equivalence proof (`lazily-spec/docs/replay-equivalence.md`) is an
+  # optional (MAY) coverage row and lazily-py is the reference implementation;
+  # this binding has no harness yet, so it opens none of the three. Building one
+  # is what removes these entries — they are not permanent carve-outs.
+  "replay/canonical_encoding_equality.json"
+  "replay/divergence_localization.json"
+  "replay/fingerprint_log_binding.json"
   # agent-doc — IPC wire snapshots of the agent-doc state projection, an
   # application schema on the IPC plane rather than a binding-level concern.
   "agent-doc/delta_agent_doc_state.json"
