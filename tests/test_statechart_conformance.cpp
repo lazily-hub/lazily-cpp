@@ -59,7 +59,11 @@ static const std::vector<std::string> kFixtures = {
     "parallel_regions.json",
 };
 
-// Work actually performed, asserted non-zero in `main`.
+// Work actually performed. `g_steps_loaded` is every step this runner READ off
+// the corpus; `g_steps_replayed` is every step it actually SENT into a chart.
+// `main` asserts they are equal, which is the constant-free replacement for the
+// `g_steps_replayed >= 33` floor that used to live there (`#lzcorpusfloorguard`).
+static size_t g_steps_loaded = 0;
 static size_t g_steps_replayed = 0;
 static size_t g_assertions = 0;
 
@@ -288,6 +292,7 @@ static void replay(const std::string& name) {
   const Json* steps = fixture->find("steps");
   REQUIRE(steps != nullptr && steps->is_array() && !steps->array.empty(),
           "fixture has no steps to replay");
+  g_steps_loaded += steps->array.size();
 
   for (size_t i = 0; i < steps->array.size(); ++i) {
     const Json& step = *steps->array[i];
@@ -379,9 +384,25 @@ int main() {
     replay(name);
   reject_malformed_corpus();
 
-  REQUIRE(g_steps_replayed >= 33, "the statechart replay performed too few steps — the corpus is "
-                                  "empty, truncated, or short-circuited");
-  REQUIRE(g_assertions >= 80, "the statechart replay made too few assertions to be meaningful");
+  // No hard-coded step floor (`#lzcorpusfloorguard`). `g_steps_replayed >= 33`
+  // was slack by construction: once the corpus carried more than 33 steps, a
+  // replay that dropped the surplus still read green. The exact form below
+  // carries no number and cannot drift — every step READ off the corpus was
+  // SENT into a chart. Note this runner has no op-type dispatch to fall through:
+  // `replay` sends every step unconditionally, and `chart_require`/`REQUIRE`
+  // abort on an unrecognised chart kind or history spelling rather than
+  // defaulting. The SHRINK half — a fixture quietly losing steps — is guarded
+  // corpus-side in lazily-spec: `conformance/corpus-counts.json` pins each
+  // fixture's step count and `scripts/check-corpus-floors.mjs` fails when a
+  // count moves without that pin moving.
+  REQUIRE(g_steps_replayed == g_steps_loaded,
+          "the statechart replay sent " + std::to_string(g_steps_replayed) + " of " +
+              std::to_string(g_steps_loaded) + " loaded corpus steps — a step was skipped");
+  REQUIRE(g_steps_replayed > 0, "the statechart corpus carries no steps at all");
+  // Every replayed step makes at least its `accepted` assertion, so this is the
+  // floor the corpus itself sets rather than a number typed in here.
+  REQUIRE(g_assertions >= g_steps_replayed,
+          "the statechart replay made fewer assertions than it replayed steps");
 
   std::cout << "statechart conformance: " << kFixtures.size() << " fixtures, " << g_steps_replayed
             << " steps, " << g_assertions << " assertions" << std::endl;

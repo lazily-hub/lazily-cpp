@@ -19,6 +19,35 @@
 // mismatch, which are the two faults obligation 1 and obligation 2 insist are
 // distinct.
 
+// Why no step counts live in this runner (`#lzcorpusfloorguard`)
+//
+// These drivers used to take a minimum-step floor -- `drive_encoding_fixture(
+// "canonical_encoding_equality.json", 11)`, re-pinned to 14 by hand when the
+// corpus grew. A floor like that is slack by construction. When lazily-spec
+// added three steps to that fixture, eight of nine bindings were still pinned
+// at 11: the new rows sat inside the slack and every one of those runners would
+// have reported green WITHOUT EXECUTING them. Re-pinning the number only resets
+// the drift clock; the number itself is the defect.
+//
+// Two constant-free assertions replace it, and each driver carries both:
+//
+//   1. Every step LOADED is EXECUTED. `executed` is incremented inside the
+//      dispatch loop, on the arm that actually ran the step, and compared to
+//      `steps.size()` once the loop ends. Exact, needs no number, and a loop
+//      that learns to skip a step reddens naming the shortfall.
+//   2. An unrecognised op type is a HARD FAILURE, never a silent `continue`.
+//      Each dispatch closes with `REQUIRE(false, where + ": unknown canonical
+//      ... operation")`, so a future corpus step spelling a new op type aborts
+//      here instead of being skipped and counted as passing. Do not widen
+//      either of those into a skip. `tests/wasm.cmake` passes `-fexceptions`,
+//      so the throw is observed under wasm too.
+//
+// The other half -- a fixture quietly SHRINKING -- cannot be seen from inside a
+// binding at all, and is guarded corpus-side in lazily-spec:
+// `conformance/corpus-counts.json` pins each fixture's own step count and
+// `scripts/check-corpus-floors.mjs` fails when a count moves without that pin
+// moving.
+
 #include <lazily/replay.hpp>
 
 #include "test_assertion_keys.hpp"
@@ -138,7 +167,7 @@ static std::vector<long long> json_int_array(const lazily_test::Json& value) {
 
 // -- obligations 1 and 2 ------------------------------------------------------
 
-static void drive_harness_fixture(const std::string& name, std::size_t minimum_steps) {
+static void drive_harness_fixture(const std::string& name) {
   const std::string fixture_id = std::string(kFixtureArea) + "/" + name;
   const std::string text = lazily_test::spec_fixture_text(kFixtureArea, name);
   const lazily_test::JsonPtr fixture = lazily_test::parse_json(text);
@@ -165,8 +194,10 @@ static void drive_harness_fixture(const std::string& name, std::size_t minimum_s
   std::map<std::string, ReplayFingerprint> fingerprints;
 
   const auto& steps = lazily_test::json_array(lazily_test::json_member(*fixture, "steps"));
-  REQUIRE(steps.size() >= minimum_steps,
-          fixture_id + ": fixture carries fewer steps than this runner replays");
+  // No minimum-step floor here -- see "why no step counts live in this runner"
+  // at the top of the file.
+  REQUIRE(!steps.empty(), fixture_id + ": a replay of zero steps is not a replay");
+  std::size_t executed = 0;
 
   for (std::size_t index = 0; index < steps.size(); ++index) {
     const lazily_test::Json& step = *steps[index];
@@ -185,6 +216,7 @@ static void drive_harness_fixture(const std::string& name, std::size_t minimum_s
       // accounted for rather than silently unread.
       lazily_test::AssertionKeys expected(where + ".expected",
                                           lazily_test::json_member(step, "expected"));
+      ++executed;
       continue;
     }
 
@@ -224,6 +256,7 @@ static void drive_harness_fixture(const std::string& name, std::size_t minimum_s
               where + ": the fingerprint's final checkpoint carries no `sum` cell");
       REQUIRE(recorded_sum->second == canonical_digest(ReplayValue::integer(final_sum)),
               where + ": the recorded `sum` digest is not the subject's final sum");
+      ++executed;
       continue;
     }
 
@@ -231,6 +264,7 @@ static void drive_harness_fixture(const std::string& name, std::size_t minimum_s
       harness.prove(log, static_cast<int>(lazily_test::json_member(op, "replays").as_int()));
       expected.assert_key("outcome", std::string("ok"));
       expected.assert_key("divergences", 0);
+      ++executed;
       continue;
     }
 
@@ -262,6 +296,7 @@ static void drive_harness_fixture(const std::string& name, std::size_t minimum_s
         expected.assert_key("first_divergent_label", first.label);
         expected.assert_key("first_divergent_kind", std::string(first.kind_name()));
       }
+      ++executed;
       continue;
     }
 
@@ -276,11 +311,18 @@ static void drive_harness_fixture(const std::string& name, std::size_t minimum_s
         expected.assert_key("outcome", std::string("log_mismatch"));
         expected.assert_key("divergences", 0);
       }
+      ++executed;
       continue;
     }
 
     REQUIRE(false, where + ": unknown canonical replay operation");
   }
+
+  // Exact, constant-free: the dispatch above either executed a step or aborted
+  // on it, so a loop that learned to skip one reddens here by name.
+  REQUIRE(executed == steps.size(), fixture_id + ": executed " + std::to_string(executed) + " of " +
+                                        std::to_string(steps.size()) +
+                                        " loaded steps -- a step was skipped");
 }
 
 // -- obligation 3 -------------------------------------------------------------
@@ -326,7 +368,7 @@ static ReplayValue value_from_fixture(const lazily_test::Json& tagged) {
   return ReplayValue::null();
 }
 
-static void drive_encoding_fixture(const std::string& name, std::size_t minimum_steps) {
+static void drive_encoding_fixture(const std::string& name) {
   const std::string fixture_id = std::string(kFixtureArea) + "/" + name;
   const std::string text = lazily_test::spec_fixture_text(kFixtureArea, name);
   const lazily_test::JsonPtr fixture = lazily_test::parse_json(text);
@@ -341,8 +383,10 @@ static void drive_encoding_fixture(const std::string& name, std::size_t minimum_
   REQUIRE(values.is_object(), fixture_id + ": config.values must be an object");
 
   const auto& steps = lazily_test::json_array(lazily_test::json_member(*fixture, "steps"));
-  REQUIRE(steps.size() >= minimum_steps,
-          fixture_id + ": fixture carries fewer steps than this runner replays");
+  // No minimum-step floor here -- see "why no step counts live in this runner"
+  // at the top of the file.
+  REQUIRE(!steps.empty(), fixture_id + ": a replay of zero steps is not a replay");
+  std::size_t executed = 0;
 
   std::set<bool> outcomes;
   for (std::size_t index = 0; index < steps.size(); ++index) {
@@ -362,6 +406,7 @@ static void drive_encoding_fixture(const std::string& name, std::size_t minimum_
       REQUIRE(lazily_test::json_bool(lazily_test::json_member(step, "returns")) == equal,
               where + ": returns");
       outcomes.insert(equal);
+      ++executed;
       continue;
     }
 
@@ -377,11 +422,18 @@ static void drive_encoding_fixture(const std::string& name, std::size_t minimum_
       REQUIRE(lazily_test::json_bool(lazily_test::json_member(step, "returns")) == defined,
               where + ": returns");
       expected.assert_key("outcome", std::string("encoding_error"));
+      ++executed;
       continue;
     }
 
     REQUIRE(false, where + ": unknown canonical encoding operation");
   }
+
+  // Exact, constant-free: the dispatch above either executed a step or aborted
+  // on it, so a loop that learned to skip one reddens here by name.
+  REQUIRE(executed == steps.size(), fixture_id + ": executed " + std::to_string(executed) + " of " +
+                                        std::to_string(steps.size()) +
+                                        " loaded steps -- a step was skipped");
 
   // Both outcomes really occurred. A runner that only ever saw `false` would
   // pass every inequality claim with a thoroughly broken encoding.
@@ -488,9 +540,9 @@ static void assert_local_member_framing() {
 }
 
 int main() {
-  drive_harness_fixture("fingerprint_log_binding.json", 8);
-  drive_harness_fixture("divergence_localization.json", 7);
-  drive_encoding_fixture("canonical_encoding_equality.json", 14);
+  drive_harness_fixture("fingerprint_log_binding.json");
+  drive_harness_fixture("divergence_localization.json");
+  drive_encoding_fixture("canonical_encoding_equality.json");
   assert_local_member_framing();
 
   REQUIRE_FIXTURES_LOADED(3);

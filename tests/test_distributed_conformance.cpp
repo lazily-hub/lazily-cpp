@@ -48,8 +48,15 @@ static const char* kArea = "distributed";
 static const char* kFixture = "anti_entropy_converge.json";
 static const char* kFramesFixture = "crdt_sync_frames.json";
 
+// `g_*_loaded` is what this runner READ off the corpus; the unsuffixed counters
+// are what it actually REPLAYED. `main` asserts they agree, which is the
+// constant-free replacement for the `>= 3 / >= 20 / >= 20` floors that used to
+// sit there (`#lzcorpusfloorguard`).
+static size_t g_scenarios_loaded = 0;
 static size_t g_scenarios = 0;
+static size_t g_ops_loaded = 0;
 static size_t g_ops_ingested = 0;
+static size_t g_ops_reversed = 0;
 static size_t g_checks = 0;
 
 // `state` is an externally-tagged IpcValue. Only the variants this binding
@@ -229,6 +236,7 @@ static void replay_crdt_sync_frames() {
   REQUIRE(library_frames->array.size() == frames->array.size(),
           "both parses should see the same frame count");
 
+  g_scenarios_loaded += frames->array.size();
   std::size_t checked = 0;
   for (std::size_t i = 0; i < frames->array.size(); ++i) {
     const Json& frame = *frames->array[i];
@@ -288,7 +296,12 @@ static void replay_crdt_sync_frames() {
     ++g_scenarios;
   }
 
-  REQUIRE(checked >= 4, "too little asserted across the crdt sync frames");
+  // Not a typed-in floor: the corpus itself sets it. Every frame carries an
+  // `assertions` block and `expect.finish()` refuses a declared key that went
+  // unconsumed, so "at least one assertion per frame READ" is the exact claim.
+  REQUIRE(checked >= frames->array.size(), "the crdt sync frames replay made " +
+                                               std::to_string(checked) + " assertions across " +
+                                               std::to_string(frames->array.size()) + " frames");
   g_checks += checked;
   std::cout << "crdt sync frames: " << frames->array.size() << " frames, " << checked
             << " assertions" << std::endl;
@@ -306,6 +319,7 @@ int main() {
   const Json* scenarios = fixture->find("scenarios");
   REQUIRE(scenarios != nullptr && scenarios->is_array() && !scenarios->array.empty(),
           "fixture has no scenarios to replay");
+  g_scenarios_loaded += scenarios->array.size();
 
   for (const auto& sv :
        lazily_test::scenario_views(std::string(kArea) + "/" + kFixture, scenarios->array)) {
@@ -338,6 +352,7 @@ int main() {
     CrdtPlaneRuntime runtime(99);
     CrdtSync frame{{}, ops};
     const int applied = runtime.ingest(frame);
+    g_ops_loaded += ops_node->array.size();
     g_ops_ingested += ops.size();
     ++g_scenarios;
     ++g_checks;
@@ -375,7 +390,7 @@ int main() {
     CrdtPlaneRuntime reversed_runtime(99);
     std::vector<CrdtOp> reversed(ops.rbegin(), ops.rend());
     const int rev_applied = reversed_runtime.ingest(CrdtSync{{}, reversed});
-    g_ops_ingested += reversed.size();
+    g_ops_reversed += reversed.size();
     ++g_checks;
     expect.assert_key("applied_count", rev_applied);
     expect.assert_key_with("converged", [&](const Json& converged) {
@@ -392,9 +407,26 @@ int main() {
     expect.assert_key_if_present("order_independent", order_independent);
   }
 
-  REQUIRE(g_scenarios >= 3 && g_ops_ingested >= 20 && g_checks >= 20,
-          "the anti-entropy replay did too little work to be meaningful — the "
-          "corpus is empty, truncated, or short-circuited");
+  // No hard-coded corpus counts (`#lzcorpusfloorguard`). `>= 3 / >= 20 / >= 20`
+  // was slack: anything the corpus grew past those numbers could be dropped and
+  // the run still read green. What replaces them carries no number — every
+  // scenario READ was REPLAYED, every op READ was INGESTED — and the dispatch
+  // paths abort on an unrecognised scenario key, IpcValue tag, or resolution
+  // rule rather than defaulting past it. The SHRINK half is guarded corpus-side
+  // in lazily-spec: `conformance/corpus-counts.json` pins each fixture's own
+  // counts and `scripts/check-corpus-floors.mjs` fails when one moves without
+  // that pin moving.
+  REQUIRE(g_scenarios == g_scenarios_loaded,
+          "the anti-entropy replay replayed " + std::to_string(g_scenarios) + " of " +
+              std::to_string(g_scenarios_loaded) + " loaded scenarios — one was skipped");
+  REQUIRE(g_ops_ingested == g_ops_loaded,
+          "the anti-entropy replay ingested " + std::to_string(g_ops_ingested) + " of " +
+              std::to_string(g_ops_loaded) + " loaded ops — one was skipped");
+  REQUIRE(g_ops_reversed == g_ops_loaded,
+          "the reversed-order replay ingested " + std::to_string(g_ops_reversed) + " of " +
+              std::to_string(g_ops_loaded) + " loaded ops — one was skipped");
+  REQUIRE(g_scenarios > 0 && g_ops_ingested > 0 && g_checks >= g_scenarios,
+          "the anti-entropy corpus is empty or short-circuited");
 
   std::cout << "distributed conformance: " << g_scenarios << " scenarios, " << g_ops_ingested
             << " ops ingested, " << g_checks << " assertions" << std::endl;

@@ -681,8 +681,17 @@ void ledger_is_not_all_skips() {
 
 void corpus_is_present_and_non_trivial() {
   const std::size_t total = expected_step_total();
-  REQUIRE(total >= 30, "the ingress corpus replays only " + std::to_string(total) +
-                           " steps; that is not the named schedule set");
+  // No hard-coded step floor here any more (`#lzcorpusfloorguard`). `total >= 30`
+  // was slack: every step the corpus grew past 30 sat inside it, so a runner
+  // that skipped the new rows still read green. The exact form already lives in
+  // `main` -- `replayed[flavour] == total` for each of the three flavours, which
+  // is executed-equals-loaded and carries no number -- and the dispatch in
+  // `replay` closes with `REQUIRE(false, ... unknown op ...)`, so a step
+  // spelling a new op type aborts instead of being skipped. The SHRINK half is
+  // guarded corpus-side in lazily-spec: `conformance/corpus-counts.json` pins
+  // each fixture's step count and `scripts/check-corpus-floors.mjs` fails when
+  // a count moves without that pin moving.
+  REQUIRE(total > 0, "the ingress corpus carries no steps at all");
 }
 
 /// The corpus asserts NEGATIVE invalidation, so the probe itself must be able to

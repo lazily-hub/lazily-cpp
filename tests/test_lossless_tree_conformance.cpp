@@ -19,6 +19,7 @@
 #include <lazily/lossless_tree_crdt.hpp>
 
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <string>
@@ -193,9 +194,22 @@ static void run_fixture(const std::string& name, int& fixture_scenarios) {
     w.replicas.insert_or_assign(
         "a", LosslessTreeCrdt(static_cast<PeerId>(seed->find("peer")->as_int())));
     w.build_children(seed->find("tree"), kTreeRoot);
-    if (const Json* steps = scenario->find("steps"))
-      for (const auto& step : steps->array)
+    if (const Json* steps = scenario->find("steps")) {
+      // Executed-equals-loaded, per scenario: exact, constant-free, and a loop
+      // that learns to skip a step reddens here naming the shortfall
+      // (`#lzcorpusfloorguard`). `apply_step` itself closes with
+      // `REQUIRE(false, "unrecognized lossless step")`, so a step spelling a
+      // new form aborts rather than being silently skipped.
+      size_t applied = 0;
+      for (const auto& step : steps->array) {
         apply_step(w, step.get());
+        ++applied;
+      }
+      REQUIRE(applied == steps->array.size(),
+              ("lossless-tree/" + label + ": applied " + std::to_string(applied) + " of " +
+               std::to_string(steps->array.size()) + " loaded steps")
+                  .c_str());
+    }
     assert_expect(w, scenario->find("expect"), label);
     ++fixture_scenarios;
   }
@@ -227,7 +241,13 @@ TEST(conformance_lossless_tree_all) {
   };
   for (const char* f : fixtures)
     run_fixture(f, g_scenarios);
-  REQUIRE(g_scenarios >= 11, "expected at least one scenario per fixture");
+  // Derived from the list above, never typed in (`#lzcorpusfloorguard`): a
+  // literal `11` here is slack that a twelfth fixture silently widens. The
+  // per-scenario executed-equals-loaded assertion in `run_fixture` covers the
+  // steps, and the SHRINK half is guarded corpus-side in lazily-spec
+  // (`conformance/corpus-counts.json` + `scripts/check-corpus-floors.mjs`).
+  REQUIRE(g_scenarios >= static_cast<int>(std::size(fixtures)),
+          "expected at least one scenario per fixture");
 }
 
 int main() {
