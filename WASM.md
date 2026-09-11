@@ -111,6 +111,7 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `reactive-graph` | 21 | — | 21 | needs -pthread |
 | `receipts` | 1 | 1 | — |  |
 | `reliable-sync` | 9 | — | — | not on wasm — the durable outbox is file-backed (unistd.h/fcntl.h); reliable_sync.hpp refuses to compile under __EMSCRIPTEN__ |
+| `replay` | 3 | 3 | — |  |
 | `resilience` | 4 | 4 | — |  |
 | `service` | 4 | 4 | — |  |
 | `signaling` | 2 | 1 | — |  |
@@ -118,7 +119,7 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **153** | **91** | **47** | |
+| **total** | **156** | **94** | **47** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits

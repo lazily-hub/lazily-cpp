@@ -31,6 +31,7 @@
 #include <lazily/receipt.hpp>
 #include <lazily/relay.hpp>
 #include <lazily/reliable_sync.hpp>
+#include <lazily/replay.hpp>
 #include <lazily/resilience.hpp>
 #include <lazily/sem_tree.hpp>
 #include <lazily/service.hpp>

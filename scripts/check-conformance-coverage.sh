@@ -398,8 +398,14 @@ fi
 # 139 -> 140: lazily-spec v0.38.0 added the latest-durable projection fixture,
 # replayed by tests/test_latest_durable_projection.cpp.
 #
-# Confirmed by a local green `make check`. Verified exact: 141 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-140}"
+# 140 -> 143: the replay-equivalence proof (`#lzreplaycpp`) landed, and
+# tests/test_replay_conformance.cpp now opens all three of lazily-spec's
+# `replay/` fixtures. That is what moved `replay` out of EXCUSED_AREAS and
+# emptied its three KNOWN_UNCOVERED entries. Set to what the guard REPORTED
+# after the change, not to 140+3.
+#
+# Confirmed by a local green `make check`. Verified exact: 144 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-143}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -438,6 +444,7 @@ lossless-tree
   reactive-graph
   receipts
   reliable-sync
+  replay
   resilience
   service
   signaling
@@ -461,9 +468,6 @@ EXCUSED_AREAS=(
   agent-doc
   # The experimental protobuf-v1 generator pilot is Rust/Kotlin/TypeScript.
   protobuf
-  # Replay-equivalence proof — an optional (MAY) row with lazily-py as the
-  # reference implementation; this binding has no harness yet.
-  replay
 )
 
 # Fixtures inside a REQUIRED or EXCUSED area that this binding does NOT yet
@@ -475,13 +479,6 @@ EXCUSED_AREAS=(
 #
 # Shrinking this list is the work. Growing it requires a stated reason.
 KNOWN_UNCOVERED=(
-  # Replay-equivalence proof (`lazily-spec/docs/replay-equivalence.md`) is an
-  # optional (MAY) coverage row and lazily-py is the reference implementation;
-  # this binding has no harness yet, so it opens none of the three. Building one
-  # is what removes these entries — they are not permanent carve-outs.
-  "replay/canonical_encoding_equality.json"
-  "replay/divergence_localization.json"
-  "replay/fingerprint_log_binding.json"
   # agent-doc — IPC wire snapshots of the agent-doc state projection, an
   # application schema on the IPC plane rather than a binding-level concern.
   "agent-doc/delta_agent_doc_state.json"

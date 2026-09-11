@@ -347,6 +347,13 @@ add_executable(test_service_conformance test_service_conformance.cpp)
 target_link_libraries(test_service_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(ServiceConformance test_service_conformance)
 
+# The replay-equivalence proof (`#lzreplaycpp`). Includes `lazily/replay.hpp`
+# narrowly rather than the umbrella, so it stays buildable in the `core` wasm
+# tier — see wasm-tiers.conf.
+add_executable(test_replay_conformance test_replay_conformance.cpp)
+target_link_libraries(test_replay_conformance PRIVATE lazily)
+lazily_add_spec_conformance_test(ReplayConformance test_replay_conformance)
+
 add_executable(test_seqcrdt_conformance test_seqcrdt_conformance.cpp)
 target_link_libraries(test_seqcrdt_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(SeqCrdtConformance test_seqcrdt_conformance)
