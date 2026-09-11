@@ -388,10 +388,110 @@ static void drive_encoding_fixture(const std::string& name, std::size_t minimum_
   REQUIRE(outcomes.size() == 2, fixture_id + ": the replay never observed both digest outcomes");
 }
 
+// -- obligation 3, the half the corpus cannot carry (`#lzreplayframing`) ------
+//
+// `canonical_encoding_equality.json` carries three member-framing rows, and
+// only ONE of them is layout-independent. `[["a"],"b"]` vs `[["a","b"]]`
+// collides under any unframed concatenation, because a nested container
+// boundary has no tag to hide behind. The other two — `["a","sbc"]` vs
+// `["as","bc"]` and the mapping analogue — collide only in a layout whose
+// string tag is the byte `s`, and the corpus says so: a binding MAY choose its
+// tags, so the pair that hides this binding's frame has to be constructed from
+// this binding's bytes and asserted here.
+//
+// This binding's layout is `tag + decimal(len(body)) + ':' + body`
+// (replay_detail::frame). Its string tag IS `s`, so the corpus's rows do fire
+// here — but only against one of the two ways the length prefix can go. The
+// prefix is TWO things, a decimal count and the `:` that terminates it, and
+// removing them separately needs different colliding content:
+//
+//   * remove count AND terminator (`frame` becomes `tag + body`): the corpus's
+//     `["a","sbc"]` / `["as","bc"]` pair collides, on `sassbc`.
+//   * remove the COUNT only (`frame` becomes `tag + ':' + body`): the corpus's
+//     pair does NOT collide — `s:as:sbc` vs `s:ass:bc` — because the surviving
+//     `:` still separates the members. Hiding a frame that keeps its terminator
+//     needs content that spells `s` AND content that ends in `:`, which is the
+//     pair below: it collides on `s:as:s:bc`.
+//
+// So the pair asserted here is the one the corpus cannot ask for in this
+// layout. The corpus still covers the whole-prefix removal — on step 8, and on
+// the nested row, which reddens whenever a CONTAINER loses its count. What no
+// corpus row reaches is the count going missing from LEAF members only, with
+// the tag and terminator left in place; that is the defect this pair is for.
+//
+// The exact bytes are pinned rather than only the inequality. The inequality
+// alone would keep passing after a layout change that made the pair
+// uninteresting — the pair is chosen FOR these bytes, and a reader has to be
+// able to see why. The inequality is asserted FIRST in each group so a
+// length-dropping mutation reddens on the claim rather than on the pin.
+//
+// Three cold mutations of replay_detail::frame, each run from `make clean`:
+//
+//   frame -> tag + body                     corpus step 8 (["a","sbc"] vs
+//                                           ["as","bc"]) reddens. Step 7, the
+//                                           old member-framing row, still
+//                                           PASSES — which is `#lzreplayframing`
+//                                           reproduced in this binding.
+//   frame -> tag + ':' + body               corpus step 10, the nested row,
+//                                           reddens; steps 7-9 all pass.
+//   Str case -> 's' + ':' + text            the WHOLE 14-step fixture passes
+//   (containers still framed)               and only the pair below reddens.
+//
+// The third is why this block exists. It is a real defect — leaf members stop
+// being length-framed — and no row the corpus can carry catches it here.
+static void assert_local_member_framing() {
+  const ReplayValue a_then_colon_bc =
+      ReplayValue::seq({ReplayValue::text("a"), ReplayValue::text("s:bc")});
+  const ReplayValue as_colon_then_bc =
+      ReplayValue::seq({ReplayValue::text("as:"), ReplayValue::text("bc")});
+
+  // Both sides carry the same member tags and the same content bytes in the
+  // same order; only the counts say where one member stops. Drop the counts
+  // from the string frame and both read `l9:s:as:s:bc`.
+  REQUIRE(canonical_digest(a_then_colon_bc) != canonical_digest(as_colon_then_bc),
+          "[\"a\",\"s:bc\"] and [\"as:\",\"bc\"] must differ: without the member "
+          "length count they concatenate to the same bytes in THIS layout");
+  REQUIRE(canonical_digest(a_then_colon_bc) == "l11:s1:as4:s:bc",
+          "the canonical layout is tag + decimal(len) + ':' + body");
+  REQUIRE(canonical_digest(as_colon_then_bc) == "l11:s3:as:s2:bc",
+          "the canonical layout is tag + decimal(len) + ':' + body");
+
+  // The mapping analogue, for the same reason obligation 3 asks for one: a
+  // key is framed apart from its value, not merely juxtaposed with it.
+  const ReplayValue map_a_colon_b =
+      ReplayValue::map({{ReplayValue::text("a"), ReplayValue::text("s:b")}});
+  const ReplayValue map_as_colon_b =
+      ReplayValue::map({{ReplayValue::text("as:"), ReplayValue::text("b")}});
+  REQUIRE(canonical_digest(map_a_colon_b) != canonical_digest(map_as_colon_b),
+          "{\"a\":\"s:b\"} and {\"as:\":\"b\"} must differ: without the member "
+          "length count they concatenate to the same bytes in THIS layout");
+  REQUIRE(canonical_digest(map_a_colon_b) == "m10:s1:as3:s:b",
+          "the canonical layout is tag + decimal(len) + ':' + body");
+  REQUIRE(canonical_digest(map_as_colon_b) == "m10:s3:as:s1:b",
+          "the canonical layout is tag + decimal(len) + ':' + body");
+
+  // The nested boundary, pinned in bytes for the same reason. The corpus row
+  // asserts the inequality; these two digests show WHERE it lives — the pair is
+  // identical but for the inner container's own count, so an encoder that
+  // framed members and forgot the container would fold them together.
+  const ReplayValue nested_a_then_b =
+      ReplayValue::seq({ReplayValue::seq({ReplayValue::text("a")}), ReplayValue::text("b")});
+  const ReplayValue nested_ab =
+      ReplayValue::seq({ReplayValue::seq({ReplayValue::text("a"), ReplayValue::text("b")})});
+  REQUIRE(canonical_digest(nested_a_then_b) != canonical_digest(nested_ab),
+          "[[\"a\"],\"b\"] and [[\"a\",\"b\"]] differ only in the inner "
+          "container's length count");
+  REQUIRE(canonical_digest(nested_a_then_b) == "l11:l4:s1:as1:b",
+          "a nested container carries its own frame");
+  REQUIRE(canonical_digest(nested_ab) == "l11:l8:s1:as1:b",
+          "a nested container carries its own frame");
+}
+
 int main() {
   drive_harness_fixture("fingerprint_log_binding.json", 8);
   drive_harness_fixture("divergence_localization.json", 7);
-  drive_encoding_fixture("canonical_encoding_equality.json", 11);
+  drive_encoding_fixture("canonical_encoding_equality.json", 14);
+  assert_local_member_framing();
 
   REQUIRE_FIXTURES_LOADED(3);
   return 0;
