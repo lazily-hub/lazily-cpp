@@ -580,9 +580,20 @@ excuse_scenario() {
 # the second one needed the `deliver.order` selector
 # (tests/test_lossless_tree_deliver.hpp).
 #
-# This floor is EXACT today: 149 declared, 149 replayed, confirmed by a local
-# green `make check`, and verified by watching 150 fail it.
-MIN_SCENARIOS="${MIN_SCENARIOS:-149}"
+# 149 -> 151 (#lzcppscenfloor): pure drift repair, not new replay work. The two
+# scenarios are egress/latest_durable_projection.json's
+# latest_projection_supersedes_pending_without_false_ack and
+# keyed_single_flight_reconnect_fences_stale_actor, published in lazily-spec
+# 1c388a5 (v0.38.0). MIN_FIXTURES was moved 139 -> 140 for that same fixture and
+# this floor was not, so the guard sat two under reality — two replays could
+# have stopped recording while it printed OK, which is exactly the slack the
+# paragraph above says is a floor that has stopped guarding. Five sibling
+# bindings re-pinned during the same sweep; this one was held back for scope.
+#
+# This floor is EXACT today: 151 declared, 151 replayed, confirmed by a local
+# green `make check`, and verified by watching 152 fail it. MIN_FIXTURES was
+# re-checked in the same pass and is still exact at 143 (144 fails it).
+MIN_SCENARIOS="${MIN_SCENARIOS:-151}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
