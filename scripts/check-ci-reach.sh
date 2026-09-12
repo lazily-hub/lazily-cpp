@@ -273,14 +273,26 @@ join_continuations() {
 # in a subshell and the caller's own `|| true` swallows it; a file is the one
 # channel out. make's stderr is captured with it, because the discarded
 # diagnostic was the whole difference between a correct verdict and a wrong one.
+# dry_run_record gates the ledger. It is 1 for the SINGLE-target invocations,
+# whose failure is what turns a gate into silence, and 0 for the multi-goal
+# `dry_run "${deps[@]}"` probe below. That probe only computes how many output
+# lines belong to the prerequisites; when it fails the target is credited with
+# its prerequisites' anchors as well, which OVER-reports and therefore fails
+# closed. Recording it would redden a target for a condition that cannot hide a
+# gate, and it is the reason the first version of this rung named `check`
+# alongside the target that had actually dropped.
+dry_run_record=1
+
 dry_run() {
 	local out rc=0
 	out="$("$MAKE_BIN" -n "$@" 2>"$dry_run_stderr")" || rc=$?
 	if [ "$rc" -ne 0 ]; then
-		{
-			printf '  - `%s -n %s` exited %s\n' "$MAKE_BIN" "$*" "$rc"
-			sed -e 's/^/      /' "$dry_run_stderr"
-		} >>"$dry_run_failures"
+		if [ "$dry_run_record" = "1" ]; then
+			{
+				printf '  - `%s -n %s` exited %s\n' "$MAKE_BIN" "$*" "$rc"
+				sed -e 's/^/      /' "$dry_run_stderr"
+			} >>"$dry_run_failures"
+		fi
 		return 0
 	fi
 	printf '%s\n' "$out" | grep -v -e '^make\[' -e '^make:' | join_continuations || true
@@ -303,7 +315,11 @@ own_commands() {
 		return
 	fi
 	local prefix
+	# own_commands already runs in a command substitution's subshell, so this
+	# assignment is scoped to this call and needs no restore.
+	dry_run_record=0
 	prefix="$(dry_run "${deps[@]}" | wc -l)"
+	dry_run_record=1
 	dry_run "$target" | tail -n +"$((prefix + 1))"
 }
 
@@ -517,6 +533,8 @@ excuse_reason() {
 	done
 }
 
+unreadable=""
+unreadable_count=0
 unreached=""
 unreached_count=0
 stale=""
@@ -535,13 +553,25 @@ while IFS= read -r target; do
 	# the truth is that it could not be read. Per target, not just for the root:
 	# `make -n check` can exit 0 while `make -n <member>` exits 2 (an ordinary
 	# goal-conditional prerequisite does it), so a root-only probe never sees the
-	# member drop out. Counted as UNREACHED, so the vacuity rung below and the
-	# reached/unreached tally both see it instead of it being excused by silence.
+	# member drop out.
+	#
+	# This verdict comes FIRST and `continue`s, ahead of the anchor emptiness
+	# test below and ahead of the excuse consultation further down. Both are
+	# laundering routes: an unreadable recipe yields no anchors, so without the
+	# `continue` the same target would also be filed `no gate`; and an
+	# `excuse:` line in the conf would print `excused <target>` at exit 0. An
+	# excuse is a claim about what CI RUNS, never a licence for a Makefile make
+	# cannot READ.
+	#
+	# Counted in its own bucket rather than appended to `unreached`: that list
+	# prints under a "no CI run: step matches" heading and points the reader at
+	# the workflow file, which is the wrong place to look for a Makefile that
+	# will not parse. The count still feeds the vacuity floor below.
 	dry_run_marker="$(wc -l <"$dry_run_failures")"
 	target_anchors="$(own_commands "$target" | anchors | sort -u || true)"
 	if [ "$(wc -l <"$dry_run_failures")" != "$dry_run_marker" ]; then
-		unreached="$unreached$target"$'\n'
-		unreached_count=$((unreached_count + 1))
+		unreadable="$unreadable$target"$'\n'
+		unreadable_count=$((unreadable_count + 1))
 		printf 'UNREADABLE %-32s `%s -n` failed; its recipe could not be listed\n' "$target" "$MAKE_BIN"
 		continue
 	fi
@@ -608,13 +638,13 @@ if [ -s "$dry_run_failures" ]; then
 	echo "  A recipe that cannot be listed looks exactly like one that runs no command," >&2
 	echo "  and before this rung existed each one was filed 'no gate' — the one bucket" >&2
 	echo "  the vacuity rung below does not count — so the audit shrank and still" >&2
-	echo "  printed OK. They are counted as UNREADABLE/unreached now, and refused here." >&2
+	echo "  printed OK. They are counted as UNREADABLE now, and refused here." >&2
 	exit 1
 fi
 
 # A guard that examined nothing must not report OK — the same vacuity rule the
 # conformance guards apply (#lzvacuousrun).
-if [ "$((reached + excused_ok + unreached_count))" -eq 0 ]; then
+if [ "$((reached + excused_ok + unreached_count + unreadable_count))" -eq 0 ]; then
 	echo "check-ci-reach: '$ROOT_TARGET' has no prerequisite target carrying a gate — nothing was verified" >&2
 	exit 1
 fi
