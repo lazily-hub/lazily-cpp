@@ -822,6 +822,305 @@ if [[ -s "$unidentified_scenarios" ]]; then
   exit 1
 fi
 
+# ── rung 0's MAGNITUDE (#lzblockmagnitudeaudit) ────────────────────────────
+#
+# tests/test_assertion_keys.hpp's BindLedger closes the rung: every top-level
+# `assertions` block the loader hands out must be BOUND to an AssertionKeys by
+# some runner, or its destructor aborts. That guard is POSITIVE about bind and
+# silent about magnitude — zero declared blocks means zero unbound blocks, and
+# it prints nothing while comparing nothing (#lzvacuousrun). A loader that
+# stopped declaring, a `declare_assertion_block` call deleted from
+# `spec_fixture_text`, a walk narrowed by an edit: all of them take the ledger
+# to empty and abort nothing.
+#
+# So the inventory is compared against a number this run cannot influence. The
+# expectation is DERIVED from two things this repo can be held to: (a) the
+# canonical corpus DIRECTORY LISTING under $conformance_dir, and (b) this
+# binding's own committed `KNOWN_UNCOVERED` ledger — the same subtraction
+# MIN_FIXTURES is checked against one rung up. Listing minus ledger is the
+# opened set (143 fixtures today, exactly what MIN_FIXTURES pins), and the walk
+# below inventories that set's assertion blocks the way
+# `declare_assertion_block` inventories them at load time.
+#
+# Deliberately NOT derived from the manifest and not from what the run read: an
+# expectation taken from the run moves WITH the run, so a loader that detaches
+# takes the expectation to 0 alongside it and this rung reports "0 == 0, OK".
+#
+# TWO dimensions, both from the ONE walk below, both asserted EQUAL
+# (#lzblocksitepin) — never `>=`, because every drift this rung exists to report
+# arrives as corpus GROWTH first and a floor cannot see growth:
+#
+#   * SITES, `fixture|where` pairs. A site is lost when a block is deleted even
+#     if its bytes recur at another site.
+#   * DISTINCT DIGESTS. A digest is lost when a content edit collapses two
+#     distinct claims into one spelling, which leaves every site in place.
+#
+# The two are numerically equal in this corpus today (15 and 15): no two opened
+# fixtures spell their top-level `assertions` block identically. That is a
+# property of today's bytes, not of the rule, and it is exactly why both are
+# asserted — the moment a recurrence appears the two dimensions part company and
+# neither one alone is enough.
+#
+# SCOPE NOTE, stated so it cannot be mistaken for coverage: this walk mirrors
+# `declare_assertion_block`, which reads the TOP-LEVEL `assertions` object and
+# nothing else. The same 143 opened fixtures carry 704 blocks under
+# {assertions, expect, expected} object-valued at every depth, and 722 counting
+# array elements (lazily-spec `make corpus-blocks-report`). So 15/15 is the
+# magnitude of the walk that exists, not of the corpus — widening it is its own
+# item, and the number here must move with the walk when it lands.
+if ! KNOWN_UNCOVERED_LEDGER="$(printf '%s\n' ${KNOWN_UNCOVERED[@]+"${KNOWN_UNCOVERED[@]}"})" \
+     python3 - "$manifest" "$conformance_dir" <<'BLOCK_MAGNITUDE'
+import json
+import os
+import sys
+
+manifest_path, spec_dir = sys.argv[1], sys.argv[2]
+
+# ---- what the RUN inventoried -------------------------------------------
+declared_sites = {}
+bound_digests = set()
+with open(manifest_path, encoding="utf-8") as handle:
+    for line in handle:
+        parts = line.rstrip("\n").split("\t")
+        if parts[0] == "@block_declared" and len(parts) == 3:
+            declared_sites[parts[1]] = parts[2]
+        elif parts[0] == "@block_bound" and len(parts) == 2:
+            bound_digests.add(parts[1])
+declared_digests = set(declared_sites.values())
+
+# ---- the twin of the loader's walk and digest ---------------------------
+#
+# `declare_assertion_block` (tests/test_assertion_keys.hpp): the document must be
+# an object, its `assertions` member must be an OBJECT, and that is the whole
+# walk — one site per fixture, spelled `<fixture>|assertions`, no descent, no
+# other block name, no array elements.
+#
+# `write_canonical` + `assertion_block_digest`, rule for rule: objects emit
+# `{` then each member as `<name>:<value>,` with names SORTED, arrays emit `[`
+# then each element as `<value>,`, strings emit `"<decoded text>"`, numbers emit
+# `#<RAW LEXICAL TOKEN>` (never a reparsed value — normalising `1.0` to `1`
+# would split one block into two), booleans `t`/`f`, null `n`; the result is
+# folded with 64-bit FNV-1a and printed as 16 hex digits.
+#
+# ONE walk, TWO callers: `walk_blocks` collects the site AND the block value, so
+# the site expectation and the digest expectation come from the same traversal.
+# A digest expectation derived by a second walk could disagree with the site one
+# and neither would be wrong about its own rule.
+FNV_OFFSET = 0xCBF29CE484222325
+FNV_PRIME = 0x100000001B3
+MASK = (1 << 64) - 1
+
+
+class RawNumber:
+    """A JSON number kept as the exact token the file carries."""
+
+    __slots__ = ("raw",)
+
+    def __init__(self, raw):
+        self.raw = raw
+
+
+def write_canonical(value, out):
+    if isinstance(value, dict):
+        out.append("{")
+        for name in sorted(value):
+            out.append(name + ":")
+            write_canonical(value[name], out)
+            out.append(",")
+        out.append("}")
+    elif isinstance(value, list):
+        out.append("[")
+        for item in value:
+            write_canonical(item, out)
+            out.append(",")
+        out.append("]")
+    elif isinstance(value, str):
+        out.append('"' + value + '"')
+    elif isinstance(value, RawNumber):
+        out.append("#" + value.raw)
+    elif value is True:
+        out.append("t")
+    elif value is False:
+        out.append("f")
+    elif value is None:
+        out.append("n")
+    else:
+        raise TypeError("unexpected JSON node %r" % (value,))
+    return out
+
+
+def block_digest(block):
+    hash_value = FNV_OFFSET
+    for byte in "".join(write_canonical(block, [])).encode("utf-8"):
+        hash_value ^= byte
+        hash_value = (hash_value * FNV_PRIME) & MASK
+    return "%016x" % hash_value
+
+
+def walk_blocks(fixture_id, document, sites, blocks):
+    if not isinstance(document, dict):
+        return
+    assertions = document.get("assertions")
+    if not isinstance(assertions, dict):
+        return
+    sites.add(fixture_id + "|assertions")
+    blocks.append(assertions)
+
+
+# ---- the corpus listing, minus this binding's own ledger ----------------
+corpus_fixtures = []
+for walk_root, _walk_dirs, walk_names in os.walk(spec_dir):
+    for walk_name in walk_names:
+        if walk_name.endswith(".json"):
+            corpus_fixtures.append(
+                os.path.relpath(os.path.join(walk_root, walk_name), spec_dir).replace(os.sep, "/")
+            )
+corpus_fixtures.sort()
+
+# The ledger arrives as a newline-joined scalar rather than as argv so this
+# script adds no second top-level bash array for lazily-spec's
+# check-corpus-floors.mjs to have to classify.
+uncovered_ledger = {
+    entry.strip()
+    for entry in os.environ.get("KNOWN_UNCOVERED_LEDGER", "").splitlines()
+    if entry.strip()
+}
+
+expected_sites = set()
+expected_blocks = []
+walked = 0
+for fixture_id in corpus_fixtures:
+    if fixture_id in uncovered_ledger:
+        continue
+    try:
+        with open(os.path.join(spec_dir, fixture_id), encoding="utf-8") as handle:
+            # `parse_int`/`parse_float` keep the RAW token, because that is what
+            # `write_canonical` folds.
+            document = json.load(handle, parse_int=RawNumber, parse_float=RawNumber)
+    except (OSError, ValueError) as error:
+        print(
+            "ERROR: could not read canonical fixture '%s' out of %s: %s\n"
+            "       The expected block magnitude is derived from these bytes, so an\n"
+            "       unreadable fixture is missing EVIDENCE, not evidence of absence."
+            % (fixture_id, spec_dir, error),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    walk_blocks(fixture_id, document, expected_sites, expected_blocks)
+    walked += 1
+
+expected_digests = {block_digest(block) for block in expected_blocks}
+
+# Positive-evidence guard on EACH dimension (#lzvacuousrun): an empty derivation
+# is matched by a run that inventoried nothing, and zero == zero reports OK
+# having compared nothing. A derived expectation of zero is a hard error, not a
+# satisfied one.
+if walked == 0 or not expected_sites or not expected_digests:
+    print(
+        "ERROR: the corpus at %s minus KNOWN_UNCOVERED derived %d opened fixture(s)\n"
+        "       carrying %d assertion-block site(s) and %d distinct digest(s).\n"
+        "       An empty derivation makes this rung vacuously green. The checkout is\n"
+        "       wrong, or LAZILY_SPEC_CONFORMANCE_DIR points somewhere else."
+        % (spec_dir, walked, len(expected_sites), len(expected_digests)),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if not declared_sites:
+    print(
+        "ERROR: the run exported NO assertion-block inventory, but the corpus at %s\n"
+        "       minus KNOWN_UNCOVERED derives %d site(s) over %d opened fixtures.\n"
+        "       `declare_assertion_block` is no longer reached from `spec_fixture_text`,\n"
+        "       or the manifest flush lost its @block_declared lines. Rung 0's bind\n"
+        "       guard is SILENT in this state — an empty ledger has no unbound block."
+        % (spec_dir, len(expected_sites), walked),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+failed = False
+
+if len(declared_sites) != len(expected_sites):
+    direction = "FEWER than" if len(declared_sites) < len(expected_sites) else "MORE than"
+    print(
+        "ERROR: the run inventoried %d assertion-block SITES; the canonical corpus at\n"
+        "       %s minus KNOWN_UNCOVERED derives %d over %d opened fixtures.\n"
+        "       The run has %s the corpus declares.\n"
+        "       This is an EQUALITY, not a floor: either the corpus moved under this\n"
+        "       checkout (re-pull the lazily-spec sibling so both sides read the same\n"
+        "       bytes), or `declare_assertion_block` detached from the rule the walk\n"
+        "       above mirrors. There is no number to re-pin — fix whichever side moved."
+        % (len(declared_sites), spec_dir, len(expected_sites), walked, direction),
+        file=sys.stderr,
+    )
+    failed = True
+
+if declared_digests != expected_digests:
+    direction = (
+        "FEWER than" if len(declared_digests) < len(expected_digests) else "MORE than"
+    )
+    if len(declared_digests) == len(expected_digests):
+        direction = "the same count as, but a different set from,"
+    print(
+        "ERROR: the run inventoried %d DISTINCT assertion-block digests; the canonical\n"
+        "       corpus at %s minus KNOWN_UNCOVERED derives %d over %d opened\n"
+        "       fixtures. The run has %s the corpus declares.\n"
+        "       The SITE count above can agree while this does not: two sites spelled\n"
+        "       identically share one digest, so a content edit that collapses two\n"
+        "       distinct claims into one leaves the site count untouched.\n"
+        "       Either the corpus moved under this checkout, or `write_canonical` /\n"
+        "       `assertion_block_digest` and the twin in this script stopped agreeing.\n"
+        "       run-only: %s\n"
+        "       corpus-only: %s"
+        % (
+            len(declared_digests),
+            spec_dir,
+            len(expected_digests),
+            walked,
+            direction,
+            ",".join(sorted(declared_digests - expected_digests)) or "(none)",
+            ",".join(sorted(expected_digests - declared_digests)) or "(none)",
+        ),
+        file=sys.stderr,
+    )
+    failed = True
+
+# The bind half, re-checked from the exported ledger. The C++ BindLedger aborts
+# on an unbound block in-process; this arm proves the exported inventory says the
+# same thing, so the magnitude above is a magnitude OF A BOUND set.
+unbound = sorted(site for site, digest in declared_sites.items() if digest not in bound_digests)
+if unbound:
+    print(
+        "ERROR: %d declared assertion-block site(s) were never BOUND to an AssertionKeys:\n"
+        "       %s\n"
+        "       Every other rung is scoped to a bound block, so an unbound one is not\n"
+        "       reported as unread — it is not reported at all (#lznullformblind)."
+        % (len(unbound), "\n       ".join(unbound)),
+        file=sys.stderr,
+    )
+    failed = True
+
+if failed:
+    sys.exit(1)
+
+print(
+    "assertion-block magnitude OK: the run inventoried %d site(s) / %d distinct digest(s), "
+    "all BOUND; derived %d AND %d from the %d opened fixtures of the corpus listing minus "
+    "KNOWN_UNCOVERED, both asserted EQUAL (top-level `assertions` walk only — see the "
+    "scope note in this script)"
+    % (
+        len(declared_sites),
+        len(declared_digests),
+        len(expected_sites),
+        len(expected_digests),
+        walked,
+    )
+)
+BLOCK_MAGNITUDE
+then
+  exit 1
+fi
+
 echo "conformance coverage OK: $count canonical fixtures replayed across ${#REQUIRED_AREAS[@]} areas" \
      "(${#EXCUSED_AREAS[@]} areas excused, ${#KNOWN_UNCOVERED[@]} fixtures listed as known-uncovered)"
 echo "scenario coverage OK: $scenario_count of $(wc -l < "$declared_scenarios" | tr -d ' ')" \

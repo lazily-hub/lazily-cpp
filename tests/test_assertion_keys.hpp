@@ -228,9 +228,48 @@ inline std::string assertion_block_fingerprint(const Json& object) {
   return out;
 }
 
+// The fingerprint above is the canonical BYTES, which is what the in-process
+// ledger compares. It cannot travel through the manifest: a canonical form
+// carries whatever a JSON string carried, tabs and newlines included, and the
+// manifest is a tab-delimited line format. So the exported form is a 64-bit
+// FNV-1a fold of exactly those bytes -- same walk, same equality classes, one
+// line-safe token. `scripts/check-conformance-coverage.sh` carries the python
+// twin of both functions and derives its expectation with them, so a change
+// here has to be made there in the same edit or the derived counts disagree.
+inline std::string assertion_block_digest(const Json& object) {
+  const std::string canonical = assertion_block_fingerprint(object);
+  std::uint64_t hash = 0xcbf29ce484222325ULL;
+  for (const unsigned char byte : canonical) {
+    hash ^= static_cast<std::uint64_t>(byte);
+    hash *= 0x100000001b3ULL;
+  }
+  static const char* kHex = "0123456789abcdef";
+  std::string out(16, '0');
+  for (int nibble = 15; nibble >= 0; --nibble) {
+    out[static_cast<std::size_t>(nibble)] = kHex[hash & 0xfULL];
+    hash >>= 4;
+  }
+  return out;
+}
+
 struct BindLedger {
   std::map<std::string, std::string> required; // fingerprint -> fixture id
   std::set<std::string> bound;                 // fingerprints handed to AssertionKeys
+  // The MAGNITUDE half of rung 0 (`#lzblockmagnitudeaudit`). `required` above is
+  // keyed by CONTENT, so it answers "was this block bound" and cannot answer
+  // "how many were there": two fixtures spelling one block identically collapse
+  // into a single entry, and a walk that stopped declaring anything leaves it
+  // empty -- zero required, zero unbound, guard prints nothing and aborts
+  // nothing. That is #lzvacuousrun wearing a bind ledger.
+  //
+  // So the inventory is also exported on two dimensions, because each is blind
+  // to what the other sees (`#lzblocksitepin`): a SITE (`fixture|where`) is lost
+  // when a block is deleted even if its bytes recur elsewhere, and a DIGEST is
+  // lost when a content edit collapses two distinct claims into one spelling
+  // while every site stays. The coverage guard derives both from the corpus
+  // listing on disk minus KNOWN_UNCOVERED and asserts them EQUAL to these.
+  std::map<std::string, std::string> declared_sites; // "fixture|where" -> digest
+  std::set<std::string> bound_digests;               // exported twin of `bound`
 
   ~BindLedger() {
     for (const auto& kv : required) {
@@ -259,6 +298,10 @@ inline void declare_assertion_block(const std::string& fixture_id, const Json& d
   const Json* assertions = document.find("assertions");
   if (assertions == nullptr || !assertions->is_object()) return;
   bind_ledger().required.emplace(assertion_block_fingerprint(*assertions), fixture_id);
+  // The site dimension. `where` is the loader's own coordinate, not a runner's
+  // label, so it is the one spelling the corpus-side twin can reproduce.
+  bind_ledger().declared_sites.emplace(fixture_id + "|assertions",
+                                       assertion_block_digest(*assertions));
 }
 
 // -- the prose ledger (`#lzprosekeyconvention`) ---------------------------
@@ -580,6 +623,7 @@ public:
     // Rung 0: this block is now BOUND (`#lznullformblind`). By content, so the
     // loader's requirement is satisfied whatever `where` this runner chose.
     bind_ledger().bound.insert(assertion_block_fingerprint(object));
+    bind_ledger().bound_digests.insert(assertion_block_digest(object));
     // The corpus decides which keys are paragraphs; this binding does not. Read
     // WITHOUT consuming -- `prose` is consumed by the discharge-set comparison
     // in `verify_prose`, which is what makes a forgotten key fail rather than

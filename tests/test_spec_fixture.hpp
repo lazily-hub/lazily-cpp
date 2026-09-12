@@ -307,13 +307,29 @@ struct ManifestFlusher {
       manifest << "@replayed\t" << entry.first << "\t" << entry.second << "\n";
     for (const auto& entry : ledger.unidentified)
       manifest << "@unidentified\t" << entry.first << "\t" << entry.second << "\n";
+    // Rung 0's MAGNITUDE (`#lzblockmagnitudeaudit`). The in-process BindLedger
+    // can only answer "was every declared block bound"; it is vacuously quiet
+    // over an inventory that declared nothing. Exporting the inventory lets
+    // scripts/check-conformance-coverage.sh compare it against a count DERIVED
+    // from the corpus listing on disk -- on both dimensions, both EQUAL.
+    const auto& blocks = bind_ledger();
+    for (const auto& entry : blocks.declared_sites)
+      manifest << "@block_declared\t" << entry.first << "\t" << entry.second << "\n";
+    for (const auto& digest : blocks.bound_digests)
+      manifest << "@block_bound\t" << digest << "\n";
   }
 };
 
 inline void ensure_manifest_flusher() {
-  loaded_fixtures();              // constructed first => destroyed last
-  scenario_ledger();              // ditto, so the flusher outlives neither
-  static ManifestFlusher flusher; // destroyed before both
+  loaded_fixtures(); // constructed first => destroyed last
+  scenario_ledger(); // ditto, so the flusher outlives neither
+  // The bind ledger is touched here for the same reason, and for one more: its
+  // own destructor ABORTS on an unbound block. Constructing it before the
+  // flusher makes it destroyed after, so the inventory reaches the manifest
+  // even on the run that fails rung 0 -- the magnitude check downstream then
+  // has evidence instead of an empty file.
+  bind_ledger();
+  static ManifestFlusher flusher; // destroyed before all three
   (void)flusher;
 }
 
