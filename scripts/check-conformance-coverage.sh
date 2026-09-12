@@ -40,6 +40,11 @@
 # Environment:
 #   LAZILY_SPEC_CONFORMANCE_DIR  override the canonical corpus location
 #   MIN_FIXTURES                 override the floor (for debugging only)
+#   LAZILY_CONFORMANCE_RUN_ID    REQUIRED. The current invocation's run id; the
+#                                manifest's first line must carry the same one
+#                                (#lzstalemanifest). Minted by the Makefile —
+#                                there is no opt-out, and an unset value is a
+#                                refusal rather than a skip
 #   EXPECTED_LEDGERED_BLOCKS     override the KNOWN_UNBOUND_BLOCKS size pin (for
 #                                debugging only — in a commit, edit the default;
 #                                the pin is an EQUALITY, so a ledger that SHRANK
@@ -600,6 +605,141 @@ then
   exit 1
 fi
 
+# ── evidence freshness: the run id (#lzstalemanifest) ──────────────────────
+#
+# Every rung below this line is a sentence about what THIS run did, and every
+# one of them reads it out of a file on disk. Nothing checked that the file was
+# written by this run. Measured on this tree, both ways it goes wrong:
+#
+#   * `make conformance-coverage` had no graph edge to `test`, so it audited the
+#     PREVIOUS run's manifest. Backdated to 2024-01-01 and re-run, it published
+#     "722 site(s) / 619 distinct digest(s); 697 bound", "143 canonical fixtures
+#     replayed", "151 of 151 declared scenarios replayed" — with no binary
+#     executed at all.
+#   * `make -j16 check` reached the same state on the ORDINARY path. With the
+#     prerequisites unordered, this script ran at 10:38:17.69 and ctest was
+#     invoked at 10:38:26.04 — the guard reported the magnitudes of a run that
+#     had not started, 8.3 seconds early, and `make check` exited 0.
+#
+# lazily-cpp does NOT have kt's version of the bug. `test` is `.PHONY` and ctest
+# caches no results, so a serial `make check` always truncates and always
+# re-runs all 64 tests (verified: a second `make check` with nothing changed
+# re-ran 64/64 and rewrote the manifest). The hole here is the ORDERING and the
+# out-of-band caller, not a build cache — and since two of the three callers
+# (this CI workflow's separate steps, and a developer running the script by
+# hand) do not go through the make graph at all, the ordering fix alone cannot
+# close it. Hence a stamp.
+#
+# The contract, identical in every binding:
+#
+#   1. one id per invocation, minted in the Makefile (LAZILY_CONFORMANCE_RUN_ID)
+#   2. the step that writes the evidence stamps it as the FIRST line, with the
+#      fixed prefix `# lazily-run-id <value>`
+#   3. this guard REQUIRES that id to equal the current invocation's, and fails
+#      by name — the file, the id found, the id wanted
+#   4. an UNSET LAZILY_CONFORMANCE_RUN_ID is a refusal, never a skip
+#
+# There is no opt-out flag, deliberately. The only caller outside `make` is the
+# CI workflow, and it sets the id at JOB level so its truncate step and this
+# step agree; a flag that let unstamped evidence through would be the same hole
+# with a name. A developer running this script by hand runs `make
+# conformance-coverage`, which now depends on `test`.
+#
+# An ABSENT manifest is not this rung's business — the "no conformance manifest"
+# rung further down names that, and the corpus gate immediately below names an
+# absent corpus. This rung only answers "is the file on disk this run's file",
+# and it stays silent when there is no file to judge. CI's fail-closed proof
+# depends on that: it points every corpus guard at a path that does not exist
+# and requires the CORPUS refusal, so this rung must not preempt it.
+if ! LAZILY_CONFORMANCE_RUN_ID="${LAZILY_CONFORMANCE_RUN_ID-}" \
+     python3 - "$manifest" <<'EVIDENCE_RUN_ID'
+import os
+import sys
+
+manifest = sys.argv[1]
+wanted = os.environ.get("LAZILY_CONFORMANCE_RUN_ID", "")
+PREFIX = "# lazily-run-id "
+
+failed = False
+
+if wanted.strip() == "":
+    print(
+        "ERROR: LAZILY_CONFORMANCE_RUN_ID is not set, so the coverage manifest's\n"
+        "       freshness cannot be checked and every magnitude below would be\n"
+        "       asserted from a file of unknown age (#lzstalemanifest).\n"
+        "       This is a REFUSAL, not a skip: a guard that accepts unstamped\n"
+        "       evidence when the variable is unset is the same hole with an\n"
+        "       extra step.\n"
+        "       Run `make conformance-coverage` (the Makefile mints the id and\n"
+        "       the `test` target stamps it into the manifest), or export the id\n"
+        "       the manifest carries on its first line.",
+        file=sys.stderr,
+    )
+    failed = True
+
+if os.path.isfile(manifest):
+    # Read as bytes and decode leniently: this is evidence, and a guard that
+    # dies on a decode error reports a broken toolchain instead of a finding.
+    with open(manifest, "rb") as handle:
+        lines = handle.read().decode("utf-8", "replace").splitlines()
+    first = lines[0] if lines else ""
+    if not first.startswith(PREFIX):
+        print(
+            "ERROR: %s carries no run id on its first line.\n"
+            "       Wanted a first line of `%s<id>`; found %r.\n"
+            "       An evidence file written before #lzstalemanifest has none, and\n"
+            "       so does one written by something other than the Makefile's\n"
+            "       `test` target. Either way this file cannot be shown to describe\n"
+            "       THIS run, and every rung below it would assert that it does."
+            % (manifest, PREFIX, first[:120]),
+            file=sys.stderr,
+        )
+        failed = True
+    else:
+        found = first[len(PREFIX):].strip()
+        if wanted.strip() != "" and found != wanted.strip():
+            print(
+                "ERROR: %s is STALE — it was written by a different run.\n"
+                "       found  run id: %s\n"
+                "       wanted run id: %s\n"
+                "       The fixture, scenario and assertion-block magnitudes below\n"
+                "       would all be asserted from that other run's evidence. Re-run\n"
+                "       the suite (`make conformance-coverage` builds, runs ctest and\n"
+                "       audits in one invocation) rather than auditing this file."
+                % (manifest, found or "(empty)", wanted.strip()),
+                file=sys.stderr,
+            )
+            failed = True
+
+    # A second stamp anywhere below the first line means two runs' evidence was
+    # concatenated: the 38 binaries APPEND, so a file that was stamped twice was
+    # never truncated between the runs, and the union it presents is a union of
+    # runs rather than of binaries.
+    extra = [i + 1 for i, line in enumerate(lines[1:], start=1) if line.startswith(PREFIX)]
+    if extra:
+        print(
+            "ERROR: %s carries %d run-id stamp(s) below the first line (at line(s) %s).\n"
+            "       Every conformance binary APPENDS to this manifest and only the\n"
+            "       truncating write stamps it, so a second stamp means two runs'\n"
+            "       evidence was concatenated without a truncation in between."
+            % (manifest, len(extra), ", ".join(str(i) for i in extra)),
+            file=sys.stderr,
+        )
+        failed = True
+
+if failed:
+    raise SystemExit(1)
+
+print(
+    "evidence freshness OK: the coverage manifest is stamped with THIS run's id (%s)"
+    % wanted.strip()
+)
+EVIDENCE_RUN_ID
+then
+  echo "conformance coverage FAILED: stale or unstamped evidence" >&2
+  exit 1
+fi
+
 # Absence of the sibling checkout is a hard FAILURE, consistent with the suites
 # themselves (require_spec_checkout in tests/test_spec_fixture.hpp) and with
 # every other guard in this repo that reads the corpus (#lzcppsiblingskipvsfail).
@@ -914,7 +1054,12 @@ declared_scenarios="$(mktemp)"
 replayed_scenarios="$(mktemp)"
 unidentified_scenarios="$(mktemp)"
 trap 'rm -f "$replayed" "$declared_scenarios" "$replayed_scenarios" "$unidentified_scenarios"' EXIT
-sort -u "$manifest" | grep . | grep -v '^@' > "$replayed" || true
+# `^#` drops the run-id stamp (#lzstalemanifest) and `^@` the tagged ledger
+# records, leaving the bare fixture ids. Neither prefix can begin a
+# corpus-relative fixture path, and dropping the stamp is what keeps the
+# reported magnitudes IDENTICAL to what they were before the stamp existed:
+# counted, it would read 144 fixtures where the suite replays 143.
+sort -u "$manifest" | grep . | grep -v '^@' | grep -v '^#' > "$replayed" || true
 count="$(wc -l < "$replayed" | tr -d ' ')"
 
 # Scenario records are tab-delimited and tag-prefixed (tests/test_spec_fixture.hpp).

@@ -36,6 +36,40 @@ EMSDK_ENV ?= $(HOME)/emsdk/emsdk_env.sh
 # coverage guard audits the union. See scripts/check-conformance-coverage.sh.
 CONFORMANCE_MANIFEST := $(abspath $(BUILD_DIR))/conformance-fixtures-loaded.txt
 
+# One run id per `make` invocation (#lzstalemanifest).
+#
+# The manifest is the ONLY evidence scripts/check-conformance-coverage.sh has,
+# and it used to carry no statement of WHICH run produced it. That is the whole
+# hole: `conformance-coverage` had no graph edge to `test`, so
+# `make conformance-coverage` audited the PREVIOUS run's file and reported every
+# magnitude green with nothing executed — measured on this tree against a
+# manifest backdated to 2024-01-01. `make -j check` reached the same state on
+# the ordinary path: with the prerequisites unordered, the guard published
+# "the run inventoried 722 site(s)" 8.3 seconds BEFORE ctest was invoked, and
+# `make -j16 check` exited 0.
+#
+# Two fixes, because they close different halves. The graph edge below makes
+# `conformance-coverage` wait for `test` — that is the ordering. This id makes
+# the evidence SAY which run wrote it, which is what closes the paths that do
+# not go through the graph at all: the CI job runs ctest and the guard as
+# separate steps, and a developer can run the script by hand.
+#
+# `?=` then `:=` on purpose. `?=` keeps an environment or command-line value
+# (CI sets one at job level so its separate steps share an id), and the `:=`
+# that follows forces SIMPLE expansion so the `$(shell)` runs ONCE for the whole
+# invocation. A plain `?=` would leave it recursive, re-running `date` at every
+# reference and minting a different id for the stamper and the checker — which
+# fails closed, but for a reason nobody could read.
+LAZILY_CONFORMANCE_RUN_ID ?= $(shell echo "$$$$-$$(date +%s%N)")
+LAZILY_CONFORMANCE_RUN_ID := $(LAZILY_CONFORMANCE_RUN_ID)
+# Exported rather than spelled as a `VAR=value command` prefix on the one recipe
+# that needs it. Two reasons, and the second is not cosmetic: an exported value
+# survives whatever quoting the id happens to need, and the CI-reachability
+# guard reduces a recipe to its program plus flag names — an inline prefix whose
+# value it cannot resolve becomes a token it reads AS the program, and
+# `conformance-coverage` was reported unreachable until this became an export.
+export LAZILY_CONFORMANCE_RUN_ID
+
 all: check
 
 configure:
@@ -46,20 +80,44 @@ build: configure
 
 # The manifest is truncated first so it always describes THIS run — a stale file
 # from a previous run would let the coverage guard pass on fixtures nobody read.
+#
+# The truncation now STAMPS the run id as the first line rather than removing
+# the file (#lzstalemanifest). One redirection replaces the `rm`, which is what
+# makes the stamp trustworthy: the file is created empty-but-stamped by THIS
+# invocation and then only appended to, by the 38 fixture-reading binaries ctest
+# runs in the very next command. So every line below the stamp came from this
+# run, and a manifest carrying any other id is last run's file.
+#
+# `printf`, not `echo`: `echo` is a builtin whose escape handling differs
+# between shells, and this line is a fixed prefix a guard parses.
 test: build
-	rm -f $(CONFORMANCE_MANIFEST)
+	printf '# lazily-run-id %s\n' '$(LAZILY_CONFORMANCE_RUN_ID)' > $(CONFORMANCE_MANIFEST)
 	LAZILY_CONFORMANCE_MANIFEST=$(CONFORMANCE_MANIFEST) \
 	  ctest --test-dir $(BUILD_DIR) --output-on-failure
 
-# Replay the shared lazily-spec conformance fixtures.
+# Replay the shared lazily-spec conformance fixtures. Stamped for the same
+# reason as `test`, and note this one runs a `ctest -R` SUBSET: the manifest it
+# leaves is fresh but PARTIAL, which the coverage guard's exact magnitudes
+# reject. That is correct — it is why `conformance-coverage` depends on the full
+# `test` run rather than on whatever manifest is lying around.
 conformance: build
-	rm -f $(CONFORMANCE_MANIFEST)
+	printf '# lazily-run-id %s\n' '$(LAZILY_CONFORMANCE_RUN_ID)' > $(CONFORMANCE_MANIFEST)
 	LAZILY_CONFORMANCE_MANIFEST=$(CONFORMANCE_MANIFEST) \
 	  ctest --test-dir $(BUILD_DIR) -R Conformance --output-on-failure
 
 # Asserts the canonical corpus was actually replayed — not merely present on
-# disk. Depends on a completed `test` run for the manifest.
-conformance-coverage:
+# disk.
+#
+# `test` is a real PREREQUISITE now (#lzstalemanifest). It used to be a comment
+# saying "depends on a completed `test` run", which is not a dependency: the
+# target audited whatever manifest happened to be on disk, and under `make -j`
+# make was free to start it before the suite. `test` is `.PHONY` and make runs a
+# phony target once per invocation, so this edge costs `make check` nothing and
+# makes a standalone `make conformance-coverage` produce its own evidence.
+#
+# The run id reaches the guard through the `export` above, so it can require the
+# manifest to be THIS invocation's. Without it the guard refuses, not skips.
+conformance-coverage: test
 	./scripts/check-conformance-coverage.sh $(CONFORMANCE_MANIFEST)
 
 # CI-reachability guard (#lzcheckcireachguard). Fails when a target above runs a
@@ -149,6 +207,17 @@ check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-
 # NODERAWFS lets the unmodified loader read them. The manifest is truncated
 # first so it always describes THIS run; a stale file would let the matrix
 # report fixtures nobody read.
+#
+# These two tier manifests are deliberately NOT run-id stamped
+# (#lzstalemanifest), and that is a scope statement rather than an oversight.
+# They are a SEPARATE evidence channel: read by scripts/check-wasm-tiers.sh, not
+# by the coverage guard, and not reachable from `make check` at all. Stamping
+# them needs an id shared across THREE make invocations, because the wasm CI job
+# runs `make wasm-core`, `make wasm-threaded` and the matrix guard as separate
+# steps — so the id would have to be handed in at job level, the way the native
+# job does it, rather than minted per invocation as it is above. The hole is the
+# same shape there (`make wasm-matrix` on its own audits whatever manifests are
+# lying around), and closing it is the wasm channel's own change.
 #
 # Missing emsdk is a hard error, not a skip. A wasm gate that quietly does
 # nothing when the toolchain is absent reports OK over an empty matrix.

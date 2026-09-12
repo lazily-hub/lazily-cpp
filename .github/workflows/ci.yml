@@ -23,8 +23,18 @@ jobs:
     # invocation below inherits it, exactly as the Makefile's `test` target does
     # locally — a guard whose evidence file is never written passes VACUOUSLY
     # (#lzguardsnotinci).
+    #
+    # LAZILY_CONFORMANCE_RUN_ID is the freshness half (#lzstalemanifest). This
+    # job writes the manifest in one step and audits it in another, so the guard
+    # reads a file produced by a DIFFERENT process than the one checking it —
+    # the shape that let `make -j check` publish a previous run's magnitudes
+    # locally. The id is set at JOB level, once, so the stamping step and the
+    # guard step agree on it, and the guard REFUSES when it is unset rather than
+    # skipping. run_attempt is in the value because a re-run of this job must
+    # not accept the first attempt's leftovers.
     env:
       LAZILY_CONFORMANCE_MANIFEST: ${{ github.workspace }}/build/conformance-fixtures-loaded.txt
+      LAZILY_CONFORMANCE_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.compiler }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,9 +85,17 @@ jobs:
       # Truncated before the first ctest run so the manifest always describes
       # THIS run. A stale file left by an earlier step would let the coverage
       # and scenario guards pass on fixtures nobody read (#lzguardsnotinci).
-      - name: Truncate the conformance coverage manifest (#lzguardsnotinci)
+      #
+      # The truncation STAMPS the job's run id as the first line rather than
+      # removing the file (#lzstalemanifest), exactly as the Makefile's `test`
+      # target does. `rm -f` made the manifest fresh; it did not make it SAY so,
+      # and the guard two steps down had no way to tell this run's evidence from
+      # a leftover. Everything after this line is appended by the conformance
+      # binaries the next step runs, so the stamp dates the whole file.
+      - name: Stamp + truncate the conformance coverage manifest (#lzstalemanifest)
         shell: bash
-        run: rm -f "$LAZILY_CONFORMANCE_MANIFEST"
+        run: |
+          printf '# lazily-run-id %s\n' "$LAZILY_CONFORMANCE_RUN_ID" > "$LAZILY_CONFORMANCE_MANIFEST"
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -102,14 +120,26 @@ jobs:
       # MIN_SCENARIOS floors do fail an empty manifest — verified — but a guard
       # that can only report "0 of everything" does not name WHY; failing on the
       # evidence file itself does.
+      #
+      # `-s` alone stopped being the right test once the truncation step started
+      # stamping a run id (#lzstalemanifest): the stamp makes the file non-empty
+      # by itself, so a suite that appended NOTHING would satisfy `-s` and this
+      # step would report a manifest that records only its own header. Count the
+      # records BELOW the stamp instead — that is the number this step always
+      # meant.
       - name: Assert the coverage manifest was written (#lzguardsnotinci)
         shell: bash
         run: |
-          if [[ ! -s "$LAZILY_CONFORMANCE_MANIFEST" ]]; then
+          if [[ ! -f "$LAZILY_CONFORMANCE_MANIFEST" ]]; then
             echo "::error::no conformance coverage manifest at $LAZILY_CONFORMANCE_MANIFEST — the fixture and scenario guards would audit nothing"
             exit 1
           fi
-          echo "manifest records: $(wc -l < "$LAZILY_CONFORMANCE_MANIFEST")"
+          records=$(grep -c -v '^#' "$LAZILY_CONFORMANCE_MANIFEST" || true)
+          if [[ "$records" -eq 0 ]]; then
+            echo "::error::the conformance coverage manifest at $LAZILY_CONFORMANCE_MANIFEST holds its run-id stamp and nothing else — no conformance binary appended, so the fixture and scenario guards would audit nothing"
+            exit 1
+          fi
+          echo "manifest records: $records (plus the #lzstalemanifest run-id stamp)"
       # Fixture-level coverage plus the per-scenario replay ledger. The script
       # used to SKIP (exit 0) on an absent corpus, and this step grepped its log
       # for that SKIP line. It refuses instead now (#lzcppsiblingskipvsfail), so
@@ -179,6 +209,15 @@ jobs:
         run: |
           absent="$RUNNER_TEMP/no-such-corpus"
           rm -rf "$absent"
+          # The scratch manifest is pre-stamped with this job's run id
+          # (#lzstalemanifest). check-conformance-coverage.sh checks evidence
+          # freshness BEFORE the corpus gate, and this step matches on the
+          # CORPUS refusal — so the manifest it is pointed at has to be one the
+          # freshness rung accepts, or the guard would redden for the wrong
+          # reason and prove nothing. The corpus-less ctest invocation below
+          # appends nothing to it (it exits before the manifest flusher), which
+          # is why an unstamped file would otherwise reach the guard.
+          printf '# lazily-run-id %s\n' "$LAZILY_CONFORMANCE_RUN_ID" > "$RUNNER_TEMP/failclosed-manifest.txt"
           refuse() {
             local label="$1"; shift
             local out rc=0
