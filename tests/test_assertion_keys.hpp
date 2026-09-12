@@ -253,37 +253,17 @@ inline std::string assertion_block_digest(const Json& object) {
 }
 
 struct BindLedger {
-  std::map<std::string, std::string> required; // fingerprint -> fixture id
-  std::set<std::string> bound;                 // fingerprints handed to AssertionKeys
-  // The MAGNITUDE half of rung 0 (`#lzblockmagnitudeaudit`). `required` above is
-  // keyed by CONTENT, so it answers "was this block bound" and cannot answer
-  // "how many were there": two fixtures spelling one block identically collapse
-  // into a single entry, and a walk that stopped declaring anything leaves it
-  // empty -- zero required, zero unbound, guard prints nothing and aborts
-  // nothing. That is #lzvacuousrun wearing a bind ledger.
-  //
-  // So the inventory is also exported on two dimensions, because each is blind
-  // to what the other sees (`#lzblocksitepin`): a SITE (`fixture|where`) is lost
-  // when a block is deleted even if its bytes recur elsewhere, and a DIGEST is
-  // lost when a content edit collapses two distinct claims into one spelling
-  // while every site stays. The coverage guard derives both from the corpus
-  // listing on disk minus KNOWN_UNCOVERED and asserts them EQUAL to these.
+  // TWO dimensions, because each is blind to what the other sees
+  // (`#lzblocksitepin`): a SITE (`fixture|where`) is lost when a block is
+  // deleted even if its bytes recur elsewhere, and a DIGEST is lost when a
+  // content edit collapses two distinct claims into one spelling while every
+  // site stays. The coverage guard derives both from the corpus listing on disk
+  // minus KNOWN_UNCOVERED and asserts them EQUAL to these
+  // (`#lzblockmagnitudeaudit`) -- a magnitude, because zero declared blocks
+  // means zero unbound blocks and a ledger that stopped declaring reports OK
+  // having compared nothing (`#lzvacuousrun`).
   std::map<std::string, std::string> declared_sites; // "fixture|where" -> digest
-  std::set<std::string> bound_digests;               // exported twin of `bound`
-
-  ~BindLedger() {
-    for (const auto& kv : required) {
-      if (bound.count(kv.first) != 0) continue;
-      std::cout << "FAIL: " << kv.second
-                << ": this fixture carries a top-level `assertions` block that NO runner "
-                   "bound to AssertionKeys. Every other guard here is scoped to a bound "
-                   "block, so an unbound one is not reported as unread -- it is not "
-                   "reported at all, and every key it carries is silent however "
-                   "load-bearing. Bind it (#lznullformblind)"
-                << std::endl;
-      std::abort();
-    }
-  }
+  std::set<std::string> bound_digests;               // digests handed to AssertionKeys
 };
 
 inline BindLedger& bind_ledger() {
@@ -291,17 +271,78 @@ inline BindLedger& bind_ledger() {
   return ledger;
 }
 
+// The VERDICT on an unbound block is the coverage guard's, not this ledger's.
+//
+// This used to be a `~BindLedger` that printed and `std::abort()`ed on any
+// declared-but-unbound block, which was right while the walk below read only a
+// fixture's TOP-LEVEL `assertions`: every one of those 15 is bound, so the
+// abort had nothing to excuse. The wide walk (#lzcppblockwalk) declares 710
+// sites, and 25 of them belong to the six reactive-graph fixtures
+// test_reactive_graph_conformance.cpp already records in EXPECTED_UNSUPPORTED /
+// PARKED: the replay stops on an op or a novel assertion key this binding does
+// not implement, so the steps past that point never run and their `expect`
+// blocks are UNREACHABLE rather than unbound. An in-process abort cannot tell
+// those apart from a real gap without a per-site excuse ledger, and that ledger
+// belongs in scripts/check-conformance-coverage.sh beside KNOWN_UNCOVERED --
+// one place to read what this binding does not prove, checked in both
+// directions so an excuse cannot outlive the gap. A second copy compiled in
+// here would be a second ledger to drift.
+//
+// So the ledger EXPORTS and the guard JUDGES. The verdicts are unchanged, they
+// arrive one `make check` step later, and `scripts/check-ci-reach.sh` is what
+// proves that step runs in CI.
+
+// The block names this walk treats as an assertion block, at EVERY depth. The
+// same five lazily-spec's check-corpus-floors.mjs pins and lazily-py, -js, -cs,
+// -zig and -dart inventory. Three of them (`assertions`, `expect`, `expected`)
+// account for 704 of the 710 sites here; `expect_after` / `expect_initial` are
+// the six `collections/semtree_incremental.json` blocks that a three-name set
+// would leave deletable in silence.
+inline const std::set<std::string>& assertion_block_names() {
+  static const std::set<std::string> names{"assertions", "expect", "expect_after", "expect_initial",
+                                           "expected"};
+  return names;
+}
+
+// Two clauses that are easy to get wrong, and are the difference between an
+// inventory a runner can satisfy and one it cannot:
+//
+//   * an ARRAY-valued tracked key contributes NO SITE. A runner binds the
+//     ELEMENTS of an array-valued `expect`, never the array, so counting the
+//     array would declare a block that cannot be bound by construction. The
+//     walk still DESCENDS into arrays -- that is where `steps[3].expect` lives.
+//   * EMIT AND DO NOT DESCEND. Descending into an emitted block would inventory
+//     a fixture's `expect` nested inside its own `assertions` as a second,
+//     separately bindable site, which no tracker can reach without unwrapping
+//     the first. What lives inside a block is a KEY, and keys are rungs 1-3.
+//
+// `where` is spelled from the loader's own coordinates -- dotted member names,
+// `[n]` for array indices -- never from a runner's label, because the
+// corpus-side twin in scripts/check-conformance-coverage.sh has to reproduce it
+// from the bytes alone.
+inline void walk_assertion_blocks(const std::string& fixture_id, const Json& node,
+                                  const std::string& path) {
+  if (node.type == Json::Type::Object) {
+    for (const auto& kv : node.object) {
+      const std::string child = path.empty() ? kv.first : path + "." + kv.first;
+      if (assertion_block_names().count(kv.first) != 0 && kv.second->is_object()) {
+        bind_ledger().declared_sites.emplace(fixture_id + "|" + child,
+                                             assertion_block_digest(*kv.second));
+        continue;
+      }
+      walk_assertion_blocks(fixture_id, *kv.second, child);
+    }
+  } else if (node.type == Json::Type::Array) {
+    for (std::size_t i = 0; i < node.array.size(); ++i)
+      walk_assertion_blocks(fixture_id, *node.array[i], path + "[" + std::to_string(i) + "]");
+  }
+}
+
 // Called from the fixture reader, so the requirement comes from the bytes on
 // disk rather than from a list a runner maintains.
 inline void declare_assertion_block(const std::string& fixture_id, const Json& document) {
   if (!document.is_object()) return;
-  const Json* assertions = document.find("assertions");
-  if (assertions == nullptr || !assertions->is_object()) return;
-  bind_ledger().required.emplace(assertion_block_fingerprint(*assertions), fixture_id);
-  // The site dimension. `where` is the loader's own coordinate, not a runner's
-  // label, so it is the one spelling the corpus-side twin can reproduce.
-  bind_ledger().declared_sites.emplace(fixture_id + "|assertions",
-                                       assertion_block_digest(*assertions));
+  walk_assertion_blocks(fixture_id, document, "");
 }
 
 // -- the prose ledger (`#lzprosekeyconvention`) ---------------------------
@@ -622,7 +663,6 @@ public:
     fixture_ = fixture_of(where_);
     // Rung 0: this block is now BOUND (`#lznullformblind`). By content, so the
     // loader's requirement is satisfied whatever `where` this runner chose.
-    bind_ledger().bound.insert(assertion_block_fingerprint(object));
     bind_ledger().bound_digests.insert(assertion_block_digest(object));
     // The corpus decides which keys are paragraphs; this binding does not. Read
     // WITHOUT consuming -- `prose` is consumed by the discharge-set comparison

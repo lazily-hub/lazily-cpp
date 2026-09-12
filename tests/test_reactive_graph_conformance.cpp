@@ -199,6 +199,17 @@ struct Json {
   enum class Type { Null, Bool, Number, String, Array, Object } type = Type::Null;
   bool boolean = false;
   double number = 0;
+  // The RAW lexical token a number was spelled with, kept because
+  // `lazily_test::write_canonical` folds numbers by their token and not by any
+  // parsed value. This parser used to keep only the double, and `assertion_json`
+  // below could therefore not produce a content-identical clone: a block
+  // carrying `"value": 5` cloned to a node whose token was empty, canonicalised
+  // as `#5.000000` where the loader canonicalised the same bytes as `#5`, and
+  // rung 0 saw two different blocks. 93 of this area's `expect` sites -- every
+  // single one carrying a number -- were unbound for that reason and nothing
+  // reported it, because the narrow rung-0 walk only inventoried top-level
+  // `assertions` and no reactive-graph fixture has one (#lzcppblockwalk).
+  std::string number_token;
   std::string str;
   std::vector<JsonPtr> array;
   // Ordered so replay is deterministic.
@@ -370,7 +381,8 @@ struct JsonParser {
       ++pos;
     }
     REQUIRE(pos > start, "malformed JSON number");
-    node->number = std::stod(src.substr(start, pos - start));
+    node->number_token = src.substr(start, pos - start);
+    node->number = std::stod(node->number_token);
     return node;
   }
 };
@@ -378,12 +390,18 @@ struct JsonParser {
 // This runner predates the shared fixture reader. Keep its replay model stable
 // while projecting assertion blocks into the shared representation owned by
 // AssertionKeys; the structural clone is content-identical, so rung-0 bind
-// fingerprints still match the canonical fixture bytes.
+// fingerprints match the canonical fixture bytes.
+//
+// `number_token` is part of "content-identical" and was the omission that made
+// the sentence above false for every block carrying a number -- see the field's
+// comment on this file's `Json`. Anything added to either `Json` that
+// `write_canonical` folds has to be carried here in the same edit.
 static lazily_test::JsonPtr assertion_json(const Json& source) {
   auto out = std::make_shared<lazily_test::Json>();
   out->type = static_cast<lazily_test::Json::Type>(source.type);
   out->boolean = source.boolean;
   out->number = source.number;
+  out->number_token = source.number_token;
   out->str = source.str;
   for (const auto& item : source.array)
     out->array.push_back(assertion_json(*item));

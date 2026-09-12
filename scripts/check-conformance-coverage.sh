@@ -511,6 +511,57 @@ KNOWN_UNCOVERED=(
   "signaling/frames.json"
 )
 
+# Assertion-block SITES of an opened fixture that NO tracker binds, each with the
+# reason it cannot be bound (#lzcppblockwalk). Kept beside KNOWN_UNCOVERED so
+# there is one place to read what this binding does not prove.
+#
+# Written per SITE and not per fixture on purpose: when the missing op lands,
+# each entry fails as STALE and has to be deleted one at a time, which is what
+# stops an excuse outliving the gap it describes. A per-fixture entry would go
+# on excusing the whole file while nine of its ten steps had started binding.
+#
+# Every entry below is a step of one of the six fixtures
+# tests/test_reactive_graph_conformance.cpp already records in
+# EXPECTED_UNSUPPORTED / PARKED. The replay stops on an op or a novel assertion
+# key this binding does not implement, so the steps past that point never run
+# and their `expect` blocks are UNREACHABLE rather than unbound. An unbindable
+# block belongs here as an excuse the guard re-reads every run, never as a
+# runner fabricated to manufacture coverage.
+#
+# Open and close parens are on their OWN LINES even when this is empty:
+# lazily-spec's check-corpus-floors.mjs finds an array by `NAME=(` and then
+# scans for the next line beginning `)`, so a same-line `NAME=()` hands it the
+# close of whichever array comes next and every entry in between is misread.
+#
+# Format: "fixture|where|reason".
+KNOWN_UNBOUND_BLOCKS=(
+  "reactive-graph/exact_fold_paths_stay_exact.json|steps[2].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/exact_fold_paths_stay_exact.json|steps[3].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/exact_fold_paths_stay_exact.json|steps[4].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/feedback_drain_bound_reports_exhaustion.json|steps[1].expect|the fixture pins the novel drain_exhausted / writes_own_cone keys this runner does not model, so test_reactive_graph_conformance.cpp records it in both EXPECTED_UNSUPPORTED and PARKED, the replay never enters the step, and this expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/feedback_drain_bound_reports_exhaustion.json|steps[2].expect|the fixture pins the novel drain_exhausted / writes_own_cone keys this runner does not model, so test_reactive_graph_conformance.cpp records it in both EXPECTED_UNSUPPORTED and PARKED, the replay never enters the step, and this expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/feedback_drain_bound_reports_exhaustion.json|steps[3].expect|the fixture pins the novel drain_exhausted / writes_own_cone keys this runner does not model, so test_reactive_graph_conformance.cpp records it in both EXPECTED_UNSUPPORTED and PARKED, the replay never enters the step, and this expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_cell_acquires_no_dependency_edge.json|steps[1].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_cell_acquires_no_dependency_edge.json|steps[2].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_cell_acquires_no_dependency_edge.json|steps[3].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_cell_acquires_no_dependency_edge.json|steps[4].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_feed_through_a_formula_coalesces.json|steps[2].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_feed_through_a_formula_coalesces.json|steps[3].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_feed_through_a_formula_coalesces.json|steps[4].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_feed_through_a_formula_coalesces.json|steps[5].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_feed_through_a_formula_coalesces.json|steps[6].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_feed_through_a_formula_coalesces.json|steps[7].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_folds_synchronously_in_batch.json|steps[1].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_folds_synchronously_in_batch.json|steps[2].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_folds_synchronously_in_batch.json|steps[3].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_per_settled_cone_not_per_write.json|steps[1].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_per_settled_cone_not_per_write.json|steps[2].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_per_settled_cone_not_per_write.json|steps[3].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_per_settled_cone_not_per_write.json|steps[4].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_per_settled_cone_not_per_write.json|steps[5].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+  "reactive-graph/merge_per_settled_cone_not_per_write.json|steps[6].expect|the fixture drives a merge_cell op and this runner's op vocabulary has no merge-feed node kind, so test_reactive_graph_conformance.cpp records it in EXPECTED_UNSUPPORTED, the replay stops on that op, and this step's expect block is UNREACHABLE rather than unbound"
+)
+
 # ── per-scenario ledger ────────────────────────────────────────────────────
 #
 # Same shape, one rung down: a scenario of an OPENED fixture is either replayed
@@ -855,20 +906,22 @@ fi
 #   * DISTINCT DIGESTS. A digest is lost when a content edit collapses two
 #     distinct claims into one spelling, which leaves every site in place.
 #
-# The two are numerically equal in this corpus today (15 and 15): no two opened
-# fixtures spell their top-level `assertions` block identically. That is a
-# property of today's bytes, not of the rule, and it is exactly why both are
-# asserted — the moment a recurrence appears the two dimensions part company and
-# neither one alone is enough.
+# 710 sites carry 607 distinct digests today, so 103 sites share their bytes with
+# another site and 52 digests recur. The two dimensions are therefore genuinely
+# independent here, which they were NOT under the narrow walk: at 15 and 15 no
+# two blocks were spelled alike, and the deletion form of the site probe did not
+# exist because no digest recurred.
 #
-# SCOPE NOTE, stated so it cannot be mistaken for coverage: this walk mirrors
-# `declare_assertion_block`, which reads the TOP-LEVEL `assertions` object and
-# nothing else. The same 143 opened fixtures carry 704 blocks under
-# {assertions, expect, expected} object-valued at every depth, and 722 counting
-# array elements (lazily-spec `make corpus-blocks-report`). So 15/15 is the
-# magnitude of the walk that exists, not of the corpus — widening it is its own
-# item, and the number here must move with the walk when it lands.
+# SCOPE: this walk reads all five block names at EVERY depth, object-valued only
+# (#lzcppblockwalk). It replaced one that read the TOP-LEVEL `assertions` object
+# and nothing else — 15 of 710 sites, with 128 of the 143 opened fixtures
+# carrying no top-level `assertions` at all, so rung 0 reported nothing
+# whatsoever about them. 710/607 is also the five-name object-valued row of
+# lazily-spec's `make corpus-blocks-report` for this binding's opened set, which
+# is corroboration and not the source: the expectation is derived from the rule
+# THIS repo implements.
 if ! KNOWN_UNCOVERED_LEDGER="$(printf '%s\n' ${KNOWN_UNCOVERED[@]+"${KNOWN_UNCOVERED[@]}"})" \
+     KNOWN_UNBOUND_LEDGER="$(printf '%s\n' ${KNOWN_UNBOUND_BLOCKS[@]+"${KNOWN_UNBOUND_BLOCKS[@]}"})" \
      python3 - "$manifest" "$conformance_dir" <<'BLOCK_MAGNITUDE'
 import json
 import os
@@ -888,12 +941,36 @@ with open(manifest_path, encoding="utf-8") as handle:
             bound_digests.add(parts[1])
 declared_digests = set(declared_sites.values())
 
+# "fixture|where" -> reason, for sites nothing can bind. Split on the FIRST two
+# pipes only: a reason is prose and may contain one.
+unbound_excuses = {}
+for entry in os.environ.get("KNOWN_UNBOUND_LEDGER", "").splitlines():
+    entry = entry.strip()
+    if not entry:
+        continue
+    parts = entry.split("|", 2)
+    if len(parts) != 3 or not parts[2].strip():
+        print(
+            "ERROR: KNOWN_UNBOUND_BLOCKS entry %r is not \"fixture|where|reason\" with a\n"
+            "       non-empty reason. An excuse with no reason is an unexplained gap\n"
+            "       wearing a guard's uniform." % (entry,),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    unbound_excuses["%s|%s" % (parts[0].strip(), parts[1].strip())] = parts[2].strip()
+
 # ---- the twin of the loader's walk and digest ---------------------------
 #
-# `declare_assertion_block` (tests/test_assertion_keys.hpp): the document must be
-# an object, its `assertions` member must be an OBJECT, and that is the whole
-# walk — one site per fixture, spelled `<fixture>|assertions`, no descent, no
-# other block name, no array elements.
+# `walk_assertion_blocks` (tests/test_assertion_keys.hpp), clause for clause:
+# every name in {assertions, expect, expect_after, expect_initial, expected}, at
+# EVERY depth, OBJECT-valued only; an ARRAY-valued tracked key contributes NO
+# site (a runner binds the elements, never the array, so counting the array
+# would declare a block unbindable by construction) though arrays are still
+# descended into, which is where `steps[3].expect` lives; and a block is EMITTED
+# AND NOT DESCENDED INTO, because descending would inventory a fixture's
+# `expect` nested inside its own `assertions` as a second, separately bindable
+# site no tracker can reach without unwrapping the first. `where` is spelled
+# from the loader's coordinates: dotted member names, `[n]` for array indices.
 #
 # `write_canonical` + `assertion_block_digest`, rule for rule: objects emit
 # `{` then each member as `<name>:<value>,` with names SORTED, arrays emit `[`
@@ -957,14 +1034,21 @@ def block_digest(block):
     return "%016x" % hash_value
 
 
-def walk_blocks(fixture_id, document, sites, blocks):
-    if not isinstance(document, dict):
-        return
-    assertions = document.get("assertions")
-    if not isinstance(assertions, dict):
-        return
-    sites.add(fixture_id + "|assertions")
-    blocks.append(assertions)
+ASSERTION_BLOCK_NAMES = ("assertions", "expect", "expect_after", "expect_initial", "expected")
+
+
+def walk_blocks(fixture_id, node, path, sites, blocks):
+    if isinstance(node, dict):
+        for name, value in node.items():
+            child = name if not path else path + "." + name
+            if name in ASSERTION_BLOCK_NAMES and isinstance(value, dict):
+                sites[fixture_id + "|" + child] = value
+                blocks.append(value)
+                continue
+            walk_blocks(fixture_id, value, child, sites, blocks)
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            walk_blocks(fixture_id, item, "%s[%d]" % (path, index), sites, blocks)
 
 
 # ---- the corpus listing, minus this binding's own ledger ----------------
@@ -986,7 +1070,7 @@ uncovered_ledger = {
     if entry.strip()
 }
 
-expected_sites = set()
+expected_sites = {}
 expected_blocks = []
 walked = 0
 for fixture_id in corpus_fixtures:
@@ -1006,22 +1090,46 @@ for fixture_id in corpus_fixtures:
             file=sys.stderr,
         )
         sys.exit(1)
-    walk_blocks(fixture_id, document, expected_sites, expected_blocks)
+    walk_blocks(fixture_id, document, "", expected_sites, expected_blocks)
     walked += 1
 
 expected_digests = {block_digest(block) for block in expected_blocks}
 
-# Positive-evidence guard on EACH dimension (#lzvacuousrun): an empty derivation
-# is matched by a run that inventoried nothing, and zero == zero reports OK
-# having compared nothing. A derived expectation of zero is a hard error, not a
-# satisfied one.
-if walked == 0 or not expected_sites or not expected_digests:
+# Positive-evidence guard, ONE ARM PER DIMENSION (#lzvacuousrun): an empty
+# derivation is matched by a run that inventoried nothing, and zero == zero
+# reports OK having compared nothing. A derived expectation of zero is a hard
+# error, not a satisfied one.
+#
+# The two arms are written separately even though one walk feeds both, so that
+# neither dimension's zero-guard can be deleted while the other keeps the rung
+# looking guarded. Both were verified by removing one arm at a time and watching
+# the other still refuse an emptied corpus.
+if walked == 0:
     print(
-        "ERROR: the corpus at %s minus KNOWN_UNCOVERED derived %d opened fixture(s)\n"
-        "       carrying %d assertion-block site(s) and %d distinct digest(s).\n"
-        "       An empty derivation makes this rung vacuously green. The checkout is\n"
-        "       wrong, or LAZILY_SPEC_CONFORMANCE_DIR points somewhere else."
-        % (spec_dir, walked, len(expected_sites), len(expected_digests)),
+        "ERROR: the corpus at %s minus KNOWN_UNCOVERED derived ZERO opened fixtures.\n"
+        "       Every number below is derived from those bytes, so this rung would be\n"
+        "       vacuously green. The checkout is wrong, or LAZILY_SPEC_CONFORMANCE_DIR\n"
+        "       points somewhere else." % (spec_dir,),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if not expected_sites:
+    print(
+        "ERROR: the corpus at %s minus KNOWN_UNCOVERED derived ZERO assertion-block\n"
+        "       SITES over %d opened fixture(s). Zero expected sites are trivially\n"
+        "       matched by a run that inventoried nothing, so this dimension would\n"
+        "       report OK having compared nothing." % (spec_dir, walked),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if not expected_digests:
+    print(
+        "ERROR: the corpus at %s minus KNOWN_UNCOVERED derived ZERO distinct\n"
+        "       assertion-block DIGESTS over %d opened fixture(s). Same vacuity as the\n"
+        "       site arm above, on the dimension the site count cannot see."
+        % (spec_dir, walked),
         file=sys.stderr,
     )
     sys.exit(1)
@@ -1085,32 +1193,63 @@ if declared_digests != expected_digests:
     )
     failed = True
 
-# The bind half, re-checked from the exported ledger. The C++ BindLedger aborts
-# on an unbound block in-process; this arm proves the exported inventory says the
-# same thing, so the magnitude above is a magnitude OF A BOUND set.
+# ---- the BIND half (#lznullformblind), judged here ----------------------
+#
+# This is the whole verdict now, not a second opinion: tests/test_assertion_keys.hpp
+# used to abort in-process on any declared-but-unbound block, which was right
+# while the walk read only the 15 top-level `assertions` objects (all bound, so
+# nothing to excuse) and is wrong over 710 sites, 25 of which are genuinely
+# unreachable. The per-site excuse ledger has to live in ONE place, and this is
+# the place the rest of this binding's ledgers live.
 unbound = sorted(site for site, digest in declared_sites.items() if digest not in bound_digests)
-if unbound:
+unexcused = [site for site in unbound if site not in unbound_excuses]
+if unexcused:
     print(
         "ERROR: %d declared assertion-block site(s) were never BOUND to an AssertionKeys:\n"
         "       %s\n"
         "       Every other rung is scoped to a bound block, so an unbound one is not\n"
-        "       reported as unread — it is not reported at all (#lznullformblind)."
-        % (len(unbound), "\n       ".join(unbound)),
+        "       reported as unread — it is not reported at all (#lznullformblind).\n"
+        "       Bind it, or add it to KNOWN_UNBOUND_BLOCKS with the reason it cannot be."
+        % (len(unexcused), "\n       ".join(unexcused)),
         file=sys.stderr,
     )
     failed = True
+
+# Both directions, exactly as KNOWN_UNCOVERED is checked. An excuse is only
+# honest while the site is still DECLARED by the corpus AND still UNBOUND.
+unbound_set = set(unbound)
+for site in sorted(unbound_excuses):
+    if site not in declared_sites:
+        print(
+            "ERROR: KNOWN_UNBOUND_BLOCKS excuses '%s', which no opened fixture declares.\n"
+            "       The block was deleted or moved upstream, or the walk stopped reaching\n"
+            "       it — either way the excuse now hides nothing. Delete it."
+            % (site,),
+            file=sys.stderr,
+        )
+        failed = True
+    elif site not in unbound_set:
+        print(
+            "ERROR: KNOWN_UNBOUND_BLOCKS excuses '%s', but this run DID bind it — the\n"
+            "       excuse is stale and now understates coverage. Delete it."
+            % (site,),
+            file=sys.stderr,
+        )
+        failed = True
 
 if failed:
     sys.exit(1)
 
 print(
-    "assertion-block magnitude OK: the run inventoried %d site(s) / %d distinct digest(s), "
-    "all BOUND; derived %d AND %d from the %d opened fixtures of the corpus listing minus "
-    "KNOWN_UNCOVERED, both asserted EQUAL (top-level `assertions` walk only — see the "
-    "scope note in this script)"
+    "assertion-block magnitude OK: the run inventoried %d site(s) / %d distinct digest(s); "
+    "%d bound, %d declared unbindable with a reason; derived %d AND %d from the %d opened "
+    "fixtures of the corpus listing minus KNOWN_UNCOVERED, both asserted EQUAL (all five "
+    "block names, every depth, object-valued only)"
     % (
         len(declared_sites),
         len(declared_digests),
+        len(declared_sites) - len(unbound),
+        len(unbound),
         len(expected_sites),
         len(expected_digests),
         walked,

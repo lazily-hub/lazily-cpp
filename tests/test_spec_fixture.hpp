@@ -376,12 +376,20 @@ inline std::string spec_fixture_text(const std::string& area, const std::string&
   // HERE -- from the bytes just read -- rather than from a list a runner keeps.
   // Opening a fixture and never replaying it satisfies rules 1-7 vacuously.
   declare_prose_requirement(fixture_id, text);
-  // Rung 0 (`#lznullformblind`). A top-level `assertions` block must be BOUND to
-  // AssertionKeys by someone. Derived here for the same reason: every rung above
-  // rung 0 is scoped to a block a runner already bound, so an unbound block is
-  // not reported as unread -- it is not reported at all.
-  if (text.find("\"assertions\"") != std::string::npos)
-    declare_assertion_block(fixture_id, *parse_json(text));
+  // Rung 0 (`#lznullformblind`). Every assertion block this fixture carries must
+  // be BOUND to AssertionKeys by someone. Derived here for the same reason:
+  // every rung above rung 0 is scoped to a block a runner already bound, so an
+  // unbound block is not reported as unread -- it is not reported at all.
+  //
+  // Walked at EVERY depth over all five block names (#lzcppblockwalk). This was
+  // guarded by `text.find("\"assertions\"")` and read the top-level `assertions`
+  // object alone, which reached 15 of the 710 sites the 143 opened fixtures
+  // carry -- and 128 of those fixtures have no top-level `assertions` at all, so
+  // rung 0 reported NOTHING about them. The prefilter is gone with it: a
+  // substring test cannot decide whether any of five names appears
+  // object-valued somewhere in the tree, and guessing wrong silently narrows
+  // the inventory, which is the one failure this rung cannot survive.
+  declare_assertion_block(fixture_id, *parse_json(text));
   return text;
 }
 
