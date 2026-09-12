@@ -910,7 +910,11 @@ oracle_target_again="$(mktemp)"
 oracle_failures="$(mktemp)"
 # One line per audited target: its OWN-recipe anchor set, for the collision rung.
 anchor_sets="$(mktemp)"
-trap 'rm -f "$ci_raw" "$ci_anchor" "$ci_scoped" "$ci_steps" "$probe_failures" "$probe_stderr" "$oracle_root" "$oracle_root_again" "$oracle_target" "$oracle_target_again" "$oracle_failures" "$anchor_sets"' EXIT
+# One line per anchor ACTUALLY submitted to anchor_reached_in(), `target<TAB>anchor`.
+# The record of what the run DID, as opposed to how it classified things; the rung
+# at the bottom compares it against what each target OWED (#reversereachdirection).
+reach_probes="$(mktemp)"
+trap 'rm -f "$ci_raw" "$ci_anchor" "$ci_scoped" "$ci_steps" "$probe_failures" "$probe_stderr" "$oracle_root" "$oracle_root_again" "$oracle_target" "$oracle_target_again" "$oracle_failures" "$anchor_sets" "$reach_probes"' EXIT
 
 # ── probe 1 of 2: the ROOT ─────────────────────────────────────────────────
 #
@@ -1379,6 +1383,8 @@ make_invoked=()
 make_invoked_count=0
 excused_members=()
 excused_count=0
+gated=()
+gated_count=0
 reached=0
 excused_ok=0
 
@@ -1532,6 +1538,14 @@ while IFS= read -r target; do
 	scoped_file=""
 	scoped_job=""
 	scoped_step=""
+	# Every member that carries a gate, recorded BEFORE the mode split below.
+	# Accumulating it inside the branch is what made the partition true BY
+	# CONSTRUCTION rather than checked — lazily-dart's phrasing, and the same
+	# mistake this binding made once by inferring the reach mode from the
+	# complement of the step pin.
+	gated[$gated_count]="$target"
+	gated_count=$((gated_count + 1))
+
 	# ── EXCUSED first, ahead of the mode split and the pin (#reversereachdirection) ──
 	#
 	# An excuse is the conf's claim that CI deliberately does not run this gate,
@@ -1602,6 +1616,7 @@ while IFS= read -r target; do
 		scoped_count=$((scoped_count + 1))
 		while IFS= read -r a; do
 			[ -n "$a" ] || continue
+			printf '%s\t%s\n' "$target" "$a" >>"$reach_probes"
 			if ! anchor_reached_in "$a" "$scoped_file" "$scoped_job" "$scoped_step"; then
 				hit=0
 				missing_anchors="$missing_anchors$a"$'\n'
@@ -1717,6 +1732,98 @@ if [ -s "$anchor_sets" ]; then
 		echo "  making the anchors coarser." >&2
 		exit 1
 	fi
+fi
+
+# ── the AUDIT-PERFORMED rung (#reversereachdirection) ─────────────────────
+#
+# For every step-pinned member, the anchors actually SUBMITTED to
+# anchor_reached_in() must equal the anchors it owed. Not a count of members,
+# not a partition of populations — the probes the run really made, compared
+# against the obligation.
+#
+# This is the rung lazily-dart's residual demands, and the partition rung above
+# does NOT catch that residual: measured on this tree, a branch that records a
+# member in `scoped`, credits it `reached`, and `continue`s before the anchor
+# loop keeps every population set-equal and every count balanced — 9 modes, 9
+# verdicts — and printed `reached test-interop-peer` with `OK — 9 target(s)
+# reached by CI` at exit 0 while ci.yml mentioned the interop peer ZERO times.
+# Dropping its EXPECTED_GATE_STEPS entry and deleting its CI step in the same
+# edit stayed green. So set equality over the POPULATION is not enough: the
+# member was in the population, correctly; what it escaped was the check.
+#
+# The lesson is the one this binding keeps relearning in new clothes: a property
+# that holds by construction is not a property the guard checks, and the fix is
+# to assert it from what the run EXECUTED rather than from what it classified.
+if [ "$scoped_count" -gt 0 ]; then
+	unaudited=""
+	unaudited_count=0
+	for t in "${scoped[@]:+${scoped[@]}}"; do
+		owed="$(awk -F'\t' -v t="$t" '$2 == t { print $1 }' "$anchor_sets" \
+			| tr '\037' '\n' | sed -e '/^$/d' | LC_ALL=C sort -u)"
+		done_probes="$(awk -F'\t' -v t="$t" '$1 == t { print $2 }' "$reach_probes" \
+			| LC_ALL=C sort -u)"
+		if [ "$owed" != "$done_probes" ]; then
+			owed_n="$(printf '%s' "$owed" | grep -c '' || true)"
+			done_n="$(printf '%s' "$done_probes" | grep -c '' || true)"
+			unaudited="$unaudited  - $t: owed $owed_n anchor probe(s), performed $done_n"$'\n'
+			unaudited_count=$((unaudited_count + 1))
+		fi
+	done
+	if [ "$unaudited_count" -ne 0 ]; then
+		echo >&2
+		echo "check-ci-reach: $unaudited_count step-pinned target(s) were credited without being audited:" >&2
+		printf '%s' "$unaudited" >&2
+		echo "  Each of these is in the closure, carries a gate, and has a pinned CI step —" >&2
+		echo "  and its anchors were never submitted to the reach check. A target counted as" >&2
+		echo "  reached without a probe is reached by bookkeeping, not by CI. That is a" >&2
+		echo "  defect in this script, not in the Makefile or the workflow: some path" >&2
+		echo "  through the loop reaches a verdict without asking the question." >&2
+		exit 1
+	fi
+fi
+
+# ── TOTALITY over the gated population, by NAME (#reversereachdirection) ──
+#
+# Every gate-carrying member lands in exactly one of four outcomes: excused,
+# make-invoked, step-pinned, or the UNPINNED refusal. Asserted by name in both
+# directions against `gated`, which is accumulated BEFORE the mode split, so
+# neither side is derived from the branch that assigns the modes.
+#
+# The count arithmetic in the partition rung above already catches the coarse
+# version of this — measured: a branch crediting `reached` without recording a
+# mode reported "8 gate-carrying member(s) split ... but the verdicts below
+# total 9". This says it by name instead, so the diagnosis names the member
+# rather than an arithmetic discrepancy.
+totality_errors=""
+for t in "${gated[@]:+${gated[@]}}"; do
+	seen=0
+	for u in "${excused_members[@]:+${excused_members[@]}}"; do [ "$t" = "$u" ] && seen=$((seen + 1)); done
+	for u in "${make_invoked[@]:+${make_invoked[@]}}"; do [ "$t" = "$u" ] && seen=$((seen + 1)); done
+	for u in "${scoped[@]:+${scoped[@]}}"; do [ "$t" = "$u" ] && seen=$((seen + 1)); done
+	while IFS= read -r u; do
+		[ -n "$u" ] || continue
+		[ "$t" = "$u" ] && seen=$((seen + 1))
+	done <<<"$unpinned"
+	if [ "$seen" -ne 1 ]; then
+		totality_errors="$totality_errors  - '$t' carries a gate and landed in $seen of the four outcomes (excused / make-invoked / step-pinned / unpinned)"$'\n'
+	fi
+done
+for t in "${excused_members[@]:+${excused_members[@]}}" "${make_invoked[@]:+${make_invoked[@]}}" "${scoped[@]:+${scoped[@]}}"; do
+	found=0
+	for u in "${gated[@]:+${gated[@]}}"; do [ "$t" = "$u" ] && found=1 && break; done
+	if [ "$found" -eq 0 ]; then
+		totality_errors="$totality_errors  - '$t' was assigned a reach mode but is not in the gate-carrying population"$'\n'
+	fi
+done
+if [ -n "$totality_errors" ]; then
+	echo >&2
+	echo "check-ci-reach: the reach outcomes are not TOTAL over the gate-carrying members:" >&2
+	printf '%s' "$totality_errors" >&2
+	echo "  \`gated\` is accumulated before the mode split, so this compares the population" >&2
+	echo "  against the outcomes rather than against itself. A member in none of the four" >&2
+	echo "  left the audit with no verdict; a member in two was audited by one and" >&2
+	echo "  credited by another." >&2
+	exit 1
 fi
 
 # ── the PARTITION rung: exactly one mode per gate (#reversereachdirection) ─
