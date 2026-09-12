@@ -40,6 +40,8 @@
 # Environment:
 #   LAZILY_SPEC_CONFORMANCE_DIR  override the canonical corpus location
 #   MIN_FIXTURES                 override the floor (for debugging only)
+#   MAX_LEDGERED_BLOCKS          override the KNOWN_UNBOUND_BLOCKS ceiling (for
+#                                debugging only — in a commit, edit the default)
 
 set -euo pipefail
 
@@ -532,6 +534,11 @@ KNOWN_UNCOVERED=(
 # lazily-spec's check-corpus-floors.mjs finds an array by `NAME=(` and then
 # scans for the next line beginning `)`, so a same-line `NAME=()` hands it the
 # close of whichever array comes next and every entry in between is misread.
+#
+# This ledger may only SHRINK: MAX_LEDGERED_BLOCKS below caps it at the count it
+# carries today, because the set equality that checks it is satisfied by any
+# CONSISTENT pair and so cannot see a commit that detaches binds and adds the
+# matching entries (#lzledgerceiling).
 #
 # Format: "fixture|where|reason".
 KNOWN_UNBOUND_BLOCKS=(
@@ -1237,19 +1244,73 @@ for site in sorted(unbound_excuses):
         )
         failed = True
 
+# A CEILING on the excused population, and the resolution of a disagreement
+# between lazily-rs and lazily-kt over whether a typed count belongs beside a
+# set equality (#lzledgerceiling, carried from #lzrsbindpending).
+#
+# A typed count that MIRRORS the current population is redundant with the
+# equality above and can only ever drift away from it: if the ledger set and the
+# unbound set are equal then their counts are equal, so the number carries no
+# information the equality does not, and it adds a second edit site. That is the
+# `MIN_BLOCKS = 30` shape, and refusing it is right. This binding never had one —
+# every 710/607/25 in this file is prose, and the two dimensions above are
+# DERIVED from the corpus listing rather than typed.
+#
+# But set equality alone has a hole that a bare count does close: it is satisfied
+# by ANY CONSISTENT PAIR. A commit that detaches N binds AND writes the N
+# matching entries passes both directions. Nothing above sees it — the magnitude
+# rung does not either, because those sites are still DECLARED, they have merely
+# stopped being BOUND, so the site count and the digest set are untouched.
+#
+# So the missing guard is not a count of what IS excused; it is a ceiling on how
+# much MAY be. A ceiling is POLICY rather than MEASUREMENT: it does not move with
+# the corpus and never needs re-pinning except deliberately and upward, in
+# review. What it buys is that a regression and its excuse can no longer land in
+# the same commit unnoticed — raising this line is the explicit act.
+#
+# It defaults to the population this binding carries today (25), so landing it is
+# a no-op and any GROWTH fails. Raise it ONLY for a genuinely unbindable block —
+# a step past a replay stop, with the reason the capability cannot exist — and
+# expect to be asked why. Never to park a block a runner could bind.
+#
+# A ledger may only SHRINK. When the missing op lands and an entry goes stale,
+# lower this line by the same amount in the same commit.
+MAX_LEDGERED_BLOCKS = int(os.environ.get("MAX_LEDGERED_BLOCKS", "25"))
+if len(unbound_excuses) > MAX_LEDGERED_BLOCKS:
+    print(
+        "ERROR: %d assertion-block site(s) are ledgered in KNOWN_UNBOUND_BLOCKS as\n"
+        "       unbindable; the ceiling MAX_LEDGERED_BLOCKS is %d. This ledger may only\n"
+        "       SHRINK.\n"
+        "       The equality above only checks that the ledger and the run AGREE, which\n"
+        "       any consistent pair satisfies — a commit that detaches binds and writes\n"
+        "       the matching entries passes both of its directions, and the magnitude\n"
+        "       rung misses it too because those sites are still DECLARED, merely no\n"
+        "       longer BOUND. This ceiling is what makes enlarging the excused set an\n"
+        "       explicit act instead of a side effect.\n"
+        "       Bind the block. Raise this line only for a genuinely unbindable one,\n"
+        "       with the reason the capability cannot exist:"
+        % (len(unbound_excuses), MAX_LEDGERED_BLOCKS),
+        file=sys.stderr,
+    )
+    for site in sorted(unbound_excuses):
+        print("         %s | %s" % (site, unbound_excuses[site]), file=sys.stderr)
+    failed = True
+
 if failed:
     sys.exit(1)
 
 print(
     "assertion-block magnitude OK: the run inventoried %d site(s) / %d distinct digest(s); "
-    "%d bound, %d declared unbindable with a reason; derived %d AND %d from the %d opened "
-    "fixtures of the corpus listing minus KNOWN_UNCOVERED, both asserted EQUAL (all five "
-    "block names, every depth, object-valued only)"
+    "%d bound, %d declared unbindable with a reason of at most %d; derived %d AND %d from "
+    "the %d opened fixtures of the corpus listing minus KNOWN_UNCOVERED, both asserted "
+    "EQUAL (all five block names, every depth, object-valued only), the ledger under a "
+    "CEILING that makes enlarging it an explicit act"
     % (
         len(declared_sites),
         len(declared_digests),
         len(declared_sites) - len(unbound),
         len(unbound),
+        MAX_LEDGERED_BLOCKS,
         len(expected_sites),
         len(expected_digests),
         walked,
