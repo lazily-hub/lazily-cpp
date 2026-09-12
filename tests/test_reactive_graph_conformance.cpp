@@ -185,230 +185,33 @@ const std::map<std::string, std::string> PARKED = {
      "drain_exhausted/writes_own_cone (#lzmergefeed)"},
 };
 
-// ── Minimal JSON reader ────────────────────────────────────────────────────
+// ── JSON reader ────────────────────────────────────────────────────────────
 //
 // The fixtures are parsed, not transcribed into C++ constants. A transcription
 // is a vendored copy wearing a different hat: it goes green against whatever
 // the transcriber typed, which is the exact drift this corpus is read from
 // source to prevent.
-
-struct Json;
-using JsonPtr = std::shared_ptr<Json>;
-
-struct Json {
-  enum class Type { Null, Bool, Number, String, Array, Object } type = Type::Null;
-  bool boolean = false;
-  double number = 0;
-  // The RAW lexical token a number was spelled with, kept because
-  // `lazily_test::write_canonical` folds numbers by their token and not by any
-  // parsed value. This parser used to keep only the double, and `assertion_json`
-  // below could therefore not produce a content-identical clone: a block
-  // carrying `"value": 5` cloned to a node whose token was empty, canonicalised
-  // as `#5.000000` where the loader canonicalised the same bytes as `#5`, and
-  // rung 0 saw two different blocks. 93 of this area's `expect` sites -- every
-  // single one carrying a number -- were unbound for that reason and nothing
-  // reported it, because the narrow rung-0 walk only inventoried top-level
-  // `assertions` and no reactive-graph fixture has one (#lzcppblockwalk).
-  std::string number_token;
-  std::string str;
-  std::vector<JsonPtr> array;
-  // Ordered so replay is deterministic.
-  std::vector<std::pair<std::string, JsonPtr>> object;
-
-  const Json* find(const std::string& key) const {
-    for (const auto& kv : object) {
-      if (kv.first == key) return kv.second.get();
-    }
-    return nullptr;
-  }
-  bool has(const std::string& key) const { return find(key) != nullptr; }
-  long long as_int() const { return static_cast<long long>(number); }
-};
-
-struct JsonParser {
-  const std::string& src;
-  std::size_t pos = 0;
-
-  explicit JsonParser(const std::string& s) : src(s) {}
-
-  void skip_ws() {
-    while (pos < src.size() &&
-           (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r')) {
-      ++pos;
-    }
-  }
-
-  JsonPtr parse() {
-    skip_ws();
-    REQUIRE(pos < src.size(), "unexpected end of JSON fixture");
-    const char c = src[pos];
-    if (c == '{') return parse_object();
-    if (c == '[') return parse_array();
-    if (c == '"') return parse_string();
-    if (c == 't' || c == 'f') return parse_bool();
-    if (c == 'n') return parse_null();
-    return parse_number();
-  }
-
-  JsonPtr parse_object() {
-    auto node = std::make_shared<Json>();
-    node->type = Json::Type::Object;
-    ++pos; // '{'
-    skip_ws();
-    if (pos < src.size() && src[pos] == '}') {
-      ++pos;
-      return node;
-    }
-    while (true) {
-      skip_ws();
-      auto key = parse_string();
-      skip_ws();
-      REQUIRE(pos < src.size() && src[pos] == ':', "expected ':' in JSON object");
-      ++pos;
-      node->object.emplace_back(key->str, parse());
-      skip_ws();
-      REQUIRE(pos < src.size(), "unterminated JSON object");
-      if (src[pos] == ',') {
-        ++pos;
-        continue;
-      }
-      REQUIRE(src[pos] == '}', "expected ',' or '}' in JSON object");
-      ++pos;
-      return node;
-    }
-  }
-
-  JsonPtr parse_array() {
-    auto node = std::make_shared<Json>();
-    node->type = Json::Type::Array;
-    ++pos; // '['
-    skip_ws();
-    if (pos < src.size() && src[pos] == ']') {
-      ++pos;
-      return node;
-    }
-    while (true) {
-      node->array.push_back(parse());
-      skip_ws();
-      REQUIRE(pos < src.size(), "unterminated JSON array");
-      if (src[pos] == ',') {
-        ++pos;
-        continue;
-      }
-      REQUIRE(src[pos] == ']', "expected ',' or ']' in JSON array");
-      ++pos;
-      return node;
-    }
-  }
-
-  JsonPtr parse_string() {
-    auto node = std::make_shared<Json>();
-    node->type = Json::Type::String;
-    REQUIRE(pos < src.size() && src[pos] == '"', "expected '\"' starting JSON string");
-    ++pos;
-    while (pos < src.size() && src[pos] != '"') {
-      if (src[pos] == '\\') {
-        ++pos;
-        REQUIRE(pos < src.size(), "unterminated JSON escape");
-        switch (src[pos]) {
-        case 'n':
-          node->str += '\n';
-          break;
-        case 't':
-          node->str += '\t';
-          break;
-        case 'r':
-          node->str += '\r';
-          break;
-        case 'b':
-          node->str += '\b';
-          break;
-        case 'f':
-          node->str += '\f';
-          break;
-        case 'u': {
-          // Fixture text is ASCII-plus-punctuation; keep the escape verbatim
-          // rather than half-decoding UTF-16 surrogate pairs.
-          REQUIRE(pos + 4 < src.size(), "truncated \\u escape");
-          node->str += src.substr(pos - 1, 6);
-          pos += 4;
-          break;
-        }
-        default:
-          node->str += src[pos];
-          break;
-        }
-        ++pos;
-        continue;
-      }
-      node->str += src[pos++];
-    }
-    REQUIRE(pos < src.size(), "unterminated JSON string");
-    ++pos; // closing quote
-    return node;
-  }
-
-  JsonPtr parse_bool() {
-    auto node = std::make_shared<Json>();
-    node->type = Json::Type::Bool;
-    if (src.compare(pos, 4, "true") == 0) {
-      node->boolean = true;
-      pos += 4;
-    } else {
-      REQUIRE(src.compare(pos, 5, "false") == 0, "malformed JSON boolean");
-      node->boolean = false;
-      pos += 5;
-    }
-    return node;
-  }
-
-  JsonPtr parse_null() {
-    auto node = std::make_shared<Json>();
-    node->type = Json::Type::Null;
-    REQUIRE(src.compare(pos, 4, "null") == 0, "malformed JSON null");
-    pos += 4;
-    return node;
-  }
-
-  JsonPtr parse_number() {
-    auto node = std::make_shared<Json>();
-    node->type = Json::Type::Number;
-    const std::size_t start = pos;
-    if (pos < src.size() && (src[pos] == '-' || src[pos] == '+')) ++pos;
-    while (pos < src.size() &&
-           (std::isdigit(static_cast<unsigned char>(src[pos])) || src[pos] == '.' ||
-            src[pos] == 'e' || src[pos] == 'E' || src[pos] == '-' || src[pos] == '+')) {
-      ++pos;
-    }
-    REQUIRE(pos > start, "malformed JSON number");
-    node->number_token = src.substr(start, pos - start);
-    node->number = std::stod(node->number_token);
-    return node;
-  }
-};
-
-// This runner predates the shared fixture reader. Keep its replay model stable
-// while projecting assertion blocks into the shared representation owned by
-// AssertionKeys; the structural clone is content-identical, so rung-0 bind
-// fingerprints match the canonical fixture bytes.
 //
-// `number_token` is part of "content-identical" and was the omission that made
-// the sentence above false for every block carrying a number -- see the field's
-// comment on this file's `Json`. Anything added to either `Json` that
-// `write_canonical` folds has to be carried here in the same edit.
-static lazily_test::JsonPtr assertion_json(const Json& source) {
-  auto out = std::make_shared<lazily_test::Json>();
-  out->type = static_cast<lazily_test::Json::Type>(source.type);
-  out->boolean = source.boolean;
-  out->number = source.number;
-  out->number_token = source.number_token;
-  out->str = source.str;
-  for (const auto& item : source.array)
-    out->array.push_back(assertion_json(*item));
-  for (const auto& entry : source.object)
-    out->object.emplace_back(entry.first, assertion_json(*entry.second));
-  return out;
-}
+// This runner used to carry its OWN copy of the reader in this anonymous
+// namespace. `tests/test_json.hpp` was extracted from it and the original
+// stayed behind, so the test tree had two fixture JSON types -- and therefore
+// two copies of the `#lzflagcoercion` hole, each with its own
+// default-constructed `boolean` member. That second copy is the only reason
+// this file was the one whole-file exemption from the fixture-flag hygiene
+// rung: its safety rested on the probes in `#lzflagcoercion` rather than on
+// the guard, which is safety by convention (#lzsiblingrunnermasking).
+//
+// The copy is gone. `lazily_test::Json` is the single fixture JSON type in the
+// test tree, the rung scrutinises this file like every other, and
+// `assertion_json` -- the hand-maintained structural clone that had to stay
+// content-identical for rung-0 bind fingerprints to match, and silently did
+// not for every block carrying a number until `number_token` was added to it
+// -- is gone with it, because an `expect` block is now already the shared type
+// AssertionKeys wants. Two copies of a rule is one rule and one latent
+// divergence; the clone was the second kind twice over.
+using lazily_test::Json;
+using lazily_test::JsonParser;
+using lazily_test::JsonPtr;
 
 // ── Replay engine (synchronous Context) ────────────────────────────────────
 
@@ -999,9 +802,8 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
 
     const Json* expect = step.find("expect");
     if (!expect) continue;
-    const auto tracked_block = assertion_json(*expect);
     lazily_test::AssertionKeys expected(fixture + " step[" + std::to_string(i) + "].expect",
-                                        *tracked_block);
+                                        *expect);
 
     // `computes_of` is checked BEFORE every other key, in its own pass.
     // Several keys below can perform a read (`value` on a non-reading op,
@@ -1270,11 +1072,10 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
   const Json* scenarios = fixture.find("scenarios");
   REQUIRE(scenarios != nullptr, "fixture declares shape 'scenarios' but has none");
   const Json* expected = fixture.find("expected");
-  const auto tracked_expected = expected ? assertion_json(*expected) : nullptr;
   std::unique_ptr<lazily_test::AssertionKeys> expected_keys;
-  if (tracked_expected)
+  if (expected)
     expected_keys = std::make_unique<lazily_test::AssertionKeys>(
-        std::string(kArea) + "/" + name + " expected", *tracked_expected);
+        std::string(kArea) + "/" + name + " expected", *expected);
 
   Report total;
   std::map<std::string, Observation> observations;
@@ -1284,17 +1085,21 @@ Report replay_scenarios(const std::string& name, const Json& fixture) {
     const Json* sname = scenario->find("name");
     const Json* ssteps = scenario->find("steps");
     REQUIRE(sname && ssteps, "scenario needs a name and steps");
-    // This runner carries its own anonymous-namespace JSON reader, so it cannot
-    // take `lazily_test::ScenarioView` and the id is resolved here in the same
-    // fixed order the shared ledger uses (`id`, else `name`). A drift between
-    // the two spellings is not silent: the ledger DECLARES the id through
-    // `lazily_test::` and would report the one recorded here as unreplayed.
-    const Json* sid = scenario->find("id");
     // Booked AFTER the shape check and immediately before the replay consumes
     // `ssteps` (#lzscenariobodyskip) — the REQUIRE above can abort past this
     // point, and a scenario that never reaches its steps has not been replayed.
-    lazily_test::record_scenario(std::string(kArea) + "/" + name,
-                                 sid != nullptr && !sid->str.empty() ? sid->str : sname->str);
+    //
+    // Through `record_scenario_at`, which resolves the id with the SHARED rule
+    // (`id`, else `name`, else refuse). This runner used to re-spell that rule
+    // by hand — `sid && !sid->str.empty() ? sid->str : sname->str` — because
+    // its private JSON type could not be passed to `lazily_test::`. The hand
+    // copy agreed with the shared rule on today's corpus and differed from it
+    // in three ways that a corpus edit could reach: it accepted a non-string
+    // `id`, accepted a whitespace-blank one, and booked a blank `name` as an
+    // id rather than refusing. That is the same defect shape as a weaker
+    // sibling runner — a private copy of a shared rule, correct only by
+    // coincidence of input (#lzsiblingrunnermasking).
+    lazily_test::record_scenario_at(std::string(kArea) + "/" + name, *scenario, i);
     World w;
     Report report;
     replay(name + "/" + sname->str, w, ssteps->array, expected, expected_keys.get(), report);

@@ -359,6 +359,68 @@ inline void require_spec_checkout(const std::string& area) {
   }
 }
 
+// ── Assertion nesting, enforced at the door (#lzsiblingrunnermasking) ──────
+//
+// `invalidates` is the invalidation MATRIX: the reader-kind independence
+// contract, 337 of them across the corpus, every one a direct member of an
+// `expected` block. A runner reads it as `expected.invalidates`, so a copy that
+// drifted UP to step level is not a failure -- it is silence. The runner finds
+// nothing where it looks, `AssertionKeys` never sees the block (it is outside
+// the `expected` node it was handed, so the unconsumed-key rung cannot see it
+// either), and rung 0 does not reach it either, because `invalidates` is not one
+// of the five assertion-BLOCK names it inventories. lazily-rs shipped exactly
+// that: its MAP runner read the matrix off the step, so the assertion never ran
+// once.
+//
+// lazily-cpp already pinned the nesting -- in test_queue_family_conformance.cpp,
+// over the eleven fixtures that runner's ledger happens to list. That is the
+// masking shape one level up, and it was MEASURED rather than argued: move
+// `expected.invalidates` up to step level in queuecell_spsc_push_pop.json and
+// QueueConformance -- the runner that actually replays it -- stays GREEN, while
+// the only red comes from a DIFFERENT BINARY. Same for topiccell_* and
+// TopicConformance. Both read the matrix with `with_sub_if_present`, so a
+// mis-nested one leaves them checking nothing; deleting, renaming or
+// `ctest -R`-filtering the family binary silently removes that property, and
+// nothing pinned it for the other 132 fixtures at all.
+//
+// So it is derived HERE, at the only door into the corpus, for every fixture
+// every binary opens -- the same reason rule 8 and rung 0 are derived here. The
+// invariant is read off the corpus rather than guessed: all 337 `invalidates`
+// in lazily-spec today are inside an assertion block, so requiring it costs
+// nothing and a mis-nested one is a named failure at its JSON path.
+//
+// Honest about the other 132: every runner outside queue/topic reads the matrix
+// with a REQUIRED `with_sub`, so a mis-nested one already reddened them --
+// probed on presence/presence.json, which fails BEFORE this guard with
+// "required assertion key 'invalidates' is missing". There the gain is the
+// diagnosis (the matrix moved, at this path) rather than new coverage. The new
+// coverage is queue's five and topic's four, plus every future runner that
+// reads a matrix optionally.
+inline void require_assertion_nesting(const std::string& fixture_id, const Json& node,
+                                      const std::string& path = std::string(),
+                                      bool inside_block = false) {
+  if (node.is_array()) {
+    for (std::size_t i = 0; i < node.array.size(); ++i)
+      require_assertion_nesting(fixture_id, *node.array[i], path + "[" + std::to_string(i) + "]",
+                                inside_block);
+    return;
+  }
+  if (!node.is_object()) return;
+  for (const auto& entry : node.object) {
+    const std::string child = path.empty() ? entry.first : path + "." + entry.first;
+    const bool is_block = assertion_block_names().count(entry.first) != 0;
+    if (entry.first == "invalidates" && !inside_block) {
+      REQUIRE(false, fixture_id + ": `" + child +
+                         "` is an invalidation matrix outside any assertion block. Runners "
+                         "read it as `expected.invalidates`, so a copy at this depth is "
+                         "compared by nothing and reports nothing — not even as an "
+                         "unconsumed key, because it sits outside the block AssertionKeys "
+                         "is handed (#lzsiblingrunnermasking)");
+    }
+    require_assertion_nesting(fixture_id, *entry.second, child, inside_block || is_block);
+  }
+}
+
 // Read a canonical fixture's raw text, recording that it was actually opened.
 inline std::string spec_fixture_text(const std::string& area, const std::string& name) {
   require_spec_checkout(area);
@@ -389,7 +451,12 @@ inline std::string spec_fixture_text(const std::string& area, const std::string&
   // substring test cannot decide whether any of five names appears
   // object-valued somewhere in the tree, and guessing wrong silently narrows
   // the inventory, which is the one failure this rung cannot survive.
-  declare_assertion_block(fixture_id, *parse_json(text));
+  const JsonPtr parsed = parse_json(text);
+  declare_assertion_block(fixture_id, *parsed);
+  // Structural nesting, for the same reason and at the same door: an assertion
+  // key that drifted out of its block is read by nobody and reported by nothing
+  // (#lzsiblingrunnermasking).
+  require_assertion_nesting(fixture_id, *parsed);
   return text;
 }
 

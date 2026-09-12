@@ -357,7 +357,7 @@ then
   exit 1
 fi
 
-# ── fixture-flag coercion (#lzflagcoercion) ────────────────────────────────
+# ── fixture-flag coercion (#lzflagcoercion / #lzsiblingrunnermasking) ──────
 #
 # lazily-go shipped `got != (want == true)` over an `any`. `want == true` is
 # false for EVERY non-boolean -- `0`, `null`, `1`, an object, the string
@@ -375,24 +375,46 @@ fi
 # comparison goes through `lazily_test::fixture_flag` or `json_bool`, both of
 # which REQUIRE the type.
 #
-# This rung guards the residue: the raw member is still spellable, and a new
-# runner reaching for it re-opens the hole. Files entitled to touch it are
-# listed, for the same reason the corpus-root scan lists its seam -- a parser
-# has to WRITE the member and a renderer has to read it under a
-# `case Json::Type::Bool`, and statechart's two gates are pinned by the corpus
-# itself (`malformed_rejected.json` requires them to THROW, which
-# `fixture_flag`'s abort would take down with it). Everything else must go
-# through a type-requiring accessor.
+# WHAT THIS RUNG ASSERTS, and why it changed shape (#lzsiblingrunnermasking).
+# It used to assert a SPELLING: no `as_bool`, and no raw `boolean` read outside
+# five allowlisted files. That is narrower than the defect. The defect is a
+# fixture boolean reaching a comparison WITHOUT its type being required, and
+# `as_bool` was only the spelling that happened to exist -- `as_flag`,
+# `flag_or`, `truthy` or a plain `v.boolean` inside a helper are the same hole
+# under a name no scan was watching for. Worse, an allowlisted file got no
+# scrutiny at all: the entitlement was granted per FILE, so a coercing read
+# planted in one of the five was invisible, and one of the five was on the list
+# only because it carried a whole second copy of the fixture JSON type.
 #
-# Honest about its reach: an allowlisted file gets no scrutiny here, and
-# tests/test_reactive_graph_conformance.cpp is on the list because it carries a
-# whole second JSON parser of its own for the replay model. Its
-# `lazily_test::Json` comparisons were fixed and are covered by the corpus, not
-# by this rung.
+# So the rung asserts the GUARD instead of the spelling, and needs no allowlist:
+#
+#   1. `as_bool(` anywhere under tests/ or src/ is refused by name. It no
+#      longer compiles, and saying so at the line is cheaper than a template
+#      error.
+#   2. Every READ of the `boolean` member must have `Json::Type::Bool`
+#      established in its own statement or in one of the three statements before
+#      it -- a `REQUIRE`/`chart_require` on the type, an `if` on it, or a
+#      `case Json::Type::Bool:` label. An assignment TO the member is exempt,
+#      because writing it cannot coerce; a parser has to write it.
+#   3. `tests/test_json.hpp` is the only file entitled to DECLARE a fixture JSON
+#      type (`struct Json`, `struct JsonParser`) or a `bool boolean` member. Two
+#      copies of the type is two copies of this hole, one of them unwatched --
+#      which is exactly how the reactive-graph runner earned its exemption, and
+#      why that runner now uses the shared reader.
+#
+# Rule 2 is the general one: it PERMITS a hand-rolled guard
+# (`REQUIRE(v.type == Json::Type::Bool, ...); return v.boolean;`) and refuses
+# the same read without it, so the rung is about the obligation rather than
+# about which helper names exist today. `include/` stays out of scope and was
+# checked rather than assumed: `lazily::JsonValue::as_bool()`
+# (include/lazily/json.hpp) THROWS on a non-bool, so the library type requires
+# its type already, and the member reads left in that tree are its own
+# constructor and its serializer.
 #
 # Placed BEFORE the missing-corpus failure below, like the scan above: source
 # hygiene needs no corpus, and a rung behind that gate is a rung a machine
-# without the sibling checkout never reaches.
+# without the sibling checkout never reaches. Every violation is accumulated
+# into `failed` and reported, rather than exiting on the first.
 if ! python3 - "$source_scan_root" <<'FLAG_COERCION_SCAN'
 import os
 import re
@@ -400,21 +422,8 @@ import sys
 
 root = os.path.abspath(sys.argv[1])
 
-# Only the trees that read FIXTURE json. `include/` is deliberately out of
-# scope and was checked rather than assumed: `lazily::JsonValue::as_bool()`
-# (include/lazily/json.hpp) THROWS on a non-bool, so the library type requires
-# its type already, and the member reads left in that tree are its own
-# constructor and its serializer.
+# Only the trees that read FIXTURE json.
 SCAN_DIRS = ("tests", "src")
-
-# Entitled to touch the raw `boolean` member, with the reason each one is.
-ALLOWED = {
-    "tests/test_json.hpp": "the parser writes it; json_bool gates it",
-    "tests/test_assertion_keys.hpp": "fixture_flag gates it; json_debug renders it",
-    "tests/test_reliable_sync.cpp": "fixture_json renders it under case Json::Type::Bool",
-    "tests/test_reactive_graph_conformance.cpp": "carries its own replay-model JSON parser",
-    "tests/test_statechart_conformance.cpp": "two gates the corpus REQUIRES to throw",
-}
 
 SCAN_EXT = (".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h", ".ipp")
 SKIP_DIRS = {
@@ -422,16 +431,61 @@ SKIP_DIRS = {
     "cmake-build-debug", "cmake-build-release",
 }
 
+# The ONE file entitled to declare the fixture JSON type and its `boolean`
+# member. Not an allowlist for reads: rules 1 and 2 below apply to it too.
+JSON_TYPE_OWNER = "tests/test_json.hpp"
+
 # Positive-evidence floor, the same discipline as MIN_SCANNED above: a scan that
 # quietly stopped finding sources reports OK on every rung it no longer reaches.
 MIN_SCANNED = int(os.environ.get("MIN_SCANNED_FLAG_SOURCES", "60"))
 
-RAW_MEMBER = re.compile(r"(?:->|\.)boolean\b")
+# How many preceding statements may carry the type guard. One is the common
+# case; `fixture_flag`'s own REQUIRE spans four physical lines, and a
+# `switch`/`case Json::Type::Bool:` puts the label two statements back.
+GUARD_WINDOW = 3
+
 COERCING_ACCESSOR = re.compile(r"\bas_bool\s*\(")
+MEMBER = re.compile(r"(?:->|\.)boolean\b")
+ASSIGNED = re.compile(r"\s*=(?!=)")
+TYPE_GUARD = re.compile(r"Type::Bool\b")
+DECLARES_JSON_TYPE = re.compile(r"^\s*(?:struct|class)\s+Json(?:Parser)?\s*[{;:]")
+DECLARES_MEMBER = re.compile(r"^\s*bool\s+boolean\b")
+
+
+def statements(text):
+    """Group physical lines into logical statements.
+
+    A statement ends at a brace (which opens or closes a scope, so a guard
+    inside one body cannot vouch for a read inside another), or at `;`/`:` once
+    parentheses balance -- so a multi-line `REQUIRE(...)` is ONE statement and a
+    lambda body is not swallowed into the call that opens it. Returns
+    [(lines, joined_code)] where `lines` is [(lineno, code)].
+    """
+    out = []
+    buf = ""
+    lines = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        code = line.split("//", 1)[0]
+        if not code.strip():
+            continue
+        lines.append((lineno, code))
+        buf += (" " if buf else "") + code.strip()
+        tail = buf.rstrip()
+        if tail.endswith(("{", "}")) or (
+            buf.count("(") <= buf.count(")") and tail.endswith((";", ":"))
+        ):
+            out.append((lines, buf))
+            buf = ""
+            lines = []
+    if lines:
+        out.append((lines, buf))
+    return out
+
 
 scanned = 0
-raw_hits = []
 accessor_hits = []
+unguarded_hits = []
+type_hits = []
 
 for top in SCAN_DIRS:
   for base, dirs, files in os.walk(os.path.join(root, top)):
@@ -446,14 +500,27 @@ for top in SCAN_DIRS:
         except OSError:
             continue
         scanned += 1
+
         for lineno, line in enumerate(text.splitlines(), 1):
             code = line.split("//", 1)[0]
             if COERCING_ACCESSOR.search(code):
                 accessor_hits.append((rel, lineno))
-            if rel in ALLOWED:
-                continue
-            if RAW_MEMBER.search(code):
-                raw_hits.append((rel, lineno))
+            if rel != JSON_TYPE_OWNER and (
+                DECLARES_JSON_TYPE.search(code) or DECLARES_MEMBER.search(code)
+            ):
+                type_hits.append((rel, lineno, code.strip()))
+
+        grouped = statements(text)
+        for index, (lines, joined) in enumerate(grouped):
+            window = [code for _, code in grouped[max(0, index - GUARD_WINDOW):index + 1]]
+            guarded = any(TYPE_GUARD.search(code) for code in window)
+            for lineno, code in lines:
+                for match in MEMBER.finditer(code):
+                    if ASSIGNED.match(code[match.end():]):
+                        continue  # a write cannot coerce; a parser must write it
+                    if guarded:
+                        continue
+                    unguarded_hits.append((rel, lineno, code.strip()))
 
 failed = False
 
@@ -487,16 +554,33 @@ for rel, lineno in accessor_hits:
     )
     failed = True
 
-for rel, lineno in raw_hits:
+for rel, lineno, code in unguarded_hits:
     print(
-        "ERROR: %s:%d reads the JSON node's raw `boolean` member.\n"
+        "ERROR: %s:%d reads the JSON node's `boolean` member with no type required.\n"
+        "         %s\n"
         "       The member is default-constructed `false`, so reading it off a\n"
         "       non-boolean coerces instead of failing, and a fixture spelling `\"true\"`\n"
-        "       asserts the OPPOSITE of what it reads as. Compare through\n"
-        "       lazily_test::fixture_flag(value, key), which REQUIRES the JSON type and\n"
-        "       names the key; only a parser or a renderer is entitled to the member,\n"
-        "       and those are listed in this rung's ALLOWED (#lzflagcoercion)."
-        % (rel, lineno),
+        "       asserts the OPPOSITE of what it reads as. Either compare through\n"
+        "       lazily_test::fixture_flag(value, key) / json_bool(value), which REQUIRE\n"
+        "       the type and name the key, or establish `Json::Type::Bool` in this\n"
+        "       statement or one of the %d before it (a REQUIRE on the type, an `if` on\n"
+        "       it, or a `case Json::Type::Bool:` label). Writing the member is exempt;\n"
+        "       reading it is not (#lzflagcoercion)." % (rel, lineno, code, GUARD_WINDOW),
+        file=sys.stderr,
+    )
+    failed = True
+
+for rel, lineno, code in type_hits:
+    print(
+        "ERROR: %s:%d declares a second fixture JSON type or `boolean` member.\n"
+        "         %s\n"
+        "       %s owns the one fixture JSON reader in the test tree. A second copy is a\n"
+        "       second default-constructed `boolean` member, a second set of accessors to\n"
+        "       keep type-requiring, and a structural clone to keep content-identical by\n"
+        "       hand for rung 0 — the reactive-graph runner carried exactly that and was\n"
+        "       for that reason the one file exempted from this rung. Use\n"
+        "       `lazily_test::Json` / `JsonParser` (#lzsiblingrunnermasking)."
+        % (rel, lineno, code, JSON_TYPE_OWNER),
         file=sys.stderr,
     )
     failed = True
@@ -505,9 +589,10 @@ if failed:
     sys.exit(1)
 
 print(
-    "fixture-flag hygiene OK: %d source file(s) scanned, no coercing boolean "
-    "accessor and no raw `boolean` read outside the %d file(s) entitled to it"
-    % (scanned, len(ALLOWED))
+    "fixture-flag hygiene OK: %d source file(s) scanned, no coercing boolean accessor, "
+    "every `boolean` read type-required within %d statement(s) of its guard, and %s the "
+    "only declared fixture JSON type — no file allowlisted"
+    % (scanned, GUARD_WINDOW, JSON_TYPE_OWNER)
 )
 FLAG_COERCION_SCAN
 then
