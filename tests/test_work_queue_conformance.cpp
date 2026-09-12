@@ -53,7 +53,11 @@ template <typename Queue> struct Readers {
       };
       for (const auto& reader : actual) {
         inv.assert_key_with(reader.name, [&](const Json& want) {
-          REQUIRE((!reader.cached) == want.as_bool(),
+          // The expectation is a fixture flag, so it is REQUIRED to be a JSON
+          // boolean: a coerced non-boolean reads `false` and inverts this
+          // claim silently (#lzflagcoercion).
+          REQUIRE((!reader.cached) ==
+                      lazily_test::fixture_flag(want, std::string("invalidates.") + reader.name),
                   where + ": invalidates." + reader.name + " mismatch");
           return true;
         });
@@ -165,7 +169,8 @@ std::size_t replay(const std::string& fixture, const std::string& flavor) {
       const auto delivery_id = static_cast<std::uint64_t>(op->find("delivery_id")->as_int());
       const bool got = type == "ack" ? queue.ack(ctx, worker, delivery_id)
                                      : queue.nack(ctx, worker, delivery_id);
-      REQUIRE(got == returns->as_bool(), where + ": settlement return mismatch");
+      REQUIRE(got == lazily_test::fixture_flag(*returns, "returns"),
+              where + ": settlement return mismatch");
     } else if (type == "reap_expired") {
       const auto got =
           queue.reap_expired(ctx, static_cast<std::uint64_t>(op->find("now")->as_int()));
@@ -186,7 +191,8 @@ std::size_t replay(const std::string& fixture, const std::string& flavor) {
         return true;
       });
       reads.assert_key_with("is_empty", [&](const Json& want) {
-        REQUIRE(queue.is_empty(ctx) == want.as_bool(), where + ": is_empty read mismatch");
+        REQUIRE(queue.is_empty(ctx) == lazily_test::fixture_flag(want, "reads.is_empty"),
+                where + ": is_empty read mismatch");
         return true;
       });
       reads.assert_key_with("in_flight_len", [&](const Json& want) {

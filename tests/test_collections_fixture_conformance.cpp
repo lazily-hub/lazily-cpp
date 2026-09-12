@@ -258,6 +258,15 @@ void test_semtree_incremental() {
     }
 
     expect_after.assert_key_with_if_present("sibling_a_cached", [&](const Json& want) {
+      // `SemTree::is_cached` returns `false` for a node the tree does not
+      // carry, so a `sibling_a_cached: false` would be satisfied by `a`'s
+      // NON-EXISTENCE rather than by its cache state -- the same dropped
+      // presence signal as go's `IsCached(id)` (#lzflagcoercion). Require the
+      // node before reading its cache state. `node_handle` does not read the
+      // slot, so this cannot itself revalidate what is being measured.
+      REQUIRE(tree.node_handle("a").has_value(),
+              "sibling_a_cached: the tree carries no node `a`, so its cache "
+              "state is not being measured (#lzflagcoercion)");
       return tree.is_cached("a") == lazily_test::json_bool(want);
     });
 

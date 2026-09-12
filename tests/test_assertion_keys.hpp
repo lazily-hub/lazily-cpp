@@ -509,38 +509,9 @@ inline std::string fixture_of(const std::string& where) {
   return space == std::string::npos ? where : where.substr(0, space);
 }
 
-// Compact rendering of a fixture value, so a failure names what the corpus
-// actually said rather than only which key disagreed.
-inline std::string json_debug(const Json& value) {
-  switch (value.type) {
-  case Json::Type::Null:
-    return "null";
-  case Json::Type::Bool:
-    return value.boolean ? "true" : "false";
-  case Json::Type::Number:
-    return value.number_token;
-  case Json::Type::String:
-    return "\"" + value.str + "\"";
-  case Json::Type::Array: {
-    std::string out = "[";
-    for (std::size_t i = 0; i < value.array.size(); ++i) {
-      if (i != 0) out += ",";
-      out += json_debug(*value.array[i]);
-    }
-    return out + "]";
-  }
-  default: {
-    std::string out = "{";
-    bool first = true;
-    for (const auto& kv : value.object) {
-      if (!first) out += ",";
-      first = false;
-      out += "\"" + kv.first + "\":" + json_debug(*kv.second);
-    }
-    return out + "}";
-  }
-  }
-}
+// `json_debug` and `fixture_flag` live in test_json.hpp, beside the type they
+// inspect, so src/interop_peer.cpp can require a fixture flag's JSON type
+// without pulling this header's ledgers into a non-test translation unit.
 
 // Parse a fixture scalar into the type of the value being compared. Tag
 // dispatch rather than a trait, so the mapping is one visible overload per

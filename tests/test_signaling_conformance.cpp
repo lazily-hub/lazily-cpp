@@ -362,7 +362,7 @@ int main() {
       for (const auto& w : observed_welcomes)
         for (const PeerId p : w.peers)
           if (p == w.peer) excludes = false;
-      if (excludes == want.as_bool()) return true;
+      if (excludes == lazily_test::fixture_flag(want, "roster_excludes_self")) return true;
       fail(-1, "roster_excludes_self");
       return false;
     });
@@ -372,7 +372,7 @@ int main() {
       for (const auto& w : observed_welcomes)
         for (size_t i = 1; i < w.peers.size(); ++i)
           if (w.peers[i - 1] >= w.peers[i]) sorted = false;
-      if (sorted == want.as_bool()) return true;
+      if (sorted == lazily_test::fixture_flag(want, "roster_sorted_ascending")) return true;
       fail(-1, "roster_sorted_ascending");
       return false;
     });
@@ -382,7 +382,7 @@ int main() {
       bool ok = true;
       for (const PeerId from : observed_forward_from)
         if (registered_peers.count(from) == 0) ok = false;
-      if (ok == want.as_bool()) return true;
+      if (ok == lazily_test::fixture_flag(want, "forwarded_from_is_server_registered")) return true;
       fail(-1, "forwarded_from_is_server_registered");
       return false;
     });

@@ -31,7 +31,7 @@ std::uint64_t u64_field(const Json& value, const std::string& key) {
 }
 
 bool bool_field(const Json& value, const std::string& key) {
-  return required(value, key).as_bool();
+  return lazily_test::fixture_flag(required(value, key), key);
 }
 
 std::optional<std::uint64_t> optional_u64_field(const Json& value, const std::string& key) {

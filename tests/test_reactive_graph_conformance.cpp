@@ -577,7 +577,16 @@ ReadOut try_read(World& w, const std::string& id) {
 
 bool readable(World& w, const std::string& id) {
   auto it = w.nodes.find(id);
-  if (it == w.nodes.end()) return false;
+  // A DROPPED PRESENCE SIGNAL, not a reading (#lzflagcoercion). `false` here
+  // would satisfy every `readable.<id>: false` in the corpus -- 13 of them --
+  // by the id's NON-EXISTENCE rather than by the disposal each one exists to
+  // pin, so a renamed or mistyped node is indistinguishable from a torn-down
+  // one. A disposed id is deliberately never erased from `w.nodes` (see the
+  // `dispose` op), so reaching `end()` can only mean the replay never created
+  // the node at all. Fail by name.
+  REQUIRE(it != w.nodes.end(), "fixture asserts readable." + id +
+                                   " for an id the replay never created, so non-existence would "
+                                   "satisfy the claim instead of disposal (#lzflagcoercion)");
   if (it->second.kind == Kind::Effect) return w.ctx.is_effect_active(Effect(it->second.id));
   return try_read(w, id).ok;
 }
@@ -1099,7 +1108,8 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
         expected.with_sub("readable", [&](lazily_test::AssertionKeys& readable_nodes) {
           for (const auto& id : readable_nodes.keys())
             readable_nodes.assert_key_with(id, [&](const lazily_test::Json& value) {
-              check(fixture, i, "readable." + id, readable(w, id), value.boolean, report);
+              check(fixture, i, "readable." + id, readable(w, id),
+                    lazily_test::fixture_flag(value, "readable." + id), report);
               return true;
             });
         });
@@ -1171,7 +1181,8 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
       for (const auto& id : readable_nodes.keys()) {
         readable_nodes.assert_key_with(id, [&](const lazily_test::Json& value) {
           const bool alive = readable(w, id);
-          check(fixture, tail_step, "final.readable." + id, alive, value.boolean, report);
+          check(fixture, tail_step, "final.readable." + id, alive,
+                lazily_test::fixture_flag(value, "final.readable." + id), report);
           report.observation.readable[id] = alive;
           return true;
         });

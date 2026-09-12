@@ -127,8 +127,15 @@ static void add_transition(StateBuilder& sb, const std::string& event, const Jso
       tb.action(act);
   }
   if (const Json* internal = value->find("internal")) {
+    // Gated by `chart_require`, which THROWS: `malformed_rejected.json`'s
+    // `internal_must_be_boolean` case spells `"internal": "false"` and pins
+    // that the builder REJECTS it, and `reject_malformed_corpus` catches the
+    // exception. So this site is type-required already, and by the corpus
+    // itself -- do NOT route it through `lazily_test::fixture_flag`, whose
+    // REQUIRE aborts and would take that negative case down with it
+    // (#lzflagcoercion).
     chart_require(internal->type == Json::Type::Bool, "`internal` must be a boolean");
-    if (internal->as_bool()) tb.internal();
+    if (internal->boolean) tb.internal();
   }
   sb.on_transition(event, std::move(tb));
 }
@@ -144,8 +151,10 @@ static StateBuilder build_state(const std::string& id, const Json* def) {
 
   bool is_parallel = false;
   if (parallel != nullptr) {
+    // As `internal` above: `parallel_must_be_boolean` spells
+    // `"parallel": "true"` and pins the rejection, so the gate must throw.
     chart_require(parallel->type == Json::Type::Bool, "`parallel` must be a boolean");
-    is_parallel = parallel->as_bool();
+    is_parallel = parallel->boolean;
   }
 
   StateBuilder sb = StateBuilder::atomic(id);
@@ -311,7 +320,7 @@ static void replay(const std::string& name) {
       REQUIRE(g->is_object(), "`guards` must be an object");
       for (const auto& kv : g->object) {
         REQUIRE(kv.second->type == Json::Type::Bool, "a guard resolution must be a boolean");
-        guards[kv.first] = kv.second->as_bool();
+        guards[kv.first] = kv.second->boolean;
       }
     }
 

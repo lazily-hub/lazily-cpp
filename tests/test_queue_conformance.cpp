@@ -205,10 +205,15 @@ void replay(const std::string& name, const std::string& flavor) {
       for (const auto& probe : probes) {
         inv.assert_key_with_if_present(probe.key, [&](const Json& want) {
           const bool got = invalidated(probe.still_valid);
-          if (got == want.boolean) return true;
+          // `fixture_flag`, not `want.boolean`: a non-boolean reads `false` off
+          // the default-constructed member, so `"true"` would assert the
+          // OPPOSITE of what the corpus spells (#lzflagcoercion).
+          const bool wants =
+              lazily_test::fixture_flag(want, std::string("invalidates.") + probe.key);
+          if (got == wants) return true;
           fail(label, i,
                std::string("invalidates.") + probe.key + " = " + (got ? "true" : "false") +
-                   ", fixture says " + (want.boolean ? "true" : "false"));
+                   ", fixture says " + (wants ? "true" : "false"));
           return false;
         });
       }
@@ -248,13 +253,16 @@ void replay(const std::string& name, const std::string& flavor) {
       return false;
     });
     exp.assert_key_with_if_present("is_empty", [&](const Json& e) {
-      return check_bool(name, i, "is_empty", r.empty.value(), e.boolean);
+      return check_bool(name, i, "is_empty", r.empty.value(),
+                        lazily_test::fixture_flag(e, "is_empty"));
     });
     exp.assert_key_with_if_present("is_full", [&](const Json& e) {
-      return check_bool(name, i, "is_full", r.full.value(), e.boolean);
+      return check_bool(name, i, "is_full", r.full.value(),
+                        lazily_test::fixture_flag(e, "is_full"));
     });
     exp.assert_key_with_if_present("closed", [&](const Json& e) {
-      return check_bool(name, i, "closed", r.closed.value(), e.boolean);
+      return check_bool(name, i, "closed", r.closed.value(),
+                        lazily_test::fixture_flag(e, "closed"));
     });
 
     if (const Json* e = exp.find("elements")) {

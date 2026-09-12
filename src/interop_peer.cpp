@@ -202,7 +202,13 @@ std::uint64_t u64_field(const Json& value, const std::string& field) {
 }
 
 bool bool_field(const Json& value, const std::string& field) {
-  return required(value, field).as_bool();
+  // Type-required, not coerced (`#lzflagcoercion`). The interop peer's steps
+  // arrive as JSON from ANOTHER binding, so a peer that spells a predicate
+  // `"true"` instead of `true` is exactly the input this has to refuse: the
+  // node's default-constructed `boolean` reads `false` for a string, so the
+  // step would run with the OPPOSITE predicate and the transcript would look
+  // like a genuine cross-binding disagreement.
+  return lazily_test::fixture_flag(required(value, field), "interop step " + field);
 }
 
 std::string timer_error(lazily::TimerError error) {

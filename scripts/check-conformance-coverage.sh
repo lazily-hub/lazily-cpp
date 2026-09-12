@@ -357,6 +357,164 @@ then
   exit 1
 fi
 
+# ── fixture-flag coercion (#lzflagcoercion) ────────────────────────────────
+#
+# lazily-go shipped `got != (want == true)` over an `any`. `want == true` is
+# false for EVERY non-boolean -- `0`, `null`, `1`, an object, the string
+# `"true"` -- so a fixture spelling `{"downstream_consumer_reran": "true"}`
+# against a run that observed `false` was GREEN while the corpus read as
+# asserting the consumer DID re-run. Not a missed assertion: a silently
+# INVERTED one that passes.
+#
+# cpp's spelling of the same hole is the JSON node's `boolean` member. It is
+# default-constructed `false`, so reading it off a string, a number, `null`, an
+# object or an array yields `false` with no diagnostic. 22 conformance call
+# sites read it that way through an `as_bool()` accessor; that accessor is now
+# GONE from tests/test_json.hpp, which makes the tempting spelling a COMPILE
+# error rather than something a text scan has to keep chasing, and every
+# comparison goes through `lazily_test::fixture_flag` or `json_bool`, both of
+# which REQUIRE the type.
+#
+# This rung guards the residue: the raw member is still spellable, and a new
+# runner reaching for it re-opens the hole. Files entitled to touch it are
+# listed, for the same reason the corpus-root scan lists its seam -- a parser
+# has to WRITE the member and a renderer has to read it under a
+# `case Json::Type::Bool`, and statechart's two gates are pinned by the corpus
+# itself (`malformed_rejected.json` requires them to THROW, which
+# `fixture_flag`'s abort would take down with it). Everything else must go
+# through a type-requiring accessor.
+#
+# Honest about its reach: an allowlisted file gets no scrutiny here, and
+# tests/test_reactive_graph_conformance.cpp is on the list because it carries a
+# whole second JSON parser of its own for the replay model. Its
+# `lazily_test::Json` comparisons were fixed and are covered by the corpus, not
+# by this rung.
+#
+# Placed BEFORE the missing-corpus failure below, like the scan above: source
+# hygiene needs no corpus, and a rung behind that gate is a rung a machine
+# without the sibling checkout never reaches.
+if ! python3 - "$source_scan_root" <<'FLAG_COERCION_SCAN'
+import os
+import re
+import sys
+
+root = os.path.abspath(sys.argv[1])
+
+# Only the trees that read FIXTURE json. `include/` is deliberately out of
+# scope and was checked rather than assumed: `lazily::JsonValue::as_bool()`
+# (include/lazily/json.hpp) THROWS on a non-bool, so the library type requires
+# its type already, and the member reads left in that tree are its own
+# constructor and its serializer.
+SCAN_DIRS = ("tests", "src")
+
+# Entitled to touch the raw `boolean` member, with the reason each one is.
+ALLOWED = {
+    "tests/test_json.hpp": "the parser writes it; json_bool gates it",
+    "tests/test_assertion_keys.hpp": "fixture_flag gates it; json_debug renders it",
+    "tests/test_reliable_sync.cpp": "fixture_json renders it under case Json::Type::Bool",
+    "tests/test_reactive_graph_conformance.cpp": "carries its own replay-model JSON parser",
+    "tests/test_statechart_conformance.cpp": "two gates the corpus REQUIRES to throw",
+}
+
+SCAN_EXT = (".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h", ".ipp")
+SKIP_DIRS = {
+    ".git", "build", "node_modules", "_deps", "third_party",
+    "cmake-build-debug", "cmake-build-release",
+}
+
+# Positive-evidence floor, the same discipline as MIN_SCANNED above: a scan that
+# quietly stopped finding sources reports OK on every rung it no longer reaches.
+MIN_SCANNED = int(os.environ.get("MIN_SCANNED_FLAG_SOURCES", "60"))
+
+RAW_MEMBER = re.compile(r"(?:->|\.)boolean\b")
+COERCING_ACCESSOR = re.compile(r"\bas_bool\s*\(")
+
+scanned = 0
+raw_hits = []
+accessor_hits = []
+
+for top in SCAN_DIRS:
+  for base, dirs, files in os.walk(os.path.join(root, top)):
+    dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith("build")]
+    for name in sorted(files):
+        if not name.endswith(SCAN_EXT):
+            continue
+        path = os.path.join(base, name)
+        rel = os.path.relpath(path, root)
+        try:
+            text = open(path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        scanned += 1
+        for lineno, line in enumerate(text.splitlines(), 1):
+            code = line.split("//", 1)[0]
+            if COERCING_ACCESSOR.search(code):
+                accessor_hits.append((rel, lineno))
+            if rel in ALLOWED:
+                continue
+            if RAW_MEMBER.search(code):
+                raw_hits.append((rel, lineno))
+
+failed = False
+
+if scanned == 0:
+    print(
+        "ERROR: the fixture-flag scan examined NOTHING under '%s'.\n"
+        "       Zero files is not a clean tree, it is a scan that reached nothing —\n"
+        "       exactly the vacuous pass this rung exists to refuse." % root,
+        file=sys.stderr,
+    )
+    failed = True
+elif scanned < MIN_SCANNED:
+    print(
+        "ERROR: the fixture-flag scan examined only %d source file(s) under '%s',\n"
+        "       expected >= %d. Discovery narrowed; the rung it no longer reaches would\n"
+        "       report OK forever. Do not lower MIN_SCANNED_FLAG_SOURCES to fix this."
+        % (scanned, root, MIN_SCANNED),
+        file=sys.stderr,
+    )
+    failed = True
+
+for rel, lineno in accessor_hits:
+    print(
+        "ERROR: %s:%d spells a coercing boolean accessor (`as_bool`).\n"
+        "       It returns the JSON node's default-constructed `false` for a string, a\n"
+        "       number, `null`, an object or an array, so a fixture spelling `\"true\"`\n"
+        "       compares equal to an observed `false` and the assertion passes\n"
+        "       INVERTED. Use lazily_test::fixture_flag(value, key) or json_bool(value)\n"
+        "       (#lzflagcoercion)." % (rel, lineno),
+        file=sys.stderr,
+    )
+    failed = True
+
+for rel, lineno in raw_hits:
+    print(
+        "ERROR: %s:%d reads the JSON node's raw `boolean` member.\n"
+        "       The member is default-constructed `false`, so reading it off a\n"
+        "       non-boolean coerces instead of failing, and a fixture spelling `\"true\"`\n"
+        "       asserts the OPPOSITE of what it reads as. Compare through\n"
+        "       lazily_test::fixture_flag(value, key), which REQUIRES the JSON type and\n"
+        "       names the key; only a parser or a renderer is entitled to the member,\n"
+        "       and those are listed in this rung's ALLOWED (#lzflagcoercion)."
+        % (rel, lineno),
+        file=sys.stderr,
+    )
+    failed = True
+
+if failed:
+    sys.exit(1)
+
+print(
+    "fixture-flag hygiene OK: %d source file(s) scanned, no coercing boolean "
+    "accessor and no raw `boolean` read outside the %d file(s) entitled to it"
+    % (scanned, len(ALLOWED))
+)
+FLAG_COERCION_SCAN
+then
+  echo "conformance coverage FAILED: fixture-flag coercion hygiene" >&2
+  exit 1
+fi
+
 # Absence of the sibling checkout is a hard FAILURE, consistent with the suites
 # themselves (require_spec_checkout in tests/test_spec_fixture.hpp) and with
 # every other guard in this repo that reads the corpus (#lzcppsiblingskipvsfail).

@@ -77,7 +77,9 @@ template <typename OwnerContext, typename Topic> static void run_fixture(const s
     const Json* s = kv.second.get();
     snap.subscriptions.push_back(TopicSubscriptionSnapshot{
         kv.first, static_cast<size_t>(s->find("cursor")->as_int()),
-        durability_of(s->find("durability")->str), s->find("connected")->as_bool()});
+        durability_of(s->find("durability")->str),
+        lazily_test::fixture_flag(lazily_test::json_member(*s, "connected"),
+                                  "subscriptions." + kv.first + ".connected")});
     all_ids.insert(kv.first);
   }
   Topic topic(ctx, snap);

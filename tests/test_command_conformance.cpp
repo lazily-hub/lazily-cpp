@@ -107,6 +107,18 @@ static DedupePolicy dedupe_of(const std::string& s) {
   return DedupePolicy::None;
 }
 
+// A required boolean field, the `req_int` shape one type over. `find(...)`
+// returning `nullptr` segfaults on a renamed key, and reading the JSON node's
+// `boolean` member off a string or a number yields the default-constructed
+// `false` -- which on the EXPECTED side of `assert_projection` makes a fixture
+// spelling `"terminal": "true"` assert that the command did NOT terminate
+// (#lzflagcoercion). Name the field and require the type.
+static bool req_bool(const Json* j, const char* key) {
+  const Json* node = j->find(key);
+  REQUIRE(node != nullptr, std::string("fixture is missing required boolean field `") + key + "`");
+  return lazily_test::fixture_flag(*node, key);
+}
+
 static std::optional<std::string> opt_str(const Json* j, const char* key) {
   const Json* f = j->find(key);
   if (!f || f->is_null()) return std::nullopt;
@@ -127,8 +139,8 @@ static CommandSubmit decode_submit(const Json* j) {
   c.deadline_ms = j->find("deadline_ms")->as_int();
   const Json* pol = j->find("policy");
   c.policy.dedupe = dedupe_of(pol->find("dedupe")->str);
-  c.policy.supersede = pol->find("supersede")->as_bool();
-  c.policy.cancel_on_preempt = pol->find("cancel_on_preempt")->as_bool();
+  c.policy.supersede = req_bool(pol, "supersede");
+  c.policy.cancel_on_preempt = req_bool(pol, "cancel_on_preempt");
   c.payload_type = j->find("payload_type")->str;
   c.payload_hash = j->find("payload_hash")->str;
   c.payload = IpcValueInline{}; // projection ignores payload bytes
@@ -178,7 +190,7 @@ static CommandProjectionImage decode_projection_image(const Json* j) {
     CommandProjectionEntry e;
     e.command_id = c->find("command_id")->str;
     e.status = status_of(c->find("status")->str);
-    e.terminal = c->find("terminal")->as_bool();
+    e.terminal = req_bool(c.get(), "terminal");
     e.generation = req_int(c.get(), "generation");
     e.reason = opt_str(c.get(), "reason");
     e.terminal_receipt_id = opt_str(c.get(), "terminal_receipt_id");

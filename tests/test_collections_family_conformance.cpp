@@ -392,7 +392,7 @@ template <typename Model> void run_fixture(const std::string& fixture) {
       if (!had_value) check_value_readers({});
 
       invalidates.assert_key_with_if_present("membership", [&](const Json& want) {
-        const bool want_dirty = want.as_bool();
+        const bool want_dirty = lazily_test::fixture_flag(want, "invalidates.membership");
         REQUIRE(model.cached(membership) != want_dirty,
                 where + std::string(": membership reader should have ") +
                     (want_dirty ? "been invalidated" : "stayed cached") +
@@ -402,7 +402,7 @@ template <typename Model> void run_fixture(const std::string& fixture) {
       });
 
       invalidates.assert_key_with_if_present("order", [&](const Json& want) {
-        const bool want_dirty = want.as_bool();
+        const bool want_dirty = lazily_test::fixture_flag(want, "invalidates.order");
         REQUIRE(model.cached(order) != want_dirty,
                 where + std::string(": order reader should have ") +
                     (want_dirty ? "been invalidated" : "stayed cached"));
@@ -419,7 +419,7 @@ template <typename Model> void run_fixture(const std::string& fixture) {
         stable.assert_key_with(name, [&](const Json& want) {
           auto before = handles_before.count(name) ? handles_before[name] : std::nullopt;
           auto after = model.handle_id(name);
-          if (want.as_bool()) {
+          if (lazily_test::fixture_flag(want, "handle_stable." + name)) {
             REQUIRE(before.has_value() && after.has_value() && *before == *after,
                     where + ": handle for " + name +
                         " must survive the move - a reorder that re-mints is a "

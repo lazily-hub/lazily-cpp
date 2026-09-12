@@ -66,7 +66,16 @@ struct Json {
   bool is_object() const { return type == Type::Object; }
   long long as_int() const { return static_cast<long long>(number); }
   double as_double() const { return number; }
-  bool as_bool() const { return boolean; }
+  // NO `as_bool()`. A friendly-looking accessor over the default-constructed
+  // `boolean` member is precisely the `#lzflagcoercion` hole: it reads `false`
+  // off a string, a number, `null`, an object or an array, so a fixture
+  // spelling `"true"` compares equal to an observed `false` and the assertion
+  // passes INVERTED. Removing it makes the coercion a COMPILE ERROR rather
+  // than something a text guard has to keep chasing. Use
+  // `lazily_test::fixture_flag(value, key)` (below) at a
+  // conformance comparison, or `json_bool(value)` below; read `.boolean`
+  // directly only after switching on `type == Type::Bool`, which is what the
+  // renderers do.
   const std::string& as_str() const { return str; }
 };
 
@@ -298,7 +307,68 @@ inline double json_number(const Json& value) {
 
 inline bool json_bool(const Json& value) {
   REQUIRE(value.type == Json::Type::Bool, "expected JSON boolean");
-  return value.as_bool();
+  return value.boolean;
+}
+
+// Compact rendering of a fixture value, so a failure names what the corpus
+// actually said rather than only which key disagreed.
+inline std::string json_debug(const Json& value) {
+  switch (value.type) {
+  case Json::Type::Null:
+    return "null";
+  case Json::Type::Bool:
+    return value.boolean ? "true" : "false";
+  case Json::Type::Number:
+    return value.number_token;
+  case Json::Type::String:
+    return "\"" + value.str + "\"";
+  case Json::Type::Array: {
+    std::string out = "[";
+    for (std::size_t i = 0; i < value.array.size(); ++i) {
+      if (i != 0) out += ",";
+      out += json_debug(*value.array[i]);
+    }
+    return out + "]";
+  }
+  default: {
+    std::string out = "{";
+    bool first = true;
+    for (const auto& kv : value.object) {
+      if (!first) out += ",";
+      first = false;
+      out += "\"" + kv.first + "\":" + json_debug(*kv.second);
+    }
+    return out + "}";
+  }
+  }
+}
+
+// A fixture FLAG, required to be a JSON boolean and NAMED when it is not
+// (`#lzflagcoercion`).
+//
+// `Json::boolean` is default-constructed `false`, so reading it off a node that
+// is a string, a number, `null`, an object or an array yields `false` with no
+// diagnostic. A fixture spelling
+//
+//     { "downstream_consumer_reran": "true" }
+//
+// against a run that observed `false` then compares `false == false` and
+// passes, while the corpus reads as asserting the flag DID hold: not a missed
+// assertion but a silently INVERTED one. lazily-go shipped exactly that
+// (`got != (want == true)`, false for every non-boolean) and fixed it by
+// requiring the type. Requiring the type is the fix; coercing is the hole.
+//
+// Every conformance comparison whose expected value is a fixture boolean goes
+// through here or through `parse_fixture_scalar(..., bool*)` below, both of
+// which refuse a non-boolean. This one additionally names the key, because
+// "expected JSON boolean" at a `@file:line` inside a shared header does not say
+// which claim the corpus mis-spelled.
+inline bool fixture_flag(const Json& value, const std::string& key) {
+  REQUIRE(value.type == Json::Type::Bool,
+          "fixture flag `" + key + "` must be a JSON boolean, got " + json_debug(value) +
+              " -- a non-boolean coerces to false and INVERTS the assertion "
+              "(#lzflagcoercion)");
+  return value.boolean;
 }
 
 inline std::optional<std::string> json_optional_string(const Json& value) {
