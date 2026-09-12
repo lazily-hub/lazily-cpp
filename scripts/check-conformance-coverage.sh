@@ -40,8 +40,10 @@
 # Environment:
 #   LAZILY_SPEC_CONFORMANCE_DIR  override the canonical corpus location
 #   MIN_FIXTURES                 override the floor (for debugging only)
-#   MAX_LEDGERED_BLOCKS          override the KNOWN_UNBOUND_BLOCKS ceiling (for
-#                                debugging only — in a commit, edit the default)
+#   EXPECTED_LEDGERED_BLOCKS     override the KNOWN_UNBOUND_BLOCKS size pin (for
+#                                debugging only — in a commit, edit the default;
+#                                the pin is an EQUALITY, so a ledger that SHRANK
+#                                fails until the pin is lowered with it)
 
 set -euo pipefail
 
@@ -535,10 +537,12 @@ KNOWN_UNCOVERED=(
 # scans for the next line beginning `)`, so a same-line `NAME=()` hands it the
 # close of whichever array comes next and every entry in between is misread.
 #
-# This ledger may only SHRINK: MAX_LEDGERED_BLOCKS below caps it at the count it
-# carries today, because the set equality that checks it is satisfied by any
-# CONSISTENT pair and so cannot see a commit that detaches binds and adds the
-# matching entries (#lzledgerceiling).
+# EXPECTED_LEDGERED_BLOCKS below pins this ledger's SIZE by EQUALITY, because the
+# set equality that checks its contents is satisfied by any CONSISTENT pair and
+# so cannot see a commit that detaches binds and adds the matching entries. Both
+# directions fail: growing this ledger needs the pin raised, and SHRINKING it
+# needs the pin lowered in the same commit, because a pin left above the ledger
+# is slack and slack is what re-opens that hole (#lzledgerratchet).
 #
 # Format: "fixture|where|reason".
 KNOWN_UNBOUND_BLOCKS=(
@@ -1244,56 +1248,108 @@ for site in sorted(unbound_excuses):
         )
         failed = True
 
-# A CEILING on the excused population, and the resolution of a disagreement
-# between lazily-rs and lazily-kt over whether a typed count belongs beside a
-# set equality (#lzledgerceiling, carried from #lzrsbindpending).
+# An EXACT SIZE PIN on the excused population, and the resolution of a
+# disagreement between lazily-rs and lazily-kt over whether a typed count
+# belongs beside a set equality (#lzledgerratchet, correcting the operator
+# #lzledgerceiling landed with, carried from #lzrsbindpending).
 #
 # A typed count that MIRRORS the current population is redundant with the
-# equality above and can only ever drift away from it: if the ledger set and the
-# unbound set are equal then their counts are equal, so the number carries no
-# information the equality does not, and it adds a second edit site. That is the
-# `MIN_BLOCKS = 30` shape, and refusing it is right. This binding never had one —
-# every 710/607/25 in this file is prose, and the two dimensions above are
-# DERIVED from the corpus listing rather than typed.
+# equality above ONLY WHEN it is DERIVED from the same run — then the number
+# carries no information the equality does not, and it adds a second edit site.
+# That is the `MIN_BLOCKS = 30` shape. This line is not that: it is a COMMITTED
+# CONSTANT, and that independence is the whole of its value. Ledger size is
+# derivable from nothing, so nothing above implies it.
 #
-# But set equality alone has a hole that a bare count does close: it is satisfied
-# by ANY CONSISTENT PAIR. A commit that detaches N binds AND writes the N
-# matching entries passes both directions. Nothing above sees it — the magnitude
-# rung does not either, because those sites are still DECLARED, they have merely
-# stopped being BOUND, so the site count and the digest set are untouched.
+# Set equality alone has a hole a size pin closes: it is satisfied by ANY
+# CONSISTENT PAIR. A commit that detaches N binds AND writes the N matching
+# entries passes both directions. Nothing above sees it — the magnitude rung
+# does not either, because those sites are still DECLARED, they have merely
+# stopped being BOUND, so the site count and the digest set are untouched. The
+# set equality compares the ledger against the RUN, and both sides move together
+# under that attack; this line compares it against a number the run cannot move.
 #
-# So the missing guard is not a count of what IS excused; it is a ceiling on how
-# much MAY be. A ceiling is POLICY rather than MEASUREMENT: it does not move with
-# the corpus and never needs re-pinning except deliberately and upward, in
-# review. What it buys is that a regression and its excuse can no longer land in
-# the same commit unnoticed — raising this line is the explicit act.
+# The operator is EQUALITY, not `<=`, and that is what #lzledgerratchet corrects.
+# A CEILING SELF-DISABLES. It refuses the attack only while slack is zero: after
+# one migration the ledger shrinks, the constant stays put, slack becomes >= 1,
+# and the same detach-plus-excuses commit lands unseen. Slack accumulates with
+# every migration and converges on exactly the `MIN_BLOCKS = 30` defect the
+# ceiling was introduced to replace. The defect was never "a number exists"; it
+# was "a number with SLACK". An equality has no slack by construction and cannot
+# silently drift, because a stale value FAILS in BOTH directions — growth means
+# an excuse was added, shrink means sites were migrated and this line was not
+# lowered in the same commit. A number that fails when stale is a ratchet.
 #
-# It defaults to the population this binding carries today (25), so landing it is
-# a no-op and any GROWTH fails. Raise it ONLY for a genuinely unbindable block —
-# a step past a replay stop, with the reason the capability cannot exist — and
-# expect to be asked why. Never to park a block a runner could bind.
+# RAISING it is legitimate: a corpus that gains a genuinely unreachable fixture
+# is the real case. But it must be deliberate and visible in the diff — a step
+# past a replay stop, with the reason the capability cannot exist — and expect to
+# be asked why. Never to park a block a runner could bind. LOWERING it is the
+# other half of the same obligation, and belongs in the migration's own commit.
 #
-# A ledger may only SHRINK. When the missing op lands and an entry goes stale,
-# lower this line by the same amount in the same commit.
-MAX_LEDGERED_BLOCKS = int(os.environ.get("MAX_LEDGERED_BLOCKS", "25"))
-if len(unbound_excuses) > MAX_LEDGERED_BLOCKS:
+# A pin that is missing or malformed FAILS CLOSED. Falling back to a default
+# would let a typo switch this rung off while the run still reported OK.
+LEDGER_LIST_CAP = 30
+_ledger_pin_raw = os.environ.get("EXPECTED_LEDGERED_BLOCKS", "25")
+try:
+    EXPECTED_LEDGERED_BLOCKS = int(_ledger_pin_raw)
+except ValueError:
     print(
-        "ERROR: %d assertion-block site(s) are ledgered in KNOWN_UNBOUND_BLOCKS as\n"
-        "       unbindable; the ceiling MAX_LEDGERED_BLOCKS is %d. This ledger may only\n"
-        "       SHRINK.\n"
-        "       The equality above only checks that the ledger and the run AGREE, which\n"
-        "       any consistent pair satisfies — a commit that detaches binds and writes\n"
-        "       the matching entries passes both of its directions, and the magnitude\n"
-        "       rung misses it too because those sites are still DECLARED, merely no\n"
-        "       longer BOUND. This ceiling is what makes enlarging the excused set an\n"
-        "       explicit act instead of a side effect.\n"
-        "       Bind the block. Raise this line only for a genuinely unbindable one,\n"
-        "       with the reason the capability cannot exist:"
-        % (len(unbound_excuses), MAX_LEDGERED_BLOCKS),
+        "ERROR: EXPECTED_LEDGERED_BLOCKS is %r, which is not an integer. This rung\n"
+        "       FAILS CLOSED rather than falling back to a default: a malformed pin\n"
+        "       must not switch the ledger size check off while the run reports OK."
+        % (_ledger_pin_raw,),
         file=sys.stderr,
     )
-    for site in sorted(unbound_excuses):
+    EXPECTED_LEDGERED_BLOCKS = None
+    failed = True
+
+if EXPECTED_LEDGERED_BLOCKS is not None and len(unbound_excuses) != EXPECTED_LEDGERED_BLOCKS:
+    ledgered = len(unbound_excuses)
+    if ledgered > EXPECTED_LEDGERED_BLOCKS:
+        print(
+            "ERROR: KNOWN_UNBOUND_BLOCKS GREW to %d assertion-block site(s) declared\n"
+            "       unbindable; EXPECTED_LEDGERED_BLOCKS pins it at %d. An excuse was\n"
+            "       ADDED.\n"
+            "       The set equality above CANNOT see this. It only checks that the\n"
+            "       ledger and the run AGREE, which any consistent pair satisfies, so a\n"
+            "       commit that detaches binds and writes the matching entries passes\n"
+            "       both of its directions. The magnitude rung misses it too, because a\n"
+            "       detached bind's site is still DECLARED — merely no longer BOUND — so\n"
+            "       the site count and the digest set are untouched. This pin is the one\n"
+            "       rung that compares the ledger against a number the run cannot move.\n"
+            "       Bind the block. Raise this pin only for a genuinely unbindable one,\n"
+            "       with the reason the capability cannot exist:"
+            % (ledgered, EXPECTED_LEDGERED_BLOCKS),
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "ERROR: KNOWN_UNBOUND_BLOCKS SHRANK to %d assertion-block site(s) declared\n"
+            "       unbindable; EXPECTED_LEDGERED_BLOCKS still pins it at %d, so %d\n"
+            "       site(s) were MIGRATED and the pin was not lowered with them.\n"
+            "       LOWER THE PIN TO %d IN THIS COMMIT. A pin left above the ledger is\n"
+            "       SLACK, and slack is exactly what lets a later commit detach %d\n"
+            "       bind(s) and write the matching excuses with no rung firing: the set\n"
+            "       equality is satisfied by any consistent pair, and this pin is the\n"
+            "       only one that does not move with the run (#lzledgerratchet).\n"
+            "       The ledger now holds:"
+            % (
+                ledgered,
+                EXPECTED_LEDGERED_BLOCKS,
+                EXPECTED_LEDGERED_BLOCKS - ledgered,
+                ledgered,
+                EXPECTED_LEDGERED_BLOCKS - ledgered,
+            ),
+            file=sys.stderr,
+        )
+    for site in sorted(unbound_excuses)[:LEDGER_LIST_CAP]:
         print("         %s | %s" % (site, unbound_excuses[site]), file=sys.stderr)
+    if ledgered > LEDGER_LIST_CAP:
+        print(
+            "         ... and %d more not listed; run\n"
+            "         `git diff -- scripts/check-conformance-coverage.sh` for the rest."
+            % (ledgered - LEDGER_LIST_CAP,),
+            file=sys.stderr,
+        )
     failed = True
 
 if failed:
@@ -1301,16 +1357,17 @@ if failed:
 
 print(
     "assertion-block magnitude OK: the run inventoried %d site(s) / %d distinct digest(s); "
-    "%d bound, %d declared unbindable with a reason of at most %d; derived %d AND %d from "
+    "%d bound, %d declared unbindable with a reason against a pin of exactly %d; derived %d AND %d from "
     "the %d opened fixtures of the corpus listing minus KNOWN_UNCOVERED, both asserted "
-    "EQUAL (all five block names, every depth, object-valued only), the ledger under a "
-    "CEILING that makes enlarging it an explicit act"
+    "EQUAL (all five block names, every depth, object-valued only), the ledger's size "
+    "pinned by EQUALITY to a committed constant, so growing OR shrinking it is an "
+    "explicit act"
     % (
         len(declared_sites),
         len(declared_digests),
         len(declared_sites) - len(unbound),
         len(unbound),
-        MAX_LEDGERED_BLOCKS,
+        EXPECTED_LEDGERED_BLOCKS,
         len(expected_sites),
         len(expected_digests),
         walked,
