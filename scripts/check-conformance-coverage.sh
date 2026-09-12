@@ -1289,18 +1289,37 @@ for site in sorted(unbound_excuses):
 # would let a typo switch this rung off while the run still reported OK.
 LEDGER_LIST_CAP = 30
 _ledger_pin_raw = os.environ.get("EXPECTED_LEDGERED_BLOCKS", "25")
-try:
-    EXPECTED_LEDGERED_BLOCKS = int(_ledger_pin_raw)
-except ValueError:
+# ONE parse for the whole family (#lzpinparsestrict): a NON-EMPTY run of bare
+# ASCII digits `0`-`9`, and nothing else. Validated BEFORE any parse runs, and
+# deliberately stricter than both `int()` and `str.isdigit()`, because each of
+# those silently accepts a number nobody wrote: `int("1_0")` is 10 (PEP 515
+# separators), `int(" 7 ")` is 7, and `"\u0663".isdigit()` is true for the
+# Arabic-Indic three. This reader used to be a bare `int()`, so all three got
+# through — and so did `-1`, which no ledger size can equal, making the rung
+# unsatisfiable rather than exact. Refused now: whitespace around or inside, a
+# leading `+` or `-`, separators, a radix prefix, a float or an exponent, and any
+# non-ASCII digit. Leading zeros are fine and `0` stays valid; five bindings in
+# this family pin at zero, and this one goes to zero when the merge-feed node
+# kind lands.
+#
+# An UNSET variable takes the committed literal above. An EXPLICITLY EMPTY one is
+# a REJECTION, not a fall-through to it: `os.environ.get(NAME, DEFAULT)`
+# distinguishes the two, and whoever exported the wrong thing is the one person
+# who cannot see that it was ignored.
+if not _ledger_pin_raw or _ledger_pin_raw.strip("0123456789"):
     print(
-        "ERROR: EXPECTED_LEDGERED_BLOCKS is %r, which is not an integer. This rung\n"
-        "       FAILS CLOSED rather than falling back to a default: a malformed pin\n"
-        "       must not switch the ledger size check off while the run reports OK."
+        "ERROR: EXPECTED_LEDGERED_BLOCKS is %r, which is not a non-negative integer\n"
+        "       in bare ASCII digits (#lzpinparsestrict). This rung FAILS CLOSED\n"
+        "       rather than falling back to a default — not even for an empty value:\n"
+        "       a malformed pin must not switch the ledger size check off while the\n"
+        "       run reports OK."
         % (_ledger_pin_raw,),
         file=sys.stderr,
     )
     EXPECTED_LEDGERED_BLOCKS = None
     failed = True
+else:
+    EXPECTED_LEDGERED_BLOCKS = int(_ledger_pin_raw)
 
 if EXPECTED_LEDGERED_BLOCKS is not None and len(unbound_excuses) != EXPECTED_LEDGERED_BLOCKS:
     ledgered = len(unbound_excuses)
