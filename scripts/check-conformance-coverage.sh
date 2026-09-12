@@ -605,6 +605,184 @@ then
   exit 1
 fi
 
+# ── one definition of the stamp prefix, not two spellings (#lzstampprefixdrift)
+#
+# The freshness rung below recognises the evidence stamp by a fixed prefix, and
+# the steps that WRITE the stamp spell it themselves: two Makefile recipes
+# (`test`, `conformance`) and two CI steps. That is one string with several
+# spellings kept in line by a comment, which is the shape that drifts — and the
+# drift does not present as a typo. The stamp stops matching, this script
+# refuses with "carries no run id on its first line", and the reader goes
+# hunting a stale-evidence bug that is not there. Fail-closed, bad diagnostic.
+#
+# So the prefix is defined ONCE, immediately below, and handed to every rung
+# that needs it; this rung is the machine-enforced half, reading the producers'
+# spelling out of the producer files and comparing it with that definition.
+# Nothing restates the literal a third time.
+#
+# Three rules, and the last two are what keep the first from being vacuous:
+#
+#   1. every truncating write to a conformance manifest in a producer file must
+#      stamp with exactly `<prefix>%s\n`. The format is pinned WHOLE, because
+#      the freshness rung reads the id as everything after the prefix on line 1
+#   2. every line in a producer file that spells the prefix must BE one of those
+#      sites — otherwise a stamping write this scan does not recognise, or a
+#      comment restating the prefix, drifts unchecked
+#   3. this script spells the prefix exactly once, at the definition below. A
+#      second rung carrying its own constant would be the same two-spelling
+#      shape again, one level in
+#
+# The stamp's VALUE needs no rung here: an id that disagrees is precisely what
+# the freshness rung fails on, by name, with both ids printed. Only the PREFIX
+# is unreadable when it drifts, which is why it is the half worth coupling.
+#
+# Out of scope by construction: the two wasm tier manifests are a separate
+# evidence channel and are deliberately unstamped (the Makefile says why), and
+# they truncate with `rm -f` rather than a redirection, so no rule here reaches
+# them. The reverse direction is fail-closed anyway — a native manifest
+# converted to `rm -f` loses its stamp, and the freshness rung refuses it.
+#
+# This rung scans SOURCES, so like the corpus-root and flag-coercion rungs it
+# runs before the corpus gate: it needs no corpus, and behind the gate a machine
+# without the sibling checkout would sail past it.
+RUN_ID_PREFIX='# lazily-run-id '
+
+if ! RUN_ID_PREFIX="$RUN_ID_PREFIX" \
+     python3 - "$repo_root" <<'STAMP_PREFIX_AGREEMENT'
+import os
+import re
+import sys
+
+root = sys.argv[1]
+
+# The single definition, read from the shell variable the freshness rung below
+# is handed as well. Never spelled here.
+PREFIX = os.environ["RUN_ID_PREFIX"]
+WANTED_FORMAT = PREFIX + "%s\\n"
+
+GUARD = "scripts/check-conformance-coverage.sh"
+PRODUCERS = ("Makefile", ".github/workflows/ci.yml")
+
+# A truncating write to a conformance manifest: one `>` — never `>>`, never a
+# `2>`-style fd redirection — whose target names the manifest, in make syntax or
+# in shell. Both spellings of the target are accepted, the variable and the
+# default basename, so a site that writes the path literally is still seen.
+REDIRECT = re.compile(r"(?<![>\d])>(?!>)\s*(?P<target>[^\s;|&]+)")
+MANIFEST_TOKENS = ("manifest", "conformance-fixtures-loaded")
+PRINTF = re.compile(r"""printf\s+(?P<q>['"])(?P<fmt>.*?)(?P=q)""")
+
+failed = False
+sites_total = 0
+
+
+def names_manifest(target):
+    lowered = target.lower()
+    return any(token in lowered for token in MANIFEST_TOKENS)
+
+
+for rel in PRODUCERS:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        print(
+            "ERROR: %s is missing, so the stamp-prefix agreement rung compared\n"
+            "       nothing about it (#lzstampprefixdrift)." % rel,
+            file=sys.stderr,
+        )
+        failed = True
+        continue
+
+    with open(path, "rb") as handle:
+        lines = handle.read().decode("utf-8", "replace").splitlines()
+
+    sites = [
+        (number, line)
+        for number, line in enumerate(lines, start=1)
+        if any(names_manifest(m.group("target")) for m in REDIRECT.finditer(line))
+    ]
+
+    if not sites:
+        print(
+            "ERROR: %s holds no truncating write to a conformance manifest, so\n"
+            "       this rung compared no spelling there (#lzstampprefixdrift).\n"
+            "       Either a stamping step was removed, or the redirect scan no\n"
+            "       longer recognises one; both are findings, and a rung that\n"
+            "       silently compares nothing is the failure this rule exists for."
+            % rel,
+            file=sys.stderr,
+        )
+        failed = True
+
+    for number, line in sites:
+        sites_total += 1
+        found = PRINTF.search(line)
+        if found is None:
+            print(
+                "ERROR: %s:%d truncates a conformance manifest and does not stamp\n"
+                "       it with a run id (#lzstampprefixdrift). Wanted a `printf`\n"
+                "       whose format is %r, so the freshness rung can date the\n"
+                "       evidence that write produces.\n"
+                "         %s" % (rel, number, WANTED_FORMAT, line.strip()),
+                file=sys.stderr,
+            )
+            failed = True
+        elif found.group("fmt") != WANTED_FORMAT:
+            print(
+                "ERROR: %s:%d spells the run-id stamp differently from this guard\n"
+                "       (#lzstampprefixdrift).\n"
+                "       producer format: %r\n"
+                "       guard   format: %r\n"
+                "       Two spellings of one string. The stamp that producer writes\n"
+                "       would not be recognised, and the refusal would read as\n"
+                "       stale evidence rather than as the typo it is."
+                % (rel, number, found.group("fmt"), WANTED_FORMAT),
+                file=sys.stderr,
+            )
+            failed = True
+
+    site_lines = {number for number, _ in sites}
+    for number, line in enumerate(lines, start=1):
+        if PREFIX in line and number not in site_lines:
+            print(
+                "ERROR: %s:%d spells the run-id stamp prefix outside a manifest\n"
+                "       truncation site (#lzstampprefixdrift).\n"
+                "         %s\n"
+                "       Either it is a stamping write the redirect scan above does\n"
+                "       not recognise — so its spelling goes unchecked — or it is\n"
+                "       prose restating the prefix, which is a copy that drifts."
+                % (rel, number, line.strip()),
+                file=sys.stderr,
+            )
+            failed = True
+
+with open(os.path.join(root, GUARD), "rb") as handle:
+    guard_text = handle.read().decode("utf-8", "replace")
+occurrences = guard_text.count(PREFIX.strip())
+if occurrences != 1:
+    print(
+        "ERROR: %s spells the run-id stamp prefix %d time(s). It must spell it\n"
+        "       exactly once, at the definition this rung reads from\n"
+        "       (#lzstampprefixdrift). A second spelling — another rung's own\n"
+        "       constant, or a comment quoting it — is the copy that drifts, and\n"
+        "       removing it is the whole point of this rung."
+        % (GUARD, occurrences),
+        file=sys.stderr,
+    )
+    failed = True
+
+if failed:
+    raise SystemExit(1)
+
+print(
+    "stamp prefix agreement OK: %d manifest truncation site(s) across %d producer "
+    "file(s) spell the run-id stamp exactly as this guard reads it, which spells "
+    "it once" % (sites_total, len(PRODUCERS))
+)
+STAMP_PREFIX_AGREEMENT
+then
+  echo "conformance coverage FAILED: run-id stamp prefix drift" >&2
+  exit 1
+fi
+
 # ── evidence freshness: the run id (#lzstalemanifest) ──────────────────────
 #
 # Every rung below this line is a sentence about what THIS run did, and every
@@ -634,7 +812,8 @@ fi
 #
 #   1. one id per invocation, minted in the Makefile (LAZILY_CONFORMANCE_RUN_ID)
 #   2. the step that writes the evidence stamps it as the FIRST line, with the
-#      fixed prefix `# lazily-run-id <value>`
+#      fixed prefix defined once above as RUN_ID_PREFIX, followed by the value
+#      (the rung above proves the producers spell it that way — #lzstampprefixdrift)
 #   3. this guard REQUIRES that id to equal the current invocation's, and fails
 #      by name — the file, the id found, the id wanted
 #   4. an UNSET LAZILY_CONFORMANCE_RUN_ID is a refusal, never a skip
@@ -652,13 +831,17 @@ fi
 # depends on that: it points every corpus guard at a path that does not exist
 # and requires the CORPUS refusal, so this rung must not preempt it.
 if ! LAZILY_CONFORMANCE_RUN_ID="${LAZILY_CONFORMANCE_RUN_ID-}" \
+     RUN_ID_PREFIX="$RUN_ID_PREFIX" \
      python3 - "$manifest" <<'EVIDENCE_RUN_ID'
 import os
 import sys
 
 manifest = sys.argv[1]
 wanted = os.environ.get("LAZILY_CONFORMANCE_RUN_ID", "")
-PREFIX = "# lazily-run-id "
+# The ONE definition, handed in by the rung above rather than restated here
+# (#lzstampprefixdrift). A second spelling in this rung is exactly what that
+# rung refuses.
+PREFIX = os.environ["RUN_ID_PREFIX"]
 
 failed = False
 
