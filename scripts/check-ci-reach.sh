@@ -779,38 +779,74 @@ fi
 # `make -p`, which builds the default goal and dumps the whole environment,
 # every secret in the job with it.
 #
-# WHY THE PROBES PIN A RUN ID. js's probe as written false-REDS on this binding,
-# measured: three mismatches on a PRISTINE Makefile, on `test`,
-# `conformance-coverage` and `check`, every one of them this line —
+# ANCHORS, NOT RAW COMMAND LINES. js's probe compares `make -n` output verbatim,
+# and measured on a PRISTINE Makefile that gives three mismatches — on `test`,
+# `conformance-coverage` and `check` — every one of them this line:
 #
 #   printf '# lazily-run-id %s\n' '2561100-1789233749221496031' > .../conformance-fixtures-loaded.txt
 #
 # LAZILY_CONFORMANCE_RUN_ID is `?=` then `:=` over `$(shell ...)`, so it is
 # minted ONCE PER MAKE INVOCATION (#lzstalemanifest, deliberately). Two separate
-# `make -n` runs therefore spell that recipe differently and a verbatim
-# comparison reads a healthy tree as decoupled. The Makefile already documents
-# the fix as its CI mechanism — `?=` keeps an environment value precisely so
-# several make invocations can share one id — so the probes supply a fixed one.
-# Nothing executes: every invocation here is `-n`.
+# `make -n` runs spell that recipe differently and a verbatim comparison reads a
+# healthy tree as decoupled — a permanent false RED on the three targets that
+# carry this binding's suite. lazily-gd hit the same wall.
 #
-# That is one named variable, so the reproducibility check below is the general
-# net: the root is probed TWICE and the two outputs must be byte-identical. A
-# future recipe that embeds anything per-invocation is then reported as what it
-# is — recipe text this oracle cannot judge — instead of arriving disguised as a
-# decoupled closure, which is the diagnosis the run id would have drawn.
+# So the comparison runs through anchors(), the same normalizer the CI side
+# already uses. That drops the run id for a structural reason rather than a
+# convenient one: `printf` is on the trivial-program list at the top of this
+# file, so the whole stamping command carries no gate and contributes no anchor
+# at all. Measured: with NO environment pinning of any kind, the anchor list of
+# all ten closure targets is identical across two consecutive probes.
+#
+# The alternative considered and rejected was to keep verbatim lines and pin
+# LAZILY_CONFORMANCE_RUN_ID in the probe environment. It works — measured — and
+# it is stricter, but it teaches the guard one Makefile's variable names and
+# hands the next volatile recipe a red that is fixed by adding another env pin.
+# Anchoring is the rule the rest of this script already lives by.
+#
+# It is a real loosening and worth naming: anchors drop flag VALUES, reduce
+# paths to basenames, and erase trivial commands entirely, so the oracle asks
+# whether the root runs a command SHAPED like the target's, not the identical
+# one. Reach is a floor, not equivalence — the header says so about CI and it is
+# equally true here. A target whose commands are ALL trivial anchors to nothing
+# and would pass this rung vacuously; that is exactly the `no gate` bucket, and
+# it is pinned separately by EXPECTED_NO_GATE_TARGETS below.
+#
+# The reproducibility check below is the net for whatever anchoring does NOT
+# erase: the root is probed TWICE and the two anchor lists must be identical. A
+# future recipe embedding something per-invocation in a position anchors keep is
+# then reported as text this oracle cannot judge, instead of arriving disguised
+# as a decoupled closure.
 #
 # WHAT THE ORACLE DOES NOT SEE, both measured on this tree:
 #
-#   * A dropped prerequisite EDGE between two targets that both stay in the
-#     closure. Deleting `test` from `conformance-coverage:` leaves this guard's
-#     output byte-identical at exit 0, before and after everything in this file,
-#     because the subset test only shrinks the target's command list and the
-#     root still runs `test` through `check:`. The oracle pins which targets
-#     run, never which runs FIRST. This binding has no completion marker of its
-#     own, and that edge plus check-conformance-coverage.sh's record count is
-#     what stands in for one — so the ordering half of that substitute is held
-#     by the coverage guard's run-id stamp and exact magnitudes, and by nothing
-#     here. Stated because it is the obvious thing to assume this pin bought.
+#   * ORDER. Prerequisites are a SET here, in the pin and in the oracle alike.
+#     Nothing in this file distinguishes `check: test conformance-coverage` from
+#     `check: conformance-coverage test`.
+#
+#   * EDGES between two targets that both stay in the closure. This is the
+#     sharper form of the order gap and it is the one that matters on this
+#     binding, so it is measured rather than reasoned about. Delete `test` from
+#     `conformance-coverage:` and:
+#
+#       - this guard's entire output is byte-identical at exit 0 — membership
+#         unchanged (10 targets), classification unchanged, and the ORACLE
+#         PASSES, because `check:` still pulls `test` in directly, so every
+#         anchor `conformance-coverage` has left is still in the root's list;
+#       - `make -n check` still lists both the suite and the coverage script.
+#
+#     That edge is this binding's substitute for a completion marker: it has no
+#     marker of its own, and `conformance-coverage: test` plus the coverage
+#     guard's record count is what stands in for one. So of those two halves,
+#     the RECORD COUNT is the half anything enforces. Measured with the edge
+#     gone: `make conformance-coverage` alone exits 2 on the run-id stamp
+#     ("stale or unstamped evidence"), and `make -j16 check` exited 2 on three
+#     consecutive runs with "only 3 distinct conformance fixtures replayed,
+#     expected >= 143" — the coverage guard reading a fresh-stamped but PARTIAL
+#     manifest while ctest was still running (control: edge restored, `make -j16
+#     check` exits 0). So it fails CLOSED, but it fails closed by losing a RACE,
+#     not by a rule. The edge is what makes that race not exist. Nothing in this
+#     file protects it, and this pin should not be read as though it did.
 #   * A recipe SWAPPED for another gate CI already runs (js's Attack 4:
 #     `test-interop-peer:` running the conformance script instead of the peer).
 #     Every count holds, the anchors still match a real CI step, the verdict is
@@ -821,17 +857,14 @@ fi
 #     covered by accident. It also bounds the honest claim for this whole pin:
 #     the argument is that it turns an invisible drop into a reviewable edit,
 #     and Attack 4 is an equally reviewable edit that stays equally undetected.
-ORACLE_RUN_ID="check-ci-reach-oracle"
-
-oracle_cmds() {
-	env LAZILY_CONFORMANCE_RUN_ID="$ORACLE_RUN_ID" "$MAKE_BIN" -n "$1" 2>/dev/null |
-		grep -v -e '^make\[' -e '^make:' | join_continuations || true
+oracle_anchors() {
+	dry_run "$1" | anchors | sort -u || true
 }
 
-oracle_cmds "$ROOT_TARGET" >"$oracle_root"
-oracle_cmds "$ROOT_TARGET" >"$oracle_root_again"
+oracle_anchors "$ROOT_TARGET" >"$oracle_root"
+oracle_anchors "$ROOT_TARGET" >"$oracle_root_again"
 if ! cmp -s "$oracle_root" "$oracle_root_again"; then
-	echo "check-ci-reach: two identical \`$MAKE_BIN -n $ROOT_TARGET\` runs printed different commands:" >&2
+	echo "check-ci-reach: two identical \`$MAKE_BIN -n $ROOT_TARGET\` runs produced different anchors:" >&2
 	# Only the differing lines, with no context: one unchanged neighbour here is
 	# the whole clang-format invocation, ~130 paths on one line, which buries the
 	# one line that actually moved.
@@ -842,18 +875,19 @@ if ! cmp -s "$oracle_root" "$oracle_root_again"; then
 	echo "  The oracle below asks whether each closure target's commands appear in this" >&2
 	echo "  list. That question is only answerable if the list is reproducible, so a" >&2
 	echo "  recipe carrying anything minted per make invocation — a timestamp, a pid, a" >&2
-	echo "  fresh id — has to be refused here rather than reported as a decoupled" >&2
-	echo "  closure, which is the wrong diagnosis and the wrong fix." >&2
-	echo "  LAZILY_CONFORMANCE_RUN_ID is already pinned for these probes; whatever else" >&2
-	echo "  varies above needs the same treatment, or the recipe needs to stop varying." >&2
+	echo "  fresh id — in a position anchors do not erase has to be refused here rather" >&2
+	echo "  than reported as a decoupled closure, which is the wrong diagnosis and the" >&2
+	echo "  wrong fix. LAZILY_CONFORMANCE_RUN_ID is already erased by anchoring, because" >&2
+	echo "  it only ever appears in a \`printf\`; whatever varies above does not, so either" >&2
+	echo "  the recipe stops varying or this oracle cannot judge that target." >&2
 	exit 1
 fi
 if [ ! -s "$oracle_root" ]; then
-	echo "check-ci-reach: \`$MAKE_BIN -n $ROOT_TARGET\` printed no commands at all" >&2
-	echo "  This fails closed further down — every target carrying a command would report" >&2
-	echo "  as decoupled, and the vacuity rung would fire behind that — but under the" >&2
-	echo "  wrong name and pointing at the wrong file. An empty root command list is a" >&2
-	echo "  root that runs nothing, not ten closures that stopped matching it." >&2
+	echo "check-ci-reach: \`$MAKE_BIN -n $ROOT_TARGET\` yielded no anchors at all" >&2
+	echo "  This fails closed further down — every target carrying a gate would report as" >&2
+	echo "  decoupled, and the vacuity rung would fire behind that — but under the wrong" >&2
+	echo "  name and pointing at the wrong file. An anchorless root is a root that runs" >&2
+	echo "  no gate, not ten targets that stopped matching it." >&2
 	exit 1
 fi
 
@@ -968,23 +1002,21 @@ while IFS= read -r target; do
 	# ── the oracle, per target, ahead of the classification below ─────────
 	#
 	# The awk closure says this target is run by `make $ROOT_TARGET`. Make is
-	# the only authority on whether that is true, so ask it: every command
-	# `make -n <target>` would run must appear verbatim in the root's command
-	# list. Extra commands in the root are expected — it runs nine other gates.
+	# the only authority on whether that is true, so ask it: every anchor of
+	# `make -n <target>` must appear in the root's anchor list. Extra anchors on
+	# the root side are expected — it runs nine other gates.
 	#
-	# The full `make -n <target>` output is compared, prerequisites included,
-	# rather than own_commands()' isolated slice. That is deliberate and it is
-	# the stricter question: if the root really runs this target, it runs the
-	# target's whole subgraph, so every line belongs in the root's list. The
-	# isolated slice is derived by a LINE COUNT (own_commands subtracts the
-	# prerequisites' line count), which is the wrong instrument for a subset
-	# test — and it is the instrument that is immune to the per-invocation run
-	# id the comment above measures, because a count cannot see a changed line.
+	# The full `make -n <target>` is anchored, prerequisites included, rather
+	# than own_commands()' isolated slice. Deliberate, and the stricter
+	# question: if the root really runs this target it runs the target's whole
+	# subgraph, so every anchor belongs in the root's list. The isolated slice
+	# is derived by a LINE COUNT (own_commands subtracts the prerequisites'
+	# line count), which is the wrong instrument for a subset test.
 	#
 	# Own bucket with a `continue`, like UNREADABLE above: a target make does
 	# not run has no honest reach verdict, and `reached` printed beside a
 	# decoupled closure is the exact false comfort this rung exists to remove.
-	oracle_cmds "$target" >"$oracle_target"
+	oracle_anchors "$target" >"$oracle_target"
 	oracle_missing=""
 	oracle_missing_count=0
 	while IFS= read -r oracle_line; do
@@ -996,7 +1028,7 @@ while IFS= read -r target; do
 	done <"$oracle_target"
 	if [ "$oracle_missing_count" -ne 0 ]; then
 		{
-			printf '  - %s: %s command(s) it runs are absent from `%s -n %s`\n' \
+			printf '  - %s: %s anchor(s) of its own are absent from `%s -n %s`\n' \
 				"$target" "$oracle_missing_count" "$MAKE_BIN" "$ROOT_TARGET"
 			while IFS= read -r oracle_line; do
 				[ -n "$oracle_line" ] || continue
