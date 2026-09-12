@@ -304,31 +304,78 @@ inline const std::set<std::string>& assertion_block_names() {
   return names;
 }
 
-// Two clauses that are easy to get wrong, and are the difference between an
+// Three clauses that are easy to get wrong, and are the difference between an
 // inventory a runner can satisfy and one it cannot:
 //
-//   * an ARRAY-valued tracked key contributes NO SITE. A runner binds the
-//     ELEMENTS of an array-valued `expect`, never the array, so counting the
-//     array would declare a block that cannot be bound by construction. The
-//     walk still DESCENDS into arrays -- that is where `steps[3].expect` lives.
+//   * an OBJECT-valued tracked key is ONE SITE, spelled with the key's own
+//     path.
+//   * an ARRAY-valued tracked key is ONE SITE PER PLAIN-OBJECT ELEMENT, spelled
+//     `<path>[<index>]` (`#lzarrayelementsites`). "A runner binds the ELEMENTS
+//     of an array-valued `expect`, never the array" was this rule's own
+//     parenthetical while it emitted nothing at all, so the site it pointed at
+//     was a site nobody enumerated: all 12 expected outbound frames of
+//     `signaling/anti_spoof_session.json` -- routing target, frame type, peer
+//     ids, SDP payloads, ICE candidates, an error code/message -- were read and
+//     asserted by test_signaling_conformance.cpp and evidenced NOWHERE. That is
+//     the bind-pending shape, not unread assertions: falsifying a VALUE was
+//     caught, a runner that stopped asserting them was not.
+//
+//     The site is the ELEMENT because that is what makes each frame
+//     INDIVIDUALLY nameable. A label per array would collapse a step's frames
+//     into one site, and `steps[2].expect[0]` / `steps[2].expect[2]` -- two
+//     frames a runner can drop independently -- would stop being distinguishable,
+//     which is the set-identity failure the site dimension exists to catch.
+//
+//     ONE LEVEL, PLAIN OBJECTS, TRUE INDEXES. An element that is a scalar, an
+//     array or null emits nothing, so a nested `[[{...}]]` contributes no site:
+//     the inner array's elements sit under an INDEX rather than under a tracked
+//     key. And the index is the element's real position, so a mixed
+//     `[{...}, 3, {...}]` is `expect[0]` and `expect[2]`, never `expect[0]` and
+//     `expect[1]` -- a compacted index would name the wrong element of the
+//     fixture.
 //   * EMIT AND DO NOT DESCEND. Descending into an emitted block would inventory
 //     a fixture's `expect` nested inside its own `assertions` as a second,
 //     separately bindable site, which no tracker can reach without unwrapping
 //     the first. What lives inside a block is a KEY, and keys are rungs 1-3.
 //
+// The walk still DESCENDS into an array held at an UNTRACKED key -- that is
+// where `steps[3].expect` lives -- and into the non-object elements of a
+// tracked one, which is the only way a tracked key nested inside a nested array
+// stays reachable.
+//
 // `where` is spelled from the loader's own coordinates -- dotted member names,
 // `[n]` for array indices -- never from a runner's label, because the
 // corpus-side twin in scripts/check-conformance-coverage.sh has to reproduce it
-// from the bytes alone.
+// from the bytes alone. cpp binds a block BY CONTENT rather than by label, so
+// that twin is this walk's pinned counterpart: the guard asserts the run's
+// inventory EQUAL to what the twin derives from the bytes, in both dimensions,
+// which is why widening one without the other cannot produce a green run. A
+// site the twin derives and the loader never declares fails as FEWER than
+// derived; one the loader declares and the twin does not fails as MORE.
 inline void walk_assertion_blocks(const std::string& fixture_id, const Json& node,
                                   const std::string& path) {
   if (node.type == Json::Type::Object) {
     for (const auto& kv : node.object) {
       const std::string child = path.empty() ? kv.first : path + "." + kv.first;
-      if (assertion_block_names().count(kv.first) != 0 && kv.second->is_object()) {
-        bind_ledger().declared_sites.emplace(fixture_id + "|" + child,
-                                             assertion_block_digest(*kv.second));
-        continue;
+      if (assertion_block_names().count(kv.first) != 0) {
+        if (kv.second->is_object()) {
+          bind_ledger().declared_sites.emplace(fixture_id + "|" + child,
+                                               assertion_block_digest(*kv.second));
+          continue;
+        }
+        if (kv.second->type == Json::Type::Array) {
+          for (std::size_t i = 0; i < kv.second->array.size(); ++i) {
+            const Json& element = *kv.second->array[i];
+            const std::string element_path = child + "[" + std::to_string(i) + "]";
+            if (element.is_object()) {
+              bind_ledger().declared_sites.emplace(fixture_id + "|" + element_path,
+                                                   assertion_block_digest(element));
+              continue;
+            }
+            walk_assertion_blocks(fixture_id, element, element_path);
+          }
+          continue;
+        }
       }
       walk_assertion_blocks(fixture_id, *kv.second, child);
     }

@@ -13,11 +13,19 @@
 // routing and the right roster at every step — only checking `from` against the
 // registered id catches it.
 //
+// Every ELEMENT of an array-valued `expect` is its own assertion block
+// (#lzarrayelementsites), so the 12 expected frames across these 8 steps are
+// bound INDIVIDUALLY: `steps[2].expect[0]` and `steps[2].expect[2]` are separate
+// sites, and a runner that stopped asserting one of them fails naming that
+// element. Before that, the array contributed no site at all and only a falsified
+// VALUE was ever caught.
+//
 // `frames.json` is NOT replayed here: it needs signaling wire serde, which this
 // binding does not have. It stays in the coverage allowlist with that reason.
 
 #include <lazily/signaling.hpp>
 
+#include <cstddef>
 #include <iostream>
 #include <map>
 #include <set>
@@ -64,87 +72,149 @@ std::string frame_type(const ServerMessage& msg) {
   return "<unknown>";
 }
 
-// Compare one produced frame against the fixture's expected frame.
-void check_frame(int step, const ServerMessage& got, const Json& want) {
-  const std::string want_type = want.find("type")->str;
-  const std::string got_type = frame_type(got);
-  if (got_type != want_type) {
-    fail(step, "frame type `" + got_type + "`, fixture says `" + want_type + "`");
-    return;
+// One produced frame, flattened to the field NAMES and values it carries.
+//
+// `ServerMessage` is a variant, so every read of a field is a read of one
+// alternative: the old code reached straight into `std::get<ServerError>` for
+// `code` on the strength of the FIXTURE naming that key, which throws rather
+// than fails when the room produced a different frame. Flattening first makes
+// the produced key set a first-class value, which is what the key-set assertion
+// below needs, and removes every ill-typed `std::get`.
+struct ProducedFrame {
+  std::set<std::string> keys{"type"};
+  std::string type;
+  PeerId peer = 0;
+  PeerId from = 0;
+  std::string sdp;
+  std::string candidate;
+  std::string payload;
+  std::string code;
+  std::string message;
+  std::vector<PeerId> peers;
+};
+
+ProducedFrame flatten(const ServerMessage& msg) {
+  ProducedFrame out;
+  out.type = frame_type(msg);
+  if (const auto* m = std::get_if<ServerWelcome>(&msg)) {
+    out.keys.insert({"peer", "peers"});
+    out.peer = m->peer;
+    out.peers = m->peers;
+  } else if (const auto* m = std::get_if<ServerPeerJoined>(&msg)) {
+    out.keys.insert("peer");
+    out.peer = m->peer;
+  } else if (const auto* m = std::get_if<ServerPeerLeft>(&msg)) {
+    out.keys.insert("peer");
+    out.peer = m->peer;
+  } else if (const auto* m = std::get_if<ServerOffer>(&msg)) {
+    out.keys.insert({"from", "sdp"});
+    out.from = m->from;
+    out.sdp = m->sdp;
+  } else if (const auto* m = std::get_if<ServerAnswer>(&msg)) {
+    out.keys.insert({"from", "sdp"});
+    out.from = m->from;
+    out.sdp = m->sdp;
+  } else if (const auto* m = std::get_if<ServerIce>(&msg)) {
+    out.keys.insert({"from", "candidate"});
+    out.from = m->from;
+    out.candidate = m->candidate;
+  } else if (const auto* m = std::get_if<ServerRelay>(&msg)) {
+    out.keys.insert({"from", "payload"});
+    out.from = m->from;
+    out.payload = m->payload;
+  } else if (const auto* m = std::get_if<ServerError>(&msg)) {
+    out.keys.insert({"code", "message"});
+    out.code = m->code;
+    out.message = m->message;
+  }
+  return out;
+}
+
+std::string render_names(const std::set<std::string>& names) {
+  std::string out;
+  for (const auto& name : names)
+    out += (out.empty() ? "" : ", ") + name;
+  return out.empty() ? "(none)" : out;
+}
+
+std::string render_routing(const std::map<std::string, std::size_t>& counts) {
+  std::string out;
+  for (const auto& kv : counts)
+    out += (out.empty() ? "" : ", ") + kv.first + "x" + std::to_string(kv.second);
+  return out.empty() ? "(nothing)" : out;
+}
+
+// Compare one produced frame against the fixture's `frame` sub-block, through the
+// CHILD tracker `with_sub` hands out.
+//
+// Two things this closes (#lzarrayelementsites). The old form took the fixture's
+// `frame` object as raw JSON and asked it for the keys it happened to know
+// about, so (a) a field the room really emitted that the fixture omits was
+// compared by NOTHING -- splitting a whole-frame equality into per-key equalities
+// is strictly weaker than the whole unless the key set is asserted beside it --
+// and (b) a key the fixture names that this function does not handle was silently
+// skipped. The child tracker owns every sub-key, which is (b); the key-set
+// comparison below is (a), and it runs AHEAD of any value comparison.
+void check_frame(int step, const ProducedFrame& got, lazily_test::AssertionKeys& frame) {
+  std::set<std::string> declared;
+  for (const auto& name : frame.keys())
+    declared.insert(name);
+  if (declared != got.keys) {
+    std::string missing;
+    for (const auto& name : declared)
+      if (got.keys.count(name) == 0) missing += (missing.empty() ? "" : ", ") + name;
+    std::string extra;
+    for (const auto& name : got.keys)
+      if (declared.count(name) == 0) extra += (extra.empty() ? "" : ", ") + name;
+    fail(step, "frame key set: the room produced {" + render_names(got.keys) +
+                   "}, the fixture declares {" + render_names(declared) + "}" +
+                   (missing.empty() ? "" : " -- declared, never produced: " + missing) +
+                   (extra.empty() ? "" : " -- produced, not declared: " + extra));
   }
 
-  if (const auto* w = want.find("peer")) {
-    PeerId got_peer = 0;
-    if (std::holds_alternative<ServerWelcome>(got))
-      got_peer = std::get<ServerWelcome>(got).peer;
-    else if (std::holds_alternative<ServerPeerJoined>(got))
-      got_peer = std::get<ServerPeerJoined>(got).peer;
-    else if (std::holds_alternative<ServerPeerLeft>(got))
-      got_peer = std::get<ServerPeerLeft>(got).peer;
-    if (got_peer != static_cast<PeerId>(w->number)) {
-      fail(step, want_type + ".peer = " + std::to_string(got_peer) + ", fixture says " +
-                     std::to_string(static_cast<PeerId>(w->number)));
-    }
-  }
+  frame.assert_key("type", got.type);
+  frame.assert_key_if_present("peer", got.peer);
 
   // ANTI-SPOOF: `from` must be the sender's server-registered id.
-  if (const auto* w = want.find("from")) {
-    PeerId got_from = 0;
-    if (std::holds_alternative<ServerOffer>(got))
-      got_from = std::get<ServerOffer>(got).from;
-    else if (std::holds_alternative<ServerAnswer>(got))
-      got_from = std::get<ServerAnswer>(got).from;
-    else if (std::holds_alternative<ServerIce>(got))
-      got_from = std::get<ServerIce>(got).from;
-    else if (std::holds_alternative<ServerRelay>(got))
-      got_from = std::get<ServerRelay>(got).from;
-    if (got_from != static_cast<PeerId>(w->number)) {
-      fail(step, want_type + ".from = " + std::to_string(got_from) + ", fixture says " +
-                     std::to_string(static_cast<PeerId>(w->number)) +
-                     " — `from` must be the SENDER's registered id, never client-supplied");
-    }
-  }
+  frame.assert_key_with_if_present("from", [&](const Json& want) {
+    const PeerId expected = static_cast<PeerId>(want.as_int());
+    if (got.from == expected) return true;
+    fail(step, got.type + ".from = " + std::to_string(got.from) + ", fixture says " +
+                   std::to_string(expected) +
+                   " — `from` must be the SENDER's registered id, never client-supplied");
+    return false;
+  });
 
-  if (const auto* w = want.find("sdp")) {
-    const std::string got_sdp = std::holds_alternative<ServerOffer>(got)
-                                    ? std::get<ServerOffer>(got).sdp
-                                    : std::get<ServerAnswer>(got).sdp;
-    if (got_sdp != w->str) fail(step, "sdp `" + got_sdp + "`, fixture says `" + w->str + "`");
-  }
-  if (const auto* w = want.find("candidate")) {
-    const std::string got_c = std::get<ServerIce>(got).candidate;
-    if (got_c != w->str) fail(step, "candidate mismatch");
-  }
-  if (const auto* w = want.find("code")) {
-    const std::string got_code = std::get<ServerError>(got).code;
-    if (got_code != w->str) {
-      fail(step, "error code `" + got_code + "`, fixture says `" + w->str + "`");
-    }
-  }
-  if (const auto* w = want.find("message")) {
-    const std::string got_msg = std::get<ServerError>(got).message;
-    if (got_msg != w->str) {
-      fail(step, "error message `" + got_msg + "`, fixture says `" + w->str + "`");
-    }
-  }
+  frame.assert_key_if_present("sdp", got.sdp);
+  frame.assert_key_if_present("candidate", got.candidate);
+  frame.assert_key_if_present("payload", got.payload);
+  frame.assert_key_if_present("code", got.code);
+  frame.assert_key_if_present("message", got.message);
 
   // The roster excludes the joining peer's own id and is ascending.
-  if (const auto* w = want.find("peers")) {
-    const auto& roster = std::get<ServerWelcome>(got).peers;
-    const PeerId self = std::get<ServerWelcome>(got).peer;
-    if (roster.size() != w->array.size()) {
-      fail(step, "roster size " + std::to_string(roster.size()) + ", fixture says " +
-                     std::to_string(w->array.size()));
-      return;
+  frame.assert_key_with_if_present("peers", [&](const Json& want) {
+    if (got.peers.size() != want.array.size()) {
+      fail(step, "roster size " + std::to_string(got.peers.size()) + ", fixture says " +
+                     std::to_string(want.array.size()));
+      return false;
     }
-    for (size_t i = 0; i < roster.size(); ++i) {
-      if (roster[i] != static_cast<PeerId>(w->array[i]->number)) {
+    bool ok = true;
+    for (std::size_t i = 0; i < got.peers.size(); ++i) {
+      if (got.peers[i] != static_cast<PeerId>(want.array[i]->as_int())) {
         fail(step, "roster[" + std::to_string(i) + "] mismatch");
+        ok = false;
       }
-      if (roster[i] == self) fail(step, "roster must exclude the joining peer's own id");
-      if (i > 0 && roster[i - 1] >= roster[i]) fail(step, "roster must be ascending");
+      if (got.peers[i] == got.peer) {
+        fail(step, "roster must exclude the joining peer's own id");
+        ok = false;
+      }
+      if (i > 0 && got.peers[i - 1] >= got.peers[i]) {
+        fail(step, "roster must be ascending");
+        ok = false;
+      }
     }
-  }
+    return ok;
+  });
 }
 
 } // namespace
@@ -204,13 +274,34 @@ int main() {
       delivered[lbl].insert(delivered[lbl].end(), drained.begin(), drained.end());
     }
 
-    for (const auto& expect : step.find("expect")->array) {
-      const std::string to = expect->find("to")->str;
-      const Json& want = *expect->find("frame");
+    const Json& expect = *step.find("expect");
+
+    // ROUTING, as a multiset the run produced against one the fixture declares,
+    // BOTH directions and independent of the order the fixture lists its frames
+    // in (this transcript deliberately imposes no order on peer-joined
+    // broadcasts). The per-element loop below indexes `delivered` BY the
+    // fixture's own `to`, so on its own it can only ever see the frames the
+    // fixture asked about: a frame the room delivered to a conn the fixture
+    // never routes to, or a second frame to one it routes once, was consumed by
+    // nothing and reported by nothing.
+    std::map<std::string, std::size_t> produced_routing;
+    for (const auto& kv : delivered)
+      if (!kv.second.empty()) produced_routing[kv.first] = kv.second.size();
+    std::map<std::string, std::size_t> declared_routing;
+    for (const auto& element : expect.array)
+      ++declared_routing[element->find("to")->str];
+    if (produced_routing != declared_routing) {
+      fail(static_cast<int>(i), "routing: the room delivered " + render_routing(produced_routing) +
+                                    ", the fixture routes " + render_routing(declared_routing));
+    }
+
+    for (std::size_t k = 0; k < expect.array.size(); ++k) {
+      const Json& element = *expect.array[k];
+      const std::string to = element.find("to")->str;
       auto& queue = delivered[to];
       if (queue.empty()) {
-        fail(static_cast<int>(i), "expected a `" + want.find("type")->str + "` frame to conn " +
-                                      to + " but nothing was delivered");
+        fail(static_cast<int>(i), "expected a `" + element.find("frame")->find("type")->str +
+                                      "` frame to conn " + to + " but nothing was delivered");
         continue;
       }
       const ServerMessage& got = queue.front();
@@ -224,7 +315,35 @@ int main() {
         observed_forward_from.push_back(std::get<ServerIce>(got).from);
       else if (std::holds_alternative<ServerRelay>(got))
         observed_forward_from.push_back(std::get<ServerRelay>(got).from);
-      check_frame(static_cast<int>(i), got, want);
+
+      // Rung 0 for THIS element (#lzarrayelementsites). The `where` is spelled
+      // from the loader's own coordinates, so a failure names the site the walk
+      // in tests/test_assertion_keys.hpp declared.
+      const ProducedFrame produced = flatten(got);
+      lazily_test::AssertionKeys frame_block("signaling/anti_spoof_session.json steps[" +
+                                                 std::to_string(i) + "].expect[" +
+                                                 std::to_string(k) + "]",
+                                             element);
+      // `to` is the ROUTING claim, and it is asserted against the multiset the
+      // room produced rather than read to index into it.
+      frame_block.assert_key_with("to", [&](const Json& want) {
+        const std::string target = lazily_test::json_string(want);
+        const auto produced_it = produced_routing.find(target);
+        if (produced_it != produced_routing.end() &&
+            produced_it->second == declared_routing[target]) {
+          return true;
+        }
+        fail(static_cast<int>(i),
+             "routing target `" + target + "`: the room delivered it " +
+                 std::to_string(produced_it == produced_routing.end() ? 0 : produced_it->second) +
+                 " frame(s), the fixture routes " + std::to_string(declared_routing[target]));
+        return false;
+      });
+      frame_block.with_sub("frame", [&](lazily_test::AssertionKeys& frame) {
+        check_frame(static_cast<int>(i), produced, frame);
+      });
+      frame_block.finish();
+
       queue.erase(queue.begin());
       ++checked_frames;
     }
@@ -275,7 +394,10 @@ int main() {
     return 1;
   }
   // Positive proof: a runner that compared nothing would print the same success.
-  if (checked_frames < 7) {
+  // The floor is the fixture's whole population now that each of the 12 elements
+  // is a bound site of its own -- a skipped element fails rung 0 by name one
+  // `make check` step later, and fails HERE immediately.
+  if (checked_frames < 12) {
     std::cout << "FAIL: only " << checked_frames << " frames compared; the replay is vacuous"
               << std::endl;
     return 1;

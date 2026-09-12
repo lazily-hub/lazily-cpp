@@ -917,20 +917,25 @@ fi
 #   * DISTINCT DIGESTS. A digest is lost when a content edit collapses two
 #     distinct claims into one spelling, which leaves every site in place.
 #
-# 710 sites carry 607 distinct digests today, so 103 sites share their bytes with
+# 722 sites carry 619 distinct digests today, so 103 sites share their bytes with
 # another site and 52 digests recur. The two dimensions are therefore genuinely
 # independent here, which they were NOT under the narrow walk: at 15 and 15 no
 # two blocks were spelled alike, and the deletion form of the site probe did not
 # exist because no digest recurred.
 #
-# SCOPE: this walk reads all five block names at EVERY depth, object-valued only
-# (#lzcppblockwalk). It replaced one that read the TOP-LEVEL `assertions` object
-# and nothing else — 15 of 710 sites, with 128 of the 143 opened fixtures
-# carrying no top-level `assertions` at all, so rung 0 reported nothing
-# whatsoever about them. 710/607 is also the five-name object-valued row of
-# lazily-spec's `make corpus-blocks-report` for this binding's opened set, which
-# is corroboration and not the source: the expectation is derived from the rule
-# THIS repo implements.
+# SCOPE: this walk reads all five block names at EVERY depth, one site for an
+# OBJECT-valued tracked key and one per plain-OBJECT ELEMENT of an ARRAY-valued
+# one (#lzcppblockwalk, widened by #lzarrayelementsites). It replaced one that
+# read the TOP-LEVEL `assertions` object and nothing else — 15 of 722 sites, with
+# 128 of the 143 opened fixtures carrying no top-level `assertions` at all, so
+# rung 0 reported nothing whatsoever about them. The array clause is the last 12:
+# `signaling/anti_spoof_session.json` spells its expected outbound frames as
+# array-valued `expect` keys, 12 elements across 8 steps, and every one was read
+# and asserted by test_signaling_conformance.cpp while being evidenced nowhere.
+# 722/619 is also the "all five names, + array elements" row of lazily-spec's
+# `make corpus-blocks-report` for this binding's opened set, which is
+# corroboration and not the source: the expectation is derived from the rule THIS
+# repo implements.
 if ! KNOWN_UNCOVERED_LEDGER="$(printf '%s\n' ${KNOWN_UNCOVERED[@]+"${KNOWN_UNCOVERED[@]}"})" \
      KNOWN_UNBOUND_LEDGER="$(printf '%s\n' ${KNOWN_UNBOUND_BLOCKS[@]+"${KNOWN_UNBOUND_BLOCKS[@]}"})" \
      python3 - "$manifest" "$conformance_dir" <<'BLOCK_MAGNITUDE'
@@ -974,14 +979,22 @@ for entry in os.environ.get("KNOWN_UNBOUND_LEDGER", "").splitlines():
 #
 # `walk_assertion_blocks` (tests/test_assertion_keys.hpp), clause for clause:
 # every name in {assertions, expect, expect_after, expect_initial, expected}, at
-# EVERY depth, OBJECT-valued only; an ARRAY-valued tracked key contributes NO
-# site (a runner binds the elements, never the array, so counting the array
-# would declare a block unbindable by construction) though arrays are still
-# descended into, which is where `steps[3].expect` lives; and a block is EMITTED
-# AND NOT DESCENDED INTO, because descending would inventory a fixture's
-# `expect` nested inside its own `assertions` as a second, separately bindable
-# site no tracker can reach without unwrapping the first. `where` is spelled
-# from the loader's coordinates: dotted member names, `[n]` for array indices.
+# EVERY depth; an OBJECT-valued tracked key is ONE site; an ARRAY-valued tracked
+# key is ONE SITE PER PLAIN-OBJECT ELEMENT, `<path>[<index>]`
+# (`#lzarrayelementsites`) -- one level only, plain objects only, and the TRUE
+# index, so a nested `[[{...}]]` emits nothing and a mixed `[{...}, 3, {...}]` is
+# `expect[0]` and `expect[2]`; arrays at an UNTRACKED key are still descended
+# into, which is where `steps[3].expect` lives; and a block is EMITTED AND NOT
+# DESCENDED INTO, because descending would inventory a fixture's `expect` nested
+# inside its own `assertions` as a second, separately bindable site no tracker
+# can reach without unwrapping the first. `where` is spelled from the loader's
+# coordinates: dotted member names, `[n]` for array indices.
+#
+# cpp binds a block BY CONTENT, not by label, so this twin IS the loader walk's
+# pinned counterpart -- there is no path predicate to widen alongside it. The
+# equality below is what pins them: a site this twin derives and the loader never
+# declares fails as FEWER than derived, and one the loader declares and this twin
+# does not fails as MORE. Widening either alone cannot produce a green run.
 #
 # `write_canonical` + `assertion_block_digest`, rule for rule: objects emit
 # `{` then each member as `<name>:<value>,` with names SORTED, arrays emit `[`
@@ -1052,10 +1065,25 @@ def walk_blocks(fixture_id, node, path, sites, blocks):
     if isinstance(node, dict):
         for name, value in node.items():
             child = name if not path else path + "." + name
-            if name in ASSERTION_BLOCK_NAMES and isinstance(value, dict):
-                sites[fixture_id + "|" + child] = value
-                blocks.append(value)
-                continue
+            if name in ASSERTION_BLOCK_NAMES:
+                if isinstance(value, dict):
+                    sites[fixture_id + "|" + child] = value
+                    blocks.append(value)
+                    continue
+                if isinstance(value, list):
+                    # One site per plain-OBJECT element, at its TRUE index
+                    # (`#lzarrayelementsites`). A scalar, array or null element
+                    # emits nothing and is descended into instead, which keeps
+                    # the rule to ONE level: the elements of a nested array sit
+                    # under an index rather than under a tracked key.
+                    for index, element in enumerate(value):
+                        element_path = "%s[%d]" % (child, index)
+                        if isinstance(element, dict):
+                            sites[fixture_id + "|" + element_path] = element
+                            blocks.append(element)
+                            continue
+                        walk_blocks(fixture_id, element, element_path, sites, blocks)
+                    continue
             walk_blocks(fixture_id, value, child, sites, blocks)
     elif isinstance(node, list):
         for index, item in enumerate(node):
@@ -1378,7 +1406,8 @@ print(
     "assertion-block magnitude OK: the run inventoried %d site(s) / %d distinct digest(s); "
     "%d bound, %d declared unbindable with a reason against a pin of exactly %d; derived %d AND %d from "
     "the %d opened fixtures of the corpus listing minus KNOWN_UNCOVERED, both asserted "
-    "EQUAL (all five block names, every depth, object-valued only), the ledger's size "
+    "EQUAL (all five block names, every depth, object-valued plus each plain-object "
+    "element of an array-valued one), the ledger's size "
     "pinned by EQUALITY to a committed constant, so growing OR shrinking it is an "
     "explicit act"
     % (
