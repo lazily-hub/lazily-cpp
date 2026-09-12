@@ -726,8 +726,11 @@ probe_stderr="$(mktemp)"
 oracle_root="$(mktemp)"
 oracle_root_again="$(mktemp)"
 oracle_target="$(mktemp)"
+oracle_target_again="$(mktemp)"
 oracle_failures="$(mktemp)"
-trap 'rm -f "$ci_raw" "$ci_anchor" "$probe_failures" "$probe_stderr" "$oracle_root" "$oracle_root_again" "$oracle_target" "$oracle_failures"' EXIT
+# One line per audited target: its OWN-recipe anchor set, for the collision rung.
+anchor_sets="$(mktemp)"
+trap 'rm -f "$ci_raw" "$ci_anchor" "$probe_failures" "$probe_stderr" "$oracle_root" "$oracle_root_again" "$oracle_target" "$oracle_target_again" "$oracle_failures" "$anchor_sets"' EXIT
 
 # ── probe 1 of 2: the ROOT ─────────────────────────────────────────────────
 #
@@ -876,16 +879,28 @@ fi
 #     The edge buys ordering DETERMINISM — without it `make -j16 check` fails on
 #     a race it is merely likely to lose — and nothing in this file protects the
 #     edge itself. Do not read this pin as though it did.
-#   * A recipe SWAPPED for another gate CI already runs (js's Attack 4:
-#     `test-interop-peer:` running the conformance script instead of the peer).
-#     Every count holds, the anchors still match a real CI step, the verdict is
-#     byte-identical. Closing it needs per-target recipe anchors — a second
-#     spelling of every recipe inside this guard — which the header above
-#     records as a mistake that already cost THIS binding a hardcoded duplicate
-#     path plus a hand-written equality assertion. Out of scope on purpose, not
-#     covered by accident. It also bounds the honest claim for this whole pin:
-#     the argument is that it turns an invisible drop into a reviewable edit,
-#     and Attack 4 is an equally reviewable edit that stays equally undetected.
+#   * A recipe SWAPPED for another gate CI already runs. HALF of this is caught
+#     now, by the anchor-collision rung below, and the two halves are worth
+#     keeping apart because only one of them is still open:
+#
+#       caught    repointed at another CLOSURE MEMBER's gate.
+#                 `test-interop-peer:` running check-wasm-corpus-column.sh was
+#                 byte-identical to healthy at exit 0; the two own-anchor sets
+#                 are now equal, so the collision rung names both and refuses.
+#       OPEN      repointed at a ci.yml step NO member runs. Measured:
+#                 `test-interop-peer:` running check-wasm-tiers.sh — a real step
+#                 in the wasm job, which ci-reach.conf lists, so its anchor is
+#                 reached — gives output byte-identical to healthy at exit 0
+#                 with `make -n check` running the interop peer zero times. No
+#                 collision, every count held, reach satisfied.
+#
+#     Closing the open half needs per-target recipe anchors: a second spelling
+#     of every recipe inside this guard, which the header above records as a
+#     mistake that already cost THIS binding a hardcoded duplicate path plus a
+#     hand-written equality assertion. Out of scope on purpose, not covered by
+#     accident. It also bounds the honest claim for this whole pin: the argument
+#     is that a pin turns an invisible drop into a reviewable edit, and that
+#     open half is an equally reviewable edit that stays equally undetected.
 oracle_anchors() {
 	dry_run "$1" | anchors | sort -u || true
 }
@@ -1056,6 +1071,56 @@ while IFS= read -r target; do
 		fi
 	done <"$oracle_target"
 	if [ "$oracle_missing_count" -ne 0 ]; then
+		# ── the diagnosis check, on the FAILURE PATH only ─────────────
+		#
+		# anchors() erases a volatile value in ONE of the two positions it
+		# can occupy, not both. lazily-dart measured the pair: a LEADING
+		# `VAR=$(RUN_ID) cmd` assignment is dropped by the normalizer and
+		# this rung stays silent, but `cmd --tags run-$(RUN_ID)` keeps the
+		# argument token verbatim and the rung exits 1 — correctly refusing,
+		# and then BLAMING THE CLOSURE, which sends the reader to `check:`'s
+		# prerequisite list to fix a recipe.
+		#
+		# So keep the refusal and repair the diagnosis: ask make the same
+		# question twice. If the target does not answer the same way both
+		# times, the recipe is non-deterministic and that is neither a
+		# closure problem nor a CI problem.
+		#
+		# Deliberately on the failure path and not up front: it costs one
+		# extra `make -n` only when a verdict is already going to be red, and
+		# it cannot turn a green run red. The unconditional root re-probe
+		# above catches the same class earlier for any target the root
+		# actually runs — a volatile anchor in a coupled target reaches the
+		# root's list too — so this arm is what covers the case the root
+		# probe structurally cannot: a target whose own answer wobbles while
+		# the root's stays still.
+		#
+		# NOT a loosening of the anchor comparison. Two bindings answered
+		# this differently — py left it red with a do-not-loosen note, kt
+		# pinned the run id for its own probes — and both keep the comparison
+		# intact; this keeps it intact as well and only changes what the
+		# refusal SAYS. On cpp no closure recipe passes a run id or manifest
+		# positionally today (the run id appears only inside a `printf`,
+		# which is trivial, and the manifest reaches ctest through a leading
+		# `LAZILY_CONFORMANCE_MANIFEST=` assignment, which is dropped), so
+		# this arm is a net for the next recipe rather than a live fix.
+		oracle_anchors "$target" >"$oracle_target_again"
+		if ! cmp -s "$oracle_target" "$oracle_target_again"; then
+			echo "check-ci-reach: \`$MAKE_BIN -n $target\` answered differently twice:" >&2
+			diff --unchanged-line-format= \
+				--old-line-format='      probe 1: %L' \
+				--new-line-format='      probe 2: %L' \
+				"$oracle_target" "$oracle_target_again" >&2 || true
+			echo "  This target's recipe is NON-DETERMINISTIC, so the oracle cannot judge it." >&2
+			echo "  It is neither a closure problem nor a CI problem, and the rung below would" >&2
+			echo "  have reported it as the former: something minted per make invocation — a" >&2
+			echo "  timestamp, a pid, a fresh run id — sits in the command line in a position" >&2
+			echo "  anchors keep, which is any ARGUMENT token." >&2
+			echo "  Move it out of the command line: a leading \`VAR=value cmd\` assignment or a" >&2
+			echo "  flag VALUE (\`--id=\$(ID)\`) is erased by the normalizer, a bare argument is" >&2
+			echo "  not. Do NOT loosen the comparison to make this green." >&2
+			exit 1
+		fi
 		{
 			printf '  - %s: %s anchor(s) of its own are absent from `%s -n %s`\n' \
 				"$target" "$oracle_missing_count" "$MAKE_BIN" "$ROOT_TARGET"
@@ -1078,6 +1143,12 @@ while IFS= read -r target; do
 		nogate_count=$((nogate_count + 1))
 		continue
 	fi
+
+	# Recorded for the collision rung after the loop. Non-empty sets only: an
+	# empty own-anchor set is the `no gate` bucket, which EXPECTED_NO_GATE_TARGETS
+	# pins by name, and every member of it would otherwise "collide" with every
+	# other one.
+	printf '%s\t%s\n' "$(printf '%s' "$target_anchors" | tr '\n' '\037')" "$target" >>"$anchor_sets"
 
 	hit=1
 	missing_anchors=""
@@ -1159,6 +1230,56 @@ if [ -s "$oracle_failures" ]; then
 	echo "  target. EXPECTED_CLOSURE_TARGETS cannot substitute for this — it is set-equal" >&2
 	echo "  to the awk closure in both branches, which is exactly why this rung exists." >&2
 	exit 1
+fi
+
+# ── ANCHOR COLLISIONS: the oracle's anti-weakening rung (#pinreachclosure) ──
+#
+# Normalization can only MERGE. anchors() drops flag values, reduces paths to
+# basenames and erases trivial commands, so two different recipes can reduce to
+# the same anchor set — and if two closure members do, every anchor rung above
+# has been comparing a SMALLER set than it appears to, without saying so.
+# lazily-dart named this and it is worth more here than anywhere: this closure
+# invokes ctest, cmake and four separate guard scripts, so a collision is
+# plausible in a way it is not in a binding whose members run one command each.
+#
+# Measured before trusting the oracle: all nine non-empty own-anchor sets in
+# this closure are distinct, and eight of them are singletons naming a different
+# program. dart's were distinct only down to two adjacent filenames.
+#
+# It also closes HALF of the recipe-swap attack the header above declares out of
+# scope. Point one member's recipe at ANOTHER MEMBER's gate — measured earlier
+# as `test-interop-peer:` running check-wasm-corpus-column.sh, byte-identical to
+# healthy at exit 0 — and the two own-anchor sets become equal, so this rung
+# names both targets and refuses. The remaining half is pointing a member at a
+# real workflow step that no member runs; that still needs per-target recipe
+# anchors and is still out of scope for the reason the header gives.
+#
+# OWN-recipe anchors, not the subgraph anchors the oracle compares. That is what
+# makes the swap visible: `test-interop-peer`'s subgraph carries configure and
+# build as well, so its subgraph set would never equal a leaf's.
+if [ -s "$anchor_sets" ]; then
+	collisions="$(LC_ALL=C sort "$anchor_sets" | awk -F'\t' '
+		{ if ($1 == prev) { if (names == "") names = prevname; names = names " " $2 }
+		  else { if (names != "") print names "\t" prev; names = ""; prev = $1; prevname = $2 } }
+		END { if (names != "") print names "\t" prev }
+	')"
+	if [ -n "$collisions" ]; then
+		echo >&2
+		echo "check-ci-reach: closure members reduce to the SAME anchor set:" >&2
+		while IFS=$'\t' read -r names joined; do
+			[ -n "$names" ] || continue
+			echo "  - $names" >&2
+			printf '%s' "$joined" | tr '\037' '\n' | sed -e '/^$/d' -e 's/^/        /' >&2
+		done <<<"$collisions"
+		echo >&2
+		echo "  Anchoring can only MERGE, so the rungs above have been comparing a smaller" >&2
+		echo "  set than the target list suggests, and a gate whose recipe was repointed at" >&2
+		echo "  another member's gate would be indistinguishable from the real thing." >&2
+		echo "  Either the recipes really are duplicates — collapse them into one target —" >&2
+		echo "  or one of them was repointed and should be restored. Do NOT resolve this by" >&2
+		echo "  making the anchors coarser." >&2
+		exit 1
+	fi
 fi
 
 # ── the CLASSIFICATION pin (#pinreachclosure) ─────────────────────────────
