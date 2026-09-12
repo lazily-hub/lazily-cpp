@@ -235,6 +235,37 @@ EXPECTED_GATE_STEPS=(
   "wasm-corpus-column|test|WASM.md corpus column + row set (#lzcppwasmguardlocal)"
 )
 
+# ── the reach-MODE pin (#reversereachdirection) ───────────────────────────
+#
+# A closure member carrying a gate is reached one of two ways, and the two are
+# audited by entirely different machinery: by ANCHORS, scoped to the step named
+# in EXPECTED_GATE_STEPS above, or by CI invoking it THROUGH MAKE, which
+# make_invokes() credits from a literal `make <target>` anywhere. The mode is
+# therefore part of what this guard asserts, and it is pinned here so it cannot
+# change without a deliberate edit.
+#
+# lazily-zig measured why. Deleting the CI step of a make-invoked member makes
+# make_invokes() fail, the member falls through to the ANCHOR path, and there a
+# step whose anchor ends in a wildcard can absorb it — so a gate that left CI
+# reported reached, in a mode nobody chose. cpp does not reproduce that today
+# (measured: deleting `Format gate (make fmt)` or `Assertion observation
+# ordering` both redden, because the fall-through anchors are multi-token and
+# cpp's two trailing wildcards only absorb SINGLE-token anchors). That is a
+# property of today's recipes, not of the design, and this pin is what stops it
+# from being rediscovered the next time a recipe shortens.
+#
+# Set-equal, like every other pin in this file, so it catches the change in both
+# directions: a member leaving make-invocation mode and a member entering it.
+# CHURN is mode-rate — lower even than the step-name rate of the pin above.
+#
+# make_invokes() itself cannot be forged by a wildcard: it requires the literal
+# token `make` in first position and the target spelled exactly, with no ANY
+# matching. So entering this mode takes a real `make <target>` in a run: body.
+EXPECTED_MAKE_INVOKED_TARGETS=(
+  assertion-ordering-check
+  fmt
+)
+
 if [ "$ROOT_TARGET" != "$EXPECTED_ROOT_TARGET" ]; then
 	echo "check-ci-reach: root target is '$ROOT_TARGET' but EXPECTED_ROOT_TARGET pins '$EXPECTED_ROOT_TARGET'" >&2
 	echo "  The closure below, and EXPECTED_CLOSURE_TARGETS with it, describe" >&2
@@ -649,7 +680,29 @@ own_commands() {
 #     build --output-on-failure` as an in-order subsequence; the `WASM.md corpus
 #     column` step survived because the same proof step also runs
 #     check-wasm-corpus-column.sh; and the `CI-reachability guard` step — this
-#     guard's own step — survived as well.
+#     guard's own step — survived as well, reporting itself reached with
+#     nothing running it.
+#
+#     TRAILING WILDCARDS make that relation wider than plain containment.
+#     anchors() renders an interpolated variable as an ANY token, and an ANY in
+#     the LAST position of a step's anchor matches ANY single remaining token —
+#     so such a step is a superset of every one-token member anchor, whatever it
+#     spells. Swept: cpp has 25 step anchors, TWO ending in a wildcard
+#     (`check-conformance-coverage.sh ANY` from the coverage step, and
+#     `$absent LAZILY_CONFORMANCE_MANIFEST= failclosed-manifest.txt ANY` from
+#     the fail-closed proof), zero with an interior one. cpp has two one-token
+#     member anchors — check-ci-reach.sh and check-wasm-corpus-column.sh — and
+#     both were absorbed. Two-token anchors were not: a trailing ANY buys
+#     exactly one token, so `lazily_interop_peer --self-check` survived,
+#     measured red. That is why the count is 3 of 7 here and 4 of 7 in
+#     lazily-zig, and it is a property of today's anchor lengths, not a margin
+#     to rely on.
+#
+#     Full pre-fix matrix, each member's own step deleted and the verdict
+#     compared byte-for-byte against a healthy run: DELETABLE at exit 0 for
+#     test, ci-reach and wasm-corpus-column; refused for fmt, build,
+#     test-interop-peer, conformance-coverage, assertion-ordering-check and
+#     configure.
 #
 # Scoping reach to the pinned step closes both. It is STRICTER than the flat
 # check, so it was measured before being committed: all seven anchor-reached
@@ -668,7 +721,7 @@ own_commands() {
 # scraper for it would be a second thing to drift.
 ci_commands_scoped() {
 	awk '
-		function flush() { if (buf != "") { print job US step US buf; buf = "" } }
+		function flush() { if (buf != "") { print FILENAME US job US step US buf; buf = "" } }
 		function stepname() { return (name == "" ? "(unnamed)" : name) }
 		BEGIN { US = "\037"; job = "(no job)"; name = "" }
 		{
@@ -687,8 +740,8 @@ ci_commands_scoped() {
 						buf = buf " " line
 						next
 					}
-					if (buf != "") { print job US step US buf " " line; buf = "" }
-					else print job US step US line
+					if (buf != "") { print FILENAME US job US step US buf " " line; buf = "" }
+					else print FILENAME US job US step US line
 					next
 				}
 			}
@@ -718,14 +771,14 @@ ci_commands_scoped() {
 				block_indent = indent
 				buf = ""
 				step = stepname()
-				print job US step US "\001runstep"
+				print FILENAME US job US step US "\001runstep"
 				next
 			}
 			if (line ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*[^|>[:space:]]/) {
 				sub(/^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*/, "", line)
 				step = stepname()
-				print job US step US "\001runstep"
-				print job US step US line
+				print FILENAME US job US step US "\001runstep"
+				print FILENAME US job US step US line
 			}
 		}
 		END { flush() }
@@ -1081,6 +1134,13 @@ while IFS= read -r scoped_line; do
 	case "$scoped_line" in *$'\037\001runstep') continue ;; esac
 	scope="${scoped_line%$'\037'*}"
 	scoped_cmd="${scoped_line##*$'\037'}"
+	# $scope is now `file\037job\037step`: the WORKFLOW FILE is part of the key,
+	# not just the job. Two listed workflows can carry the same job id and the
+	# same step name, and keying on (job, step) alone would UNION their commands
+	# under one scope — the flat-union defect this pin removes, reintroduced one
+	# level down. lazily-zig measured the same shape for two same-named steps
+	# inside one job; the rung below refuses a pin that matches 0 or 2 steps, and
+	# this key is what keeps the SCOPE itself unmerged even for steps no pin names.
 	# Prefixed by printf, not by sed: a step name is arbitrary text and every
 	# sed delimiter, `&` and `\` in it would be substitution syntax.
 	while IFS= read -r scoped_anchor; do
@@ -1088,7 +1148,7 @@ while IFS= read -r scoped_line; do
 		printf '%s\037%s\n' "$scope" "$scoped_anchor" >>"$ci_scoped"
 	done < <(printf '%s\n' "$scoped_cmd" | anchors)
 done <"$ci_raw"
-cut -d$'\037' -f3 <"$ci_scoped" | LC_ALL=C sort -u >"$ci_anchor"
+cut -d$'\037' -f4 <"$ci_scoped" | LC_ALL=C sort -u >"$ci_anchor"
 
 if [ ! -s "$ci_steps" ]; then
 	echo "check-ci-reach: no run: steps found in ${workflows[*]} — a guard with an empty haystack passes everything" >&2
@@ -1103,6 +1163,32 @@ if [ ! -s "$ci_anchor" ]; then
 fi
 
 
+# ── every `run:` step must be NAMED (#reversereachdirection) ──────────────
+#
+# A step pin is a step NAME, so an unnamed `run:` step cannot be pinned, and a
+# gate whose only CI spelling lives in one cannot be audited at all. The
+# scraper attributes those to the `(unnamed)` sentinel rather than letting the
+# name carry over from the step above — lazily-zig measured the carry-over and
+# it is the worse failure of the two: the command gets credited to a step that
+# does not run it, which is precisely the false reach this pin exists to
+# remove. Two unnamed steps in one job would also UNION under the one sentinel
+# scope, the flat-union defect again.
+#
+# So refuse, rather than default. Adding a `name:` is not a behaviour change —
+# the family measured 8 of 10 bindings already naming every step, py with 1
+# unnamed and dart with 2 — and cpp has none today, so this rung changes
+# nothing now and keeps it a measurement instead of an assumption.
+unnamed_steps="$(awk -F'\037' '$3 == "(unnamed)" { printf "  - %s job %s\n", $1, $2 }' "$ci_steps")"
+if [ -n "$unnamed_steps" ]; then
+	echo "check-ci-reach: run: step(s) with no \`name:\`, which no pin can address:" >&2
+	printf '%s\n' "$unnamed_steps" >&2
+	echo "  Reach is asked inside the CI step pinned for each gate, and a step is pinned" >&2
+	echo "  BY NAME. Give each of these a \`name:\` — it is metadata, not behaviour — and" >&2
+	echo "  pin it if it runs a gate. This guard will not guess: inheriting the previous" >&2
+	echo "  step's name would credit its commands to a step that does not run them." >&2
+	exit 1
+fi
+
 # ── validating the STEP PIN against both sides (#reversereachdirection) ────
 #
 # Three ways a pin can be worthless, refused here rather than discovered as a
@@ -1113,6 +1199,7 @@ fi
 # is the safe direction, but under the wrong name — the reader would be sent to
 # the Makefile for a step that was renamed in the workflow.
 pin_gate_targets=()
+pin_gate_files=()
 pin_gate_jobs=()
 pin_gate_steps=()
 pin_step_count="${#EXPECTED_GATE_STEPS[@]}"
@@ -1139,11 +1226,17 @@ for entry in "${EXPECTED_GATE_STEPS[@]}"; do
 	# zero occurrences is a renamed or deleted step, and two is a duplicate name
 	# inside one job, which would widen the pinned scope back out to two steps.
 	step_hits="$(awk -F'\037' -v j="$entry_job" -v st="$entry_step" \
-		'$1 == j && $2 == st { n++ } END { print n + 0 }' "$ci_steps")"
+		'$2 == j && $3 == st { n++ } END { print n + 0 }' "$ci_steps")"
 	if [ "$step_hits" -ne 1 ]; then
 		pin_errors="$pin_errors  - '$entry_target' is pinned to job '$entry_job' step '$entry_step', which matches $step_hits run: step(s) in ${workflows[*]} — it must match exactly 1"$'\n'
 	fi
+	# The file is RESOLVED from that unique match rather than spelled in the pin:
+	# requiring exactly one match determines it, so the pin format stays
+	# `target|job|step` and a workflow file rename does not churn every entry.
+	entry_file="$(awk -F'\037' -v j="$entry_job" -v st="$entry_step" \
+		'$2 == j && $3 == st { print $1; exit }' "$ci_steps")"
 	pin_gate_targets+=("$entry_target")
+	pin_gate_files+=("$entry_file")
 	pin_gate_jobs+=("$entry_job")
 	pin_gate_steps+=("$entry_step")
 done
@@ -1166,10 +1259,12 @@ printf 'pinned   %s gate step(s) = EXPECTED_GATE_STEPS\n' "$pin_step_count"
 # returns 0, or returns 1 for a target with no pin.
 gate_step_for() {
 	local t="$1" i
+	GATE_STEP_FILE=""
 	GATE_STEP_JOB=""
 	GATE_STEP_NAME=""
 	for i in "${!pin_gate_targets[@]}"; do
 		if [ "${pin_gate_targets[$i]}" = "$t" ]; then
+			GATE_STEP_FILE="${pin_gate_files[$i]}"
 			GATE_STEP_JOB="${pin_gate_jobs[$i]}"
 			GATE_STEP_NAME="${pin_gate_steps[$i]}"
 			return 0
@@ -1188,11 +1283,11 @@ gate_step_for() {
 # header on ci_commands_scoped records the three live supersets and the one live
 # repoint that the unscoped form let through.
 anchor_reached_in() {
-	awk -v want="$1" -v scope_job="$2" -v scope_step="$3" -F'\037' '
+	awk -v want="$1" -v scope_file="$2" -v scope_job="$3" -v scope_step="$4" -F'\037' '
 		BEGIN { ANY = "\001any"; wn = split(want, w, / /) }
-		$1 != scope_job || $2 != scope_step { next }
+		$1 != scope_file || $2 != scope_job || $3 != scope_step { next }
 		{
-			hn = split($3, h, / /)
+			hn = split($4, h, / /)
 			wi = 1
 			# A wildcard on EITHER side matches, because either side may be the
 			# one that spelled the argument through a variable.
@@ -1250,6 +1345,8 @@ mispinned=""
 mispinned_count=0
 scoped=()
 scoped_count=0
+make_invoked=()
+make_invoked_count=0
 reached=0
 excused_ok=0
 
@@ -1400,9 +1497,12 @@ while IFS= read -r target; do
 
 	hit=1
 	missing_anchors=""
+	scoped_file=""
 	scoped_job=""
 	scoped_step=""
 	if make_invokes "$target"; then
+		make_invoked[$make_invoked_count]="$target"
+		make_invoked_count=$((make_invoked_count + 1))
 		# CI runs it through make, so there is no independent CI-side spelling
 		# to scope. A pin for such a target asserts nothing — it would be
 		# satisfied by the very `make <target>` line make_invokes() already
@@ -1426,13 +1526,14 @@ while IFS= read -r target; do
 			printf 'UNPINNED %-32s carries a gate CI must spell, but EXPECTED_GATE_STEPS names no step for it\n' "$target"
 			continue
 		fi
+		scoped_file="$GATE_STEP_FILE"
 		scoped_job="$GATE_STEP_JOB"
 		scoped_step="$GATE_STEP_NAME"
 		scoped[$scoped_count]="$target"
 		scoped_count=$((scoped_count + 1))
 		while IFS= read -r a; do
 			[ -n "$a" ] || continue
-			if ! anchor_reached_in "$a" "$scoped_job" "$scoped_step"; then
+			if ! anchor_reached_in "$a" "$scoped_file" "$scoped_job" "$scoped_step"; then
 				hit=0
 				missing_anchors="$missing_anchors$a"$'\n'
 			fi
@@ -1459,8 +1560,8 @@ while IFS= read -r target; do
 		printf 'MISSING  %s\n' "$target"
 		while IFS= read -r a; do
 			[ -n "$a" ] || continue
-			printf '           job %s step `%s` does not run `%s`\n' \
-				"$scoped_job" "$scoped_step" "$a"
+			printf '           %s job %s step `%s` does not run `%s`\n' \
+				"$scoped_file" "$scoped_job" "$scoped_step" "$a"
 		done <<<"$missing_anchors"
 	fi
 done <<<"$closure"
@@ -1560,6 +1661,77 @@ if [ -s "$anchor_sets" ]; then
 	fi
 fi
 
+# ── the reach-MODE set rung (#reversereachdirection) ──────────────────────
+#
+# Ahead of the UNPINNED and pin-unused rungs below, deliberately: a mode change
+# is the CAUSE and both of those are its symptom. Measured before this rung
+# existed — deleting the `make fmt` step reported `fmt` UNPINNED and told the
+# reader to add a pin, which is the wrong fix for a step that was removed.
+mode_gained=""
+mode_gained_count=0
+for t in "${make_invoked[@]:+${make_invoked[@]}}"; do
+	found=0
+	for expected_mode in "${EXPECTED_MAKE_INVOKED_TARGETS[@]}"; do
+		if [ "$expected_mode" = "$t" ]; then
+			found=1
+			break
+		fi
+	done
+	if [ "$found" -eq 0 ]; then
+		mode_gained="$mode_gained$t"$'\n'
+		mode_gained_count=$((mode_gained_count + 1))
+	fi
+done
+
+mode_lost=""
+mode_lost_count=0
+for expected_mode in "${EXPECTED_MAKE_INVOKED_TARGETS[@]}"; do
+	found=0
+	for t in "${make_invoked[@]:+${make_invoked[@]}}"; do
+		if [ "$t" = "$expected_mode" ]; then
+			found=1
+			break
+		fi
+	done
+	if [ "$found" -eq 0 ]; then
+		mode_lost="$mode_lost$expected_mode"$'\n'
+		mode_lost_count=$((mode_lost_count + 1))
+	fi
+done
+
+if [ "$((mode_gained_count + mode_lost_count))" -ne 0 ]; then
+	echo >&2
+	echo "check-ci-reach: the set of targets CI invokes THROUGH MAKE does not equal EXPECTED_MAKE_INVOKED_TARGETS" >&2
+	if [ "$mode_lost_count" -gt 0 ]; then
+		echo >&2
+		echo "  $mode_lost_count target(s) pinned as make-invoked that CI no longer invokes through make:" >&2
+		while IFS= read -r t; do
+			[ -n "$t" ] || continue
+			echo "    - $t" >&2
+		done <<<"$mode_lost"
+		echo "  The likeliest cause is that its \`make <target>\` CI step was renamed or" >&2
+		echo "  DELETED. That is a gate leaving CI, and the fix is to restore the step — not" >&2
+		echo "  to pin a step for it and not to drop it from this list. lazily-zig measured" >&2
+		echo "  what happens without this rung: the member falls through to the anchor path" >&2
+		echo "  and a step whose anchor ends in a wildcard absorbs it, reporting reached." >&2
+	fi
+	if [ "$mode_gained_count" -gt 0 ]; then
+		echo >&2
+		echo "  $mode_gained_count target(s) CI now invokes through make that are not pinned as make-invoked:" >&2
+		while IFS= read -r t; do
+			[ -n "$t" ] || continue
+			echo "    - $t" >&2
+		done <<<"$mode_gained"
+		echo "  Reach for these is no longer scoped to a CI step, because there is no" >&2
+		echo "  independent CI-side spelling left to scope. That may be the intent — if so," >&2
+		echo "  add it here and remove its EXPECTED_GATE_STEPS entry in the same commit, and" >&2
+		echo "  know what is given up: a recipe repointed inside a target CI merely asks make" >&2
+		echo "  to run is undetectable from CI, correctly, because CI faithfully runs" >&2
+		echo "  whatever the target runs." >&2
+	fi
+	exit 1
+fi
+
 # ── the STEP PIN's two set rungs (#reversereachdirection) ─────────────────
 #
 # The pin is only worth what its agreement with the audit is worth, and it can
@@ -1588,12 +1760,9 @@ if [ "$unpinned_count" -ne 0 ]; then
 	echo "  CI step that runs it. Do NOT fall back to matching the whole workflow — that" >&2
 	echo "  is the unscoped question this pin replaced, and the header on" >&2
 	echo "  ci_commands_scoped records what it let through." >&2
-	echo >&2
-	echo "  Check the other cause first, because it is the likelier one and a new pin" >&2
-	echo "  would paper over it: a target CI used to invoke THROUGH MAKE carries no pin by" >&2
-	echo "  design, so deleting its \`make <target>\` step lands it here. Measured: removing" >&2
-	echo "  the \`make fmt\` step reports \`fmt\` unpinned, and the fix is to restore the" >&2
-	echo "  step, not to pin one." >&2
+	echo "  A target that merely STOPPED being make-invoked is reported by the mode rung" >&2
+	echo "  above instead, which names the deleted \`make <target>\` step as the cause." >&2
+	echo "  Reaching this rung means the member is genuinely anchor-reached and unpinned." >&2
 	exit 1
 fi
 
