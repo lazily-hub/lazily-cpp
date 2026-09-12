@@ -1273,6 +1273,36 @@ gate_step_for() {
 	return 1
 }
 
+# Does ANY CI command contain this anchor as an in-order subsequence, across every
+# listed workflow? The unscoped question — kept for exactly ONE caller, the
+# stale-EXCUSE check (#reversereachdirection).
+#
+# An excuse claims CI does not run the gate AT ALL, so falsifying it must look
+# everywhere rather than inside one step: a gate the excuse says is absent but
+# which some other step does spell is a stale excuse, and the scoped question
+# would miss it. Looseness here costs nothing, because this predicate is only
+# ever used to REFUSE an excuse — a false positive removes an excuse that should
+# have stayed, a loud and reviewable outcome, while a false negative would leave
+# a gate unenforced with the conf vouching for it. It fails in the safe
+# direction, which is the opposite of what it would do on the reach path.
+#
+# Deliberately NOT reachable from the reach verdict. The excuse branch below
+# runs before the pin requirement and `continue`s, so there is no path on which a
+# non-excused member is judged by this function.
+anchor_reached() {
+	awk -v want="$1" '
+		BEGIN { ANY = "\001any"; wn = split(want, w, / /) }
+		{
+			hn = split($0, h, / /)
+			wi = 1
+			for (hi = 1; hi <= hn && wi <= wn; hi++)
+				if (h[hi] == w[wi] || h[hi] == ANY || w[wi] == ANY) wi++
+			if (wi > wn) { found = 1; exit }
+		}
+		END { exit found ? 0 : 1 }
+	' "$ci_anchor"
+}
+
 # Does the PINNED STEP contain a command whose tokens contain this anchor as an
 # in-order subsequence? Extra flags and arguments on the CI side are fine; missing
 # ones are not.
@@ -1347,6 +1377,8 @@ scoped=()
 scoped_count=0
 make_invoked=()
 make_invoked_count=0
+excused_members=()
+excused_count=0
 reached=0
 excused_ok=0
 
@@ -1500,6 +1532,43 @@ while IFS= read -r target; do
 	scoped_file=""
 	scoped_job=""
 	scoped_step=""
+	# ── EXCUSED first, ahead of the mode split and the pin (#reversereachdirection) ──
+	#
+	# An excuse is the conf's claim that CI deliberately does not run this gate,
+	# so an excused member has no CI-side step to pin and requiring one makes the
+	# excuse INEXPRESSIBLE. Measured, with this branch sitting after the pin
+	# requirement as it first shipped: adding a legitimate `excuse:` for
+	# `test-interop-peer` and deleting its CI step was refused as UNPINNED, and
+	# with the pin dropped too it was STILL refused as UNPINNED — so the one
+	# mechanism this file exists to make auditable could not be used at all, and
+	# `excused` was reachable only by a make-invoked member. cpp has no excuses
+	# today, which is why it was latent rather than broken.
+	#
+	# The staleness test uses the FLAT anchor set on purpose — see
+	# anchor_reached() above. An excuse says CI does not run the gate ANYWHERE.
+	if is_excused "$target"; then
+		excused_members[$excused_count]="$target"
+		excused_count=$((excused_count + 1))
+		excuse_hit=1
+		if ! make_invokes "$target"; then
+			while IFS= read -r a; do
+				[ -n "$a" ] || continue
+				if ! anchor_reached "$a"; then
+					excuse_hit=0
+					break
+				fi
+			done <<<"$target_anchors"
+		fi
+		if [ "$excuse_hit" -eq 1 ]; then
+			stale="$stale$target"$'\n'
+			stale_count=$((stale_count + 1))
+		else
+			excused_ok=$((excused_ok + 1))
+			printf 'excused  %-32s %s\n' "$target" "$(excuse_reason "$target")"
+		fi
+		continue
+	fi
+
 	if make_invokes "$target"; then
 		make_invoked[$make_invoked_count]="$target"
 		make_invoked_count=$((make_invoked_count + 1))
@@ -1538,17 +1607,6 @@ while IFS= read -r target; do
 				missing_anchors="$missing_anchors$a"$'\n'
 			fi
 		done <<<"$target_anchors"
-	fi
-
-	if is_excused "$target"; then
-		if [ "$hit" -eq 1 ]; then
-			stale="$stale$target"$'\n'
-			stale_count=$((stale_count + 1))
-		else
-			excused_ok=$((excused_ok + 1))
-			printf 'excused  %-32s %s\n' "$target" "$(excuse_reason "$target")"
-		fi
-		continue
 	fi
 
 	if [ "$hit" -eq 1 ]; then
@@ -1661,6 +1719,86 @@ if [ -s "$anchor_sets" ]; then
 	fi
 fi
 
+# ── the PARTITION rung: exactly one mode per gate (#reversereachdirection) ─
+#
+# Every closure member that carries a gate is audited by exactly one of three
+# mechanisms, and this rung asserts the three sets PARTITION that population —
+# pairwise disjoint, and covering it:
+#
+#   excused        the conf claims CI deliberately does not run it. Falsified
+#                  against the FLAT anchor set, so a stale excuse is caught.
+#   make-invoked   CI runs `make <target>`; pinned by
+#                  EXPECTED_MAKE_INVOKED_TARGETS, set-equal to what was measured.
+#   step-pinned    CI spells the gate; pinned by EXPECTED_GATE_STEPS, and reach
+#                  is asked INSIDE that step.
+#
+# lazily-go's reason for demanding this, and it is a good one: without
+# exclusivity one array can ABSORB what another drops, which is the two-part
+# cancelling edit relocated one level up rather than closed. py reached the same
+# protection by pinning the gate-step DOMAIN as {gate-carrying} − {excused} −
+# {make-invoked}; this is that equation, asserted in both directions instead of
+# inferred from a complement — which is the mistake this binding already made
+# once and only found by measuring.
+#
+# MEASURED, and reported as measured rather than as a closure: this rung is NOT
+# load-bearing on cpp. Neutered, all five states that violate the partition
+# still exit 1, each caught by a different older rung —
+#
+#   excused + make-invoked        the stale-excuse rung
+#   excused + step-pinned         pin-unused (step present) or the
+#                                 step-existence rung (step deleted)
+#   make-invoked + step-pinned    the mispinned rung
+#   in neither array              UNPINNED, whose `continue` sits ahead of every
+#                                 anchor check, so no CI route can rescue it —
+#                                 verified with the step deleted AND the recipe
+#                                 shortened to a single wildcard-absorbable
+#                                 token, which is the shape that would otherwise
+#                                 be absorbed
+#
+# So it earns its place on two narrower grounds, not on closing an attack.
+# First, it fires ahead of those rungs and gives a better-named diagnosis for
+# one state: excused-and-step-pinned reads "an excused gate has no CI step to
+# pin, so the entry asserts nothing" instead of "1 entry that no target
+# consulted". Second, it states the invariant the other five rungs only imply,
+# so a future refactor that weakens one of them is caught here rather than
+# discovered. It cannot go stale — both sides are measured, nothing is pinned —
+# which is what separates it from the per-recipe-content pin this family
+# declined.
+gate_carrying=$((excused_count + make_invoked_count + scoped_count))
+partition_errors=""
+
+for t in "${excused_members[@]:+${excused_members[@]}}"; do
+	for u in "${make_invoked[@]:+${make_invoked[@]}}"; do
+		[ "$t" = "$u" ] && partition_errors="$partition_errors  - '$t' is both excused and make-invoked"$'\n'
+	done
+	for u in "${scoped[@]:+${scoped[@]}}"; do
+		[ "$t" = "$u" ] && partition_errors="$partition_errors  - '$t' is both excused and step-pinned"$'\n'
+	done
+	if gate_step_for "$t"; then
+		partition_errors="$partition_errors  - '$t' is excused in $CONF and also carries an EXPECTED_GATE_STEPS entry; an excused gate has no CI step to pin, so the entry asserts nothing"$'\n'
+	fi
+done
+for t in "${make_invoked[@]:+${make_invoked[@]}}"; do
+	for u in "${scoped[@]:+${scoped[@]}}"; do
+		[ "$t" = "$u" ] && partition_errors="$partition_errors  - '$t' is both make-invoked and step-pinned"$'\n'
+	done
+done
+
+if [ "$gate_carrying" -ne "$((reached + unreached_count + excused_ok + stale_count))" ]; then
+	partition_errors="$partition_errors  - $gate_carrying gate-carrying member(s) split excused=$excused_count make-invoked=$make_invoked_count step-pinned=$scoped_count, but the verdicts below total $((reached + unreached_count + excused_ok + stale_count))"$'\n'
+fi
+
+if [ -n "$partition_errors" ]; then
+	echo >&2
+	echo "check-ci-reach: the three reach modes do not partition the gate-carrying members:" >&2
+	printf '%s' "$partition_errors" >&2
+	echo "  Each gate is audited by exactly one mechanism — an excuse, a make invocation," >&2
+	echo "  or anchors inside a pinned step. A member in two of them is audited by the" >&2
+	echo "  weaker one and credited by the stronger, and a member in none leaves the audit" >&2
+	echo "  with no verdict at all. Put it in exactly one, deliberately." >&2
+	exit 1
+fi
+
 # ── the reach-MODE set rung (#reversereachdirection) ──────────────────────
 #
 # Ahead of the UNPINNED and pin-unused rungs below, deliberately: a mode change
@@ -1686,6 +1824,19 @@ done
 mode_lost=""
 mode_lost_count=0
 for expected_mode in "${EXPECTED_MAKE_INVOKED_TARGETS[@]}"; do
+	# An EXCUSED member is skipped here, and that is not a loosening.
+	# The excuse branch in the loop above `continue`s before a member is
+	# recorded as make-invoked, so an excused member always looks like it
+	# "lost" the mode — and this rung then blamed the mode. Measured:
+	# `excuse: fmt` reported "1 target(s) pinned as make-invoked that CI no
+	# longer invokes through make", which is FALSE — CI still runs `make fmt`;
+	# the excuse was the change. Skipping it lets the stale-excuse rung at the
+	# bottom give the true diagnosis ("excused but CI DOES reach it"), and
+	# nothing is given up: an excuse is itself a deliberate edit in $CONF, and
+	# that rung refuses it whenever CI does reach the gate.
+	if is_excused "$expected_mode"; then
+		continue
+	fi
 	found=0
 	for t in "${make_invoked[@]:+${make_invoked[@]}}"; do
 		if [ "$t" = "$expected_mode" ]; then
@@ -1913,7 +2064,7 @@ fi
 
 # A guard that examined nothing must not report OK — the same vacuity rule the
 # conformance guards apply (#lzvacuousrun).
-if [ "$((reached + excused_ok + unreached_count + unreadable_count + decoupled_count + unpinned_count))" -eq 0 ]; then
+if [ "$((reached + excused_ok + stale_count + unreached_count + unreadable_count + decoupled_count + unpinned_count))" -eq 0 ]; then
 	echo "check-ci-reach: '$ROOT_TARGET' has no prerequisite target carrying a gate — nothing was verified" >&2
 	exit 1
 fi
@@ -1934,10 +2085,19 @@ fi
 # had (#lzgrepcpipefail): a target left the audit through a bucket nobody
 # totalled, and the guard reported OK over a smaller sample. A pin on the closure
 # is only worth what the accounting under it is worth.
-audited=$((reached + excused_ok + unreached_count + unreadable_count + decoupled_count + nogate_count + unpinned_count))
+# $stale_count belongs in this total, and its absence was a live defect that
+# PREDATES the step pin (#reversereachdirection). A STALE excuse — the direction
+# ci-reach.conf's header advertises as verified, an excuse for a target CI turns
+# out to reach — incremented only $stale_count and `continue`d, so the target
+# left the audit uncounted and THIS rung fired first with "accounted for 9 of 10
+# ... that is a defect in this script, not in the Makefile". Measured against the
+# pre-session guard: exit 1, and the reader is told the script is broken and sent
+# nowhere near the conf. The stale diagnosis at the bottom never printed. So the
+# one rung that keeps the excuse list from rotting had no working message.
+audited=$((reached + excused_ok + stale_count + unreached_count + unreadable_count + decoupled_count + nogate_count + unpinned_count))
 if [ "$audited" -ne "$pin_count" ]; then
 	echo "check-ci-reach: accounted for $audited of $pin_count pinned closure target(s)" >&2
-	echo "  reached=$reached excused=$excused_ok unreached=$unreached_count unreadable=$unreadable_count decoupled=$decoupled_count no-gate=$nogate_count unpinned=$unpinned_count" >&2
+	echo "  reached=$reached excused=$excused_ok stale=$stale_count unreached=$unreached_count unreadable=$unreadable_count decoupled=$decoupled_count no-gate=$nogate_count unpinned=$unpinned_count" >&2
 	echo "  The closure equals EXPECTED_CLOSURE_TARGETS, so every target should have" >&2
 	echo "  landed in exactly one bucket above. One left the audit without being" >&2
 	echo "  counted — that is a defect in this script, not in the Makefile." >&2
