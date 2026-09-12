@@ -196,12 +196,27 @@ jobs:
       # corpus, which is the only input. It is a SUBSET verdict by construction
       # and prints what it did not audit; the wasm job stays the full-fidelity
       # gate.
+      # The verdict assertions below read `grep -q ... <<<"$out"`, never
+      # `echo "$out" | grep -q ...` (#lzgrepcpipefail). Every step here runs
+      # under `shell: bash`, i.e. `-o pipefail`, and `grep -q` exits at its FIRST
+      # match: past the 64KiB pipe buffer the producer takes SIGPIPE, pipefail
+      # surfaces that as the pipeline's status, and a present match reads as
+      # exit 141. Measured on this machine with a 1.2MB producer — a bash builtin
+      # `echo` is NOT immune — and on lazily-cpp's own largest source, where
+      # `grep -v ... include/lazily/context.hpp | grep -qF <needle>` gave exit
+      # 141 while `grep -qF <needle> FILE` gave 0: a hit reading as a miss.
+      #
+      # These three are consumed as required-matches (`|| exit 1`), so the
+      # inversion would be a false RED, and they are small today — 521 and 353
+      # bytes, with two of the three matching on the LAST line. The herestring
+      # retires the class outright rather than leaving three sites correct only
+      # by size, and it is the idiom the fail-closed proof below already uses.
       - name: WASM.md corpus column + row set (#lzcppwasmguardlocal)
         shell: bash
         run: |
           out=$(./scripts/check-wasm-corpus-column.sh 2>&1) || { echo "$out"; echo "::error::the WASM.md matrix is stale against the canonical corpus"; exit 1; }
           echo "$out"
-          echo "$out" | grep -q "wasm corpus-column guard: OK" || {
+          grep -q "wasm corpus-column guard: OK" <<<"$out" || {
             echo "::error::the corpus-column guard exited 0 without reaching its verdict"
             exit 1
           }
@@ -284,7 +299,7 @@ jobs:
         run: |
           out=$(./scripts/check-ci-reach.sh 2>&1) || { echo "$out"; echo "::error::a make check gate is unreachable from CI"; exit 1; }
           echo "$out"
-          echo "$out" | grep -q "check-ci-reach: OK" || {
+          grep -q "check-ci-reach: OK" <<<"$out" || {
             echo "::error::the CI-reachability guard exited 0 without reaching its verdict"
             exit 1
           }
@@ -340,7 +355,7 @@ jobs:
         run: |
           out=$(./scripts/check-wasm-tiers.sh 2>&1) || { echo "$out"; echo "::error::wasm tier/matrix guard failed"; exit 1; }
           echo "$out"
-          echo "$out" | grep -q "wasm tier/matrix guard: OK" || {
+          grep -q "wasm tier/matrix guard: OK" <<<"$out" || {
             echo "::error::the wasm guard exited 0 without reaching its verdict"
             exit 1
           }

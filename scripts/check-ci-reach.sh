@@ -242,11 +242,17 @@ join_continuations() {
 	'
 }
 
-# The `|| true` on the pipeline below is load-bearing and correct: under
-# `set -o pipefail` a `grep -v` that selects NO line exits 1, so a target whose
-# recipe prints no command would kill this script at the assignment in
-# own_commands() instead of being classified — and zero commands is a legitimate
-# measurement here, the `no gate` bucket exists for it.
+# The `|| true` on the pipeline below is NOT what keeps a recipe that prints no
+# command from killing this script, and saying so would be the wrong claim.
+# Measured: removing it changes nothing — neither on a clean tree nor under the
+# attacks described below — because own_commands() is invoked as
+# `$(own_commands ... | anchors | sort -u || true)`, so the function already runs
+# in a command substitution's subshell behind a `|| true` of its own. Bash also
+# suppresses `set -e` for the whole body of a function called as a non-last
+# member of an AND-OR list. This `|| true` is insurance against a future
+# call-site change, and zero commands is a legitimate measurement here — the
+# `no gate` bucket exists for it. Those are different claims; only the second
+# one is load-bearing today.
 #
 # What `|| true` must NOT absorb is `make -n` itself failing (#lzgrepcpipefail).
 # That is a STATUS, not a measurement, and it arrives here wearing the same
@@ -523,7 +529,22 @@ excused_ok=0
 while IFS= read -r target; do
 	[ -n "$target" ] || continue
 
+	# Watch the failure ledger across THIS target's dry runs. The aggregate rung
+	# at the bottom already refuses on any entry, but the row printed here would
+	# otherwise say `no gate` — asserting that the recipe runs no command when
+	# the truth is that it could not be read. Per target, not just for the root:
+	# `make -n check` can exit 0 while `make -n <member>` exits 2 (an ordinary
+	# goal-conditional prerequisite does it), so a root-only probe never sees the
+	# member drop out. Counted as UNREACHED, so the vacuity rung below and the
+	# reached/unreached tally both see it instead of it being excused by silence.
+	dry_run_marker="$(wc -l <"$dry_run_failures")"
 	target_anchors="$(own_commands "$target" | anchors | sort -u || true)"
+	if [ "$(wc -l <"$dry_run_failures")" != "$dry_run_marker" ]; then
+		unreached="$unreached$target"$'\n'
+		unreached_count=$((unreached_count + 1))
+		printf 'UNREADABLE %-32s `%s -n` failed; its recipe could not be listed\n' "$target" "$MAKE_BIN"
+		continue
+	fi
 
 	if [ -z "$target_anchors" ]; then
 		nogate="$nogate$target"$'\n'
@@ -585,8 +606,9 @@ if [ -s "$dry_run_failures" ]; then
 	echo "check-ci-reach: \`$MAKE_BIN -n\` failed for the target(s) below, so their recipes could not be listed:" >&2
 	cat "$dry_run_failures" >&2
 	echo "  A recipe that cannot be listed looks exactly like one that runs no command," >&2
-	echo "  and 'no gate' targets are not counted by the vacuity rung below — so this" >&2
-	echo "  refuses rather than let the audit shrink without saying so." >&2
+	echo "  and before this rung existed each one was filed 'no gate' — the one bucket" >&2
+	echo "  the vacuity rung below does not count — so the audit shrank and still" >&2
+	echo "  printed OK. They are counted as UNREADABLE/unreached now, and refused here." >&2
 	exit 1
 fi
 
