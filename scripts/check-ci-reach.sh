@@ -22,8 +22,8 @@
 #   the claim above is only worth what the closure is worth. The anchors prove CI
 #   runs what `check` runs; these prove `check` still runs what it is supposed to:
 #
-#     ORACLE          every target in the awk-derived closure has its commands in
-#                     `make -n check`'s command list. This is the load-bearing
+#     ORACLE          every target in the awk-derived closure has its anchors in
+#                     `make -n check`'s anchor list. This is the load-bearing
 #                     one — the closure is scanned out of Makefile SOURCE and
 #                     cannot see a make conditional, so without asking make the
 #                     two pins below are set-equal to a set that describes
@@ -721,7 +721,7 @@ ci_anchor="$(mktemp)"
 # report, one for the stderr of the probe in flight.
 probe_failures="$(mktemp)"
 probe_stderr="$(mktemp)"
-# The oracle's scratch: the ROOT's real command list, a second copy of it for the
+# The oracle's scratch: the ROOT's real anchor list, a second copy of it for the
 # reproducibility check, the target in flight, and the accumulated findings.
 oracle_root="$(mktemp)"
 oracle_root_again="$(mktemp)"
@@ -774,7 +774,7 @@ fi
 # set against another set that has stopped describing what runs.
 #
 # So the load-bearing check is this one: for every awk-discovered closure target,
-# its own commands must appear in `make -n $ROOT_TARGET`'s command list. That
+# its own anchors must appear in `make -n $ROOT_TARGET`'s anchor list. That
 # question goes to MAKE, which parses the conditionals. `make -n` only — never
 # `make -p`, which builds the default goal and dumps the whole environment,
 # every secret in the job with it.
