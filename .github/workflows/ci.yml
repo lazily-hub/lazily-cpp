@@ -127,6 +127,23 @@ jobs:
       # step would report a manifest that records only its own header. Count the
       # records BELOW the stamp instead — that is the number this step always
       # meant.
+      #
+      # Counted with awk, not `grep -c ... || true` (#lzgrepcpipefail). This step
+      # runs under `shell: bash`, i.e. `-e -o pipefail`, and `grep -c` answers a
+      # count of zero by EXITING 1 — so the `|| true` this line used to carry was
+      # load-bearing and correct: measured, dropping it made a stamp-only manifest
+      # kill the step at the assignment with NO message at all, and the ::error::
+      # below never printed. But `|| true` absorbs every other grep exit too. On a
+      # manifest that exists and cannot be READ, grep exits 2 with an empty stdout,
+      # `records` becomes the empty string, and `[[ "" -eq 0 ]]` is TRUE in bash —
+      # so the step reported "holds its run-id stamp and nothing else", naming a
+      # suite that appended nothing when the real fault was the evidence file.
+      # Measured: both states printed the same annotation and exited 1.
+      #
+      # awk separates them by construction: zero matching lines is a MEASUREMENT
+      # (prints 0, exits 0) while an unreadable file is a STATUS (exits 2), so the
+      # three states this step must tell apart — absent, unreadable, stamp-only —
+      # each get their own refusal and no `|| true` is needed anywhere.
       - name: Assert the coverage manifest was written (#lzguardsnotinci)
         shell: bash
         run: |
@@ -134,7 +151,10 @@ jobs:
             echo "::error::no conformance coverage manifest at $LAZILY_CONFORMANCE_MANIFEST — the fixture and scenario guards would audit nothing"
             exit 1
           fi
-          records=$(grep -c -v '^#' "$LAZILY_CONFORMANCE_MANIFEST" || true)
+          if ! records=$(awk '!/^#/ { n++ } END { print n + 0 }' "$LAZILY_CONFORMANCE_MANIFEST"); then
+            echo "::error::the conformance coverage manifest at $LAZILY_CONFORMANCE_MANIFEST exists but could not be read — this step refuses rather than reporting 0 records, because an unreadable manifest is not an unwritten one and the two must not share a diagnosis"
+            exit 1
+          fi
           if [[ "$records" -eq 0 ]]; then
             echo "::error::the conformance coverage manifest at $LAZILY_CONFORMANCE_MANIFEST holds its run-id stamp and nothing else — no conformance binary appended, so the fixture and scenario guards would audit nothing"
             exit 1

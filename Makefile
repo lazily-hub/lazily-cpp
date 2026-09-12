@@ -153,10 +153,32 @@ CLANG_FORMAT ?= uvx clang-format@$(CLANG_FORMAT_VERSION)
 FORMAT_SOURCES := $(shell find include src tests benches -type f \
 	\( -name '*.hpp' -o -name '*.cpp' \) 2>/dev/null)
 
+# The non-vacuity floor for the set above (#lzgrepcpipefail). make's $(shell)
+# DISCARDS exit status, so a `find` that failed — absent binary, a moved or
+# renamed source root, an invocation from the wrong tree — yields byte-for-byte
+# the same empty list as a tree carrying no sources. And an empty list is not an
+# empty check: `clang-format --dry-run -Werror` with no file arguments reads
+# STDIN, which under CI is not a terminal, so it exits 0. Measured on this tree
+# with `find` stubbed to exit 127: `make fmt` printed "checking 0 file(s)" and
+# exited 0 — a FALSE GREEN on the first gate in the CI job, the one shape the
+# rest of this Makefile's floors exist to refuse.
+#
+# Unlike MIN_FIXTURES / MIN_SCENARIOS this floor is deliberately NOT exact. Its
+# job is to separate "a set" from "the empty set", not to pin the set's size:
+# source files are added and removed continuously, and an exact floor here would
+# be a merge conflict rather than a guard. 130 files today.
+MIN_FORMAT_SOURCES ?= 100
+
 fmt:
 	@command -v uvx >/dev/null 2>&1 || { \
 	  echo "make fmt: uvx not found — it pins clang-format $(CLANG_FORMAT_VERSION);"; \
 	  echo "  install uv (https://docs.astral.sh/uv/) or override CLANG_FORMAT="; \
+	  exit 1; }
+	@test $(words $(FORMAT_SOURCES)) -ge $(MIN_FORMAT_SOURCES) || { \
+	  echo "make fmt: found $(words $(FORMAT_SOURCES)) source file(s), expected >= $(MIN_FORMAT_SOURCES)."; \
+	  echo "  This is a REFUSAL, not a skip. clang-format with no file arguments reads"; \
+	  echo "  stdin and exits 0, so this gate would report OK having judged nothing."; \
+	  echo "  Check that find(1) works and that include/ src/ tests/ benches/ are here."; \
 	  exit 1; }
 	@echo "clang-format $(CLANG_FORMAT_VERSION): checking $(words $(FORMAT_SOURCES)) file(s)"
 	@$(CLANG_FORMAT) --dry-run -Werror $(FORMAT_SOURCES)

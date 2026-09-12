@@ -242,8 +242,42 @@ join_continuations() {
 	'
 }
 
+# The `|| true` on the pipeline below is load-bearing and correct: under
+# `set -o pipefail` a `grep -v` that selects NO line exits 1, so a target whose
+# recipe prints no command would kill this script at the assignment in
+# own_commands() instead of being classified — and zero commands is a legitimate
+# measurement here, the `no gate` bucket exists for it.
+#
+# What `|| true` must NOT absorb is `make -n` itself failing (#lzgrepcpipefail).
+# That is a STATUS, not a measurement, and it arrives here wearing the same
+# clothes: an empty command list. An empty list files the target under
+# `no gate`, which is the ONE bucket the vacuity rung at the bottom does not
+# count — so a target whose recipe could not be listed has its CI-reach
+# obligation skipped rather than failed, and the guard still prints OK for the
+# rest. Measured both shapes: with MAKE pointed at a missing binary all ten
+# closure targets read `no gate` and the refusal blamed the Makefile's structure
+# ("'check' has no prerequisite target carrying a gate") while `2>/dev/null`
+# discarded the one line that named the real cause; with a wrapper failing for a
+# single target, `test-interop-peer` — the target #lzinteroppeerci exists for —
+# was filed `no gate` and never audited, and the run went red for an unrelated
+# target instead.
+#
+# So make's status is recorded in a file rather than returned. own_commands() is
+# called inside a command substitution, so a `return 1` or an `exit` here lands
+# in a subshell and the caller's own `|| true` swallows it; a file is the one
+# channel out. make's stderr is captured with it, because the discarded
+# diagnostic was the whole difference between a correct verdict and a wrong one.
 dry_run() {
-	"$MAKE_BIN" -n "$@" 2>/dev/null | grep -v -e '^make\[' -e '^make:' | join_continuations || true
+	local out rc=0
+	out="$("$MAKE_BIN" -n "$@" 2>"$dry_run_stderr")" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		{
+			printf '  - `%s -n %s` exited %s\n' "$MAKE_BIN" "$*" "$rc"
+			sed -e 's/^/      /' "$dry_run_stderr"
+		} >>"$dry_run_failures"
+		return 0
+	fi
+	printf '%s\n' "$out" | grep -v -e '^make\[' -e '^make:' | join_continuations || true
 }
 
 own_commands() {
@@ -415,7 +449,11 @@ anchors() {
 
 ci_raw="$(mktemp)"
 ci_anchor="$(mktemp)"
-trap 'rm -f "$ci_raw" "$ci_anchor"' EXIT
+# Where dry_run() records a `make -n` that FAILED, so the empty command list it
+# produced cannot be read as "this recipe runs nothing". See dry_run() above.
+dry_run_failures="$(mktemp)"
+dry_run_stderr="$(mktemp)"
+trap 'rm -f "$ci_raw" "$ci_anchor" "$dry_run_failures" "$dry_run_stderr"' EXIT
 ci_commands "${workflows[@]}" >"$ci_raw"
 anchors <"$ci_raw" | sort -u >"$ci_anchor"
 
@@ -534,6 +572,23 @@ while IFS= read -r target; do
 	[ -n "$target" ] || continue
 	printf 'no gate  %-32s recipe runs no checkable command\n' "$target"
 done <<<"$nogate"
+
+# A recipe this guard could not LIST is a recipe it did not audit, and the
+# `no gate` line printed for it above says the opposite (#lzgrepcpipefail).
+# Refuse, with make's own stderr, and refuse HERE — ahead of the vacuity rung
+# below and of the reached/unreached verdict, because both of those report the
+# DOWNSTREAM symptom of an unlistable recipe. Measured before this rung existed:
+# an unrunnable `$MAKE_BIN` emptied every command list and the vacuity rung
+# blamed the Makefile's structure, which is the wrong subject and the wrong fix.
+if [ -s "$dry_run_failures" ]; then
+	echo >&2
+	echo "check-ci-reach: \`$MAKE_BIN -n\` failed for the target(s) below, so their recipes could not be listed:" >&2
+	cat "$dry_run_failures" >&2
+	echo "  A recipe that cannot be listed looks exactly like one that runs no command," >&2
+	echo "  and 'no gate' targets are not counted by the vacuity rung below — so this" >&2
+	echo "  refuses rather than let the audit shrink without saying so." >&2
+	exit 1
+fi
 
 # A guard that examined nothing must not report OK — the same vacuity rule the
 # conformance guards apply (#lzvacuousrun).
