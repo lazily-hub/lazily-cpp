@@ -1782,6 +1782,84 @@ if [ "$scoped_count" -gt 0 ]; then
 	fi
 fi
 
+# ── the PINNED DOMAIN (#reversereachdirection) ────────────────────────────
+#
+# The left-hand side of the totality rung below is derived from the PINS —
+# EXPECTED_CLOSURE_TARGETS minus EXPECTED_NO_GATE_TARGETS — and not from a
+# variable this loop fills. lazily-kt's rule, and it is the general form of the
+# mistake this binding made when it inferred the reach mode from the complement
+# of the step pin: every cell must terminate in a pin, or the equation can hold
+# VACUOUSLY over a domain the audited code shrank.
+#
+# Measured here before adopting it. `gated` is accumulated inside the loop, so a
+# probe injected one line ABOVE that accumulation puts the member in no cell AND
+# in no domain, and the by-name totality rung passes exactly as kt describes.
+# cpp survived both of kt's shapes anyway, but only because each had to disturb
+# something else that IS pinned:
+#
+#   reached++ and no cell     caught by the partition ARITHMETIC, whose
+#                             right-hand side is the independently accumulated
+#                             verdict count — the branch had to claim `reached`
+#                             to look reached, and that is what gave it away.
+#   fake the `no gate` bucket caught by EXPECTED_NO_GATE_TARGETS, a pin.
+#
+# Surviving because the attacker had to touch a pin is not the same as checking
+# the property, so the domain is now pinned and the cells are counted against
+# it. `no gate` is one of the five cells rather than an omission: a member whose
+# recipe was neutered lands there legitimately as far as THIS rung is concerned,
+# and EXPECTED_NO_GATE_TARGETS below is what refuses an unexpected one — which
+# keeps the neutered-recipe diagnosis with the rung that names it.
+#
+# NOTE, latent here and live in kt: this is stated over MEMBERS, not over pin
+# ENTRIES. kt's `test` carries two EXPECTED_GATE_STEPS entries, so its domain is
+# 6 members behind 7 entries and the arithmetic over entries is wrong by one.
+# cpp pins `target|job|step` with exactly one entry per member — enforced by the
+# duplicate-target rung in the pin validation above — so the two counts coincide
+# today. If a member ever needs two steps, count members here.
+pinned_domain=()
+for expected_target in "${EXPECTED_CLOSURE_TARGETS[@]}"; do
+	gateless=0
+	for expected_nogate in "${EXPECTED_NO_GATE_TARGETS[@]}"; do
+		if [ "$expected_nogate" = "$expected_target" ]; then
+			gateless=1
+			break
+		fi
+	done
+	[ "$gateless" -eq 1 ] || pinned_domain+=("$expected_target")
+done
+
+domain_errors=""
+for t in "${pinned_domain[@]:+${pinned_domain[@]}}"; do
+	cells=0
+	for u in "${excused_members[@]:+${excused_members[@]}}"; do [ "$t" = "$u" ] && cells=$((cells + 1)); done
+	for u in "${make_invoked[@]:+${make_invoked[@]}}"; do [ "$t" = "$u" ] && cells=$((cells + 1)); done
+	for u in "${scoped[@]:+${scoped[@]}}"; do [ "$t" = "$u" ] && cells=$((cells + 1)); done
+	while IFS= read -r u; do
+		[ -n "$u" ] || continue
+		[ "$t" = "$u" ] && cells=$((cells + 1))
+	done <<<"$unpinned"
+	while IFS= read -r u; do
+		[ -n "$u" ] || continue
+		[ "$t" = "$u" ] && cells=$((cells + 1))
+	done <<<"$nogate"
+	if [ "$cells" -ne 1 ]; then
+		domain_errors="$domain_errors  - '$t' is in the pinned gate-carrying domain and landed in $cells of the five cells (excused / make-invoked / step-pinned / unpinned / no gate)"$'\n'
+	fi
+done
+
+if [ -n "$domain_errors" ]; then
+	echo >&2
+	echo "check-ci-reach: the reach cells do not cover the PINNED gate-carrying domain:" >&2
+	printf '%s' "$domain_errors" >&2
+	echo "  This domain is EXPECTED_CLOSURE_TARGETS minus EXPECTED_NO_GATE_TARGETS, so it" >&2
+	echo "  comes from the pins rather than from anything this loop accumulated. A member" >&2
+	echo "  in ZERO cells left the audit with no verdict — the shape that passes when the" >&2
+	echo "  domain is loop-derived, because the member is then missing from both sides of" >&2
+	echo "  the equation. A member in TWO was audited by one mechanism and credited by" >&2
+	echo "  another." >&2
+	exit 1
+fi
+
 # ── TOTALITY over the gated population, by NAME (#reversereachdirection) ──
 #
 # Every gate-carrying member lands in exactly one of four outcomes: excused,
