@@ -255,47 +255,34 @@ join_continuations() {
 # one is load-bearing today.
 #
 # What `|| true` must NOT absorb is `make -n` itself failing (#lzgrepcpipefail).
-# That is a STATUS, not a measurement, and it arrives here wearing the same
-# clothes: an empty command list. An empty list files the target under
-# `no gate`, which is the ONE bucket the vacuity rung at the bottom does not
-# count — so a target whose recipe could not be listed has its CI-reach
-# obligation skipped rather than failed, and the guard still prints OK for the
-# rest. Measured both shapes: with MAKE pointed at a missing binary all ten
-# closure targets read `no gate` and the refusal blamed the Makefile's structure
-# ("'check' has no prerequisite target carrying a gate") while `2>/dev/null`
-# discarded the one line that named the real cause; with a wrapper failing for a
-# single target, `test-interop-peer` — the target #lzinteroppeerci exists for —
-# was filed `no gate` and never audited, and the run went red for an unrelated
-# target instead.
+# That is a STATUS, not a measurement, and it arrived here wearing the same
+# clothes: an empty command list, which files the target under `no gate` — the
+# ONE bucket the vacuity rung at the bottom does not count. So a target whose
+# recipe could not be listed had its CI-reach obligation skipped rather than
+# failed and the guard still printed OK. Measured three ways, each at exit 0
+# before the probes below existed: a prerequisite with no rule
+# (`test-interop-peer: build no-such-prerequisite`) gave `OK — 8 reached, 2 no
+# gate`; a goal-conditional prerequisite on `conformance-coverage` gave the same
+# while `make -n check` itself still exited 0; and an `excuse:` line for it
+# changed nothing, because the emptiness test already preceded the excuse
+# consultation.
 #
-# So make's status is recorded in a file rather than returned. own_commands() is
-# called inside a command substitution, so a `return 1` or an `exit` here lands
-# in a subshell and the caller's own `|| true` swallows it; a file is the one
-# channel out. make's stderr is captured with it, because the discarded
-# diagnostic was the whole difference between a correct verdict and a wrong one.
-# dry_run_record gates the ledger. It is 1 for the SINGLE-target invocations,
-# whose failure is what turns a gate into silence, and 0 for the multi-goal
-# `dry_run "${deps[@]}"` probe below. That probe only computes how many output
-# lines belong to the prerequisites; when it fails the target is credited with
-# its prerequisites' anchors as well, which OVER-reports and therefore fails
-# closed. Recording it would redden a target for a condition that cannot hide a
-# gate, and it is the reason the first version of this rung named `check`
-# alongside the target that had actually dropped.
-dry_run_record=1
-
+# That status is NOT read here. It is read by two explicit `make -n` probes —
+# one for the root, one per closure target — that run in the MAIN shell BEFORE
+# any recipe is read, so an unreadable recipe is classified before it can look
+# like an empty one. This function could not do it: own_commands() is called
+# inside a command substitution, so a `return 1` or an `exit` from here reaches
+# only a subshell and the caller's own `|| true` swallows it.
+#
+# The multi-goal `dry_run "${deps[@]}"` call below is deliberately NOT probed.
+# `make -n` with several goals sets MAKECMDGOALS to the whole list, so a HEALTHY
+# goal-conditional prerequisite can behave differently there than in any real
+# invocation — probing it manufactures false reds. And there is no safety given
+# up: that call only measures how many output lines belong to the
+# prerequisites, so when it fails the target is credited with its
+# prerequisites' anchors as well, which OVER-reports and therefore fails closed.
 dry_run() {
-	local out rc=0
-	out="$("$MAKE_BIN" -n "$@" 2>"$dry_run_stderr")" || rc=$?
-	if [ "$rc" -ne 0 ]; then
-		if [ "$dry_run_record" = "1" ]; then
-			{
-				printf '  - `%s -n %s` exited %s\n' "$MAKE_BIN" "$*" "$rc"
-				sed -e 's/^/      /' "$dry_run_stderr"
-			} >>"$dry_run_failures"
-		fi
-		return 0
-	fi
-	printf '%s\n' "$out" | grep -v -e '^make\[' -e '^make:' | join_continuations || true
+	"$MAKE_BIN" -n "$@" 2>/dev/null | grep -v -e '^make\[' -e '^make:' | join_continuations || true
 }
 
 own_commands() {
@@ -315,11 +302,7 @@ own_commands() {
 		return
 	fi
 	local prefix
-	# own_commands already runs in a command substitution's subshell, so this
-	# assignment is scoped to this call and needs no restore.
-	dry_run_record=0
 	prefix="$(dry_run "${deps[@]}" | wc -l)"
-	dry_run_record=1
 	dry_run "$target" | tail -n +"$((prefix + 1))"
 }
 
@@ -471,11 +454,33 @@ anchors() {
 
 ci_raw="$(mktemp)"
 ci_anchor="$(mktemp)"
-# Where dry_run() records a `make -n` that FAILED, so the empty command list it
-# produced cannot be read as "this recipe runs nothing". See dry_run() above.
-dry_run_failures="$(mktemp)"
-dry_run_stderr="$(mktemp)"
-trap 'rm -f "$ci_raw" "$ci_anchor" "$dry_run_failures" "$dry_run_stderr"' EXIT
+# The `make -n` probes' scratch: one file collecting every failure for the final
+# report, one for the stderr of the probe in flight.
+probe_failures="$(mktemp)"
+probe_stderr="$(mktemp)"
+trap 'rm -f "$ci_raw" "$ci_anchor" "$probe_failures" "$probe_stderr"' EXIT
+
+# ── probe 1 of 2: the ROOT ─────────────────────────────────────────────────
+#
+# A hard exit, not a counted verdict. With the root's recipe graph unreadable
+# every target's command list comes back empty, so every one of them files as
+# `no gate` and the guard reports OK having audited nothing — measured: with
+# MAKE pointed at a missing binary all ten closure targets read `no gate` and
+# the vacuity rung then blamed the Makefile's structure, the wrong subject and
+# the wrong fix, while `2>/dev/null` inside dry_run discarded the one line that
+# named the real cause. An unreadable root does not mean one target dropped, it
+# means no verdict below would mean anything, so it is reported as such and
+# make's own stderr is printed verbatim.
+root_probe_rc=0
+"$MAKE_BIN" -n "$ROOT_TARGET" >/dev/null 2>"$probe_stderr" || root_probe_rc=$?
+if [ "$root_probe_rc" -ne 0 ]; then
+	echo "check-ci-reach: \`$MAKE_BIN -n $ROOT_TARGET\` exited $root_probe_rc — make cannot read the recipe graph this guard audits:" >&2
+	sed -e 's/^/      /' "$probe_stderr" >&2
+	echo "  This is a hard failure, not a per-target finding. With the root unreadable every" >&2
+	echo "  target's command list comes back empty, every one of them files as 'no gate', and" >&2
+	echo "  a guard that audited nothing reports OK." >&2
+	exit 1
+fi
 ci_commands "${workflows[@]}" >"$ci_raw"
 anchors <"$ci_raw" | sort -u >"$ci_anchor"
 
@@ -547,34 +552,42 @@ excused_ok=0
 while IFS= read -r target; do
 	[ -n "$target" ] || continue
 
-	# Watch the failure ledger across THIS target's dry runs. The aggregate rung
-	# at the bottom already refuses on any entry, but the row printed here would
-	# otherwise say `no gate` — asserting that the recipe runs no command when
-	# the truth is that it could not be read. Per target, not just for the root:
-	# `make -n check` can exit 0 while `make -n <member>` exits 2 (an ordinary
-	# goal-conditional prerequisite does it), so a root-only probe never sees the
-	# member drop out.
+	# ── probe 2 of 2: THIS target, ahead of the recipe read ───────────────
 	#
-	# This verdict comes FIRST and `continue`s, ahead of the anchor emptiness
-	# test below and ahead of the excuse consultation further down. Both are
-	# laundering routes: an unreadable recipe yields no anchors, so without the
-	# `continue` the same target would also be filed `no gate`; and an
-	# `excuse:` line in the conf would print `excused <target>` at exit 0. An
-	# excuse is a claim about what CI RUNS, never a licence for a Makefile make
-	# cannot READ.
+	# Per target, not just for the root: `make -n check` can exit 0 while
+	# `make -n <member>` exits 2 — an ordinary goal-conditional prerequisite
+	# does exactly that — so a root-only probe never sees the member drop out.
+	# Falsified separately: with only this verdict reverted, the
+	# goal-conditional and excuse attacks both go green again at exit 0.
+	#
+	# Placed BEFORE the recipe read and BEFORE every classification below, with
+	# a `continue`, so the target can appear as UNREADABLE and as nothing else.
+	# Two laundering routes need that, and they are not the same one: an
+	# unreadable recipe yields no anchors, so the emptiness test files it
+	# `no gate`; and an `excuse:` line would have the conf vouch for it. On this
+	# binding the measured line was `no gate`, never `excused`, because the
+	# emptiness test already sat ahead of the excuse consultation — the excuse
+	# never had to be believed for the gate to vanish. An excuse is a claim
+	# about what CI RUNS, never a licence for a Makefile make cannot READ.
 	#
 	# Counted in its own bucket rather than appended to `unreached`: that list
-	# prints under a "no CI run: step matches" heading and points the reader at
+	# prints under a "no CI run: step matches" heading and sends the reader to
 	# the workflow file, which is the wrong place to look for a Makefile that
 	# will not parse. The count still feeds the vacuity floor below.
-	dry_run_marker="$(wc -l <"$dry_run_failures")"
-	target_anchors="$(own_commands "$target" | anchors | sort -u || true)"
-	if [ "$(wc -l <"$dry_run_failures")" != "$dry_run_marker" ]; then
+	probe_rc=0
+	"$MAKE_BIN" -n "$target" >/dev/null 2>"$probe_stderr" || probe_rc=$?
+	if [ "$probe_rc" -ne 0 ]; then
+		{
+			printf '  - `%s -n %s` exited %s\n' "$MAKE_BIN" "$target" "$probe_rc"
+			sed -e 's/^/      /' "$probe_stderr"
+		} >>"$probe_failures"
 		unreadable="$unreadable$target"$'\n'
 		unreadable_count=$((unreadable_count + 1))
-		printf 'UNREADABLE %-32s `%s -n` failed; its recipe could not be listed\n' "$target" "$MAKE_BIN"
+		printf 'UNREADABLE %-32s `%s -n %s` exited %s; its recipe cannot be read\n' "$target" "$MAKE_BIN" "$target" "$probe_rc"
 		continue
 	fi
+
+	target_anchors="$(own_commands "$target" | anchors | sort -u || true)"
 
 	if [ -z "$target_anchors" ]; then
 		nogate="$nogate$target"$'\n'
@@ -631,10 +644,10 @@ done <<<"$nogate"
 # DOWNSTREAM symptom of an unlistable recipe. Measured before this rung existed:
 # an unrunnable `$MAKE_BIN` emptied every command list and the vacuity rung
 # blamed the Makefile's structure, which is the wrong subject and the wrong fix.
-if [ -s "$dry_run_failures" ]; then
+if [ -s "$probe_failures" ]; then
 	echo >&2
 	echo "check-ci-reach: \`$MAKE_BIN -n\` failed for the target(s) below, so their recipes could not be listed:" >&2
-	cat "$dry_run_failures" >&2
+	cat "$probe_failures" >&2
 	echo "  A recipe that cannot be listed looks exactly like one that runs no command," >&2
 	echo "  and before this rung existed each one was filed 'no gate' — the one bucket" >&2
 	echo "  the vacuity rung below does not count — so the audit shrank and still" >&2
