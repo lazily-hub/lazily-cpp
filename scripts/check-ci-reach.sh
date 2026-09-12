@@ -822,7 +822,11 @@ fi
 #
 #   * ORDER. Prerequisites are a SET here, in the pin and in the oracle alike.
 #     Nothing in this file distinguishes `check: test conformance-coverage` from
-#     `check: conformance-coverage test`.
+#     `check: conformance-coverage test`. Measured: REVERSING the whole `check:`
+#     list leaves this guard's output identical as a set and changes only the
+#     ORDER of its own `reached` lines, at exit 0. That is the correct verdict —
+#     the real ordering lives in the `conformance-coverage: test` edge, not in
+#     the list — but it is also the proof that the list's order is unpinned.
 #
 #   * EDGES between two targets that both stay in the closure. This is the
 #     sharper form of the order gap and it is the one that matters on this
@@ -837,16 +841,41 @@ fi
 #
 #     That edge is this binding's substitute for a completion marker: it has no
 #     marker of its own, and `conformance-coverage: test` plus the coverage
-#     guard's record count is what stands in for one. So of those two halves,
-#     the RECORD COUNT is the half anything enforces. Measured with the edge
-#     gone: `make conformance-coverage` alone exits 2 on the run-id stamp
-#     ("stale or unstamped evidence"), and `make -j16 check` exited 2 on three
-#     consecutive runs with "only 3 distinct conformance fixtures replayed,
-#     expected >= 143" — the coverage guard reading a fresh-stamped but PARTIAL
-#     manifest while ctest was still running (control: edge restored, `make -j16
-#     check` exits 0). So it fails CLOSED, but it fails closed by losing a RACE,
-#     not by a rule. The edge is what makes that race not exist. Nothing in this
-#     file protects it, and this pin should not be read as though it did.
+#     guard's record count is what stands in for one. So which half actually
+#     enforces it? Measured with the edge gone, over every way the coverage
+#     guard can be reached — the question being whether it can ever read
+#     stale-but-present evidence and pass:
+#
+#       local, fresh id per invocation      exit 2  "STALE — written by a
+#                                                    different run"
+#       CI-shaped, NEW job id, complete     exit 2  same; the stamp catches the
+#         manifest from an EARLIER job               cross-run case
+#       CI-shaped, SAME job id, manifest    exit 2  "only 0 distinct
+#         stamped by the job's own                   conformance fixtures
+#         truncation step, no suite run              replayed, expected >= 143"
+#                                                    plus every area named
+#       CI-shaped, SAME job id, PARTIAL     exit 2  "only 3 ... expected >= 143"
+#         manifest                                   and "only 23 distinct
+#                                                    scenarios, expected >= 151"
+#       CI-shaped, SAME job id, COMPLETE    exit 0  correct — the suite really
+#         manifest from an in-job suite              did run in that job
+#       `make -j16 check`, 3 consecutive    exit 2  the guard reading a
+#         runs (control with the edge                fresh-stamped but PARTIAL
+#         restored: exit 0)                          manifest mid-ctest
+#
+#     So there is NO passing path on stale evidence. The stamp closes the
+#     cross-run case and the record count closes the same-job-but-no-suite case,
+#     and the two are jointly exhaustive over "a manifest that does not describe
+#     a complete run". This revises the framing from last cycle: it was noted
+#     then that inside a CI job the stamp proves same-job and not that the Test
+#     step ran, which is true — rows three and four above are exactly that gap
+#     exercised — but it cannot produce a false green on its own, because the
+#     record count independently requires a complete suite's output.
+#
+#     Therefore the substitute is protected by EVIDENCE, not by this graph edge.
+#     The edge buys ordering DETERMINISM — without it `make -j16 check` fails on
+#     a race it is merely likely to lose — and nothing in this file protects the
+#     edge itself. Do not read this pin as though it did.
 #   * A recipe SWAPPED for another gate CI already runs (js's Attack 4:
 #     `test-interop-peer:` running the conformance script instead of the peer).
 #     Every count holds, the anchors still match a real CI step, the verdict is
