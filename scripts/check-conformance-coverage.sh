@@ -886,9 +886,10 @@ if os.path.isfile(manifest):
                 "       found  run id: %s\n"
                 "       wanted run id: %s\n"
                 "       The fixture, scenario and assertion-block magnitudes below\n"
-                "       would all be asserted from that other run's evidence. Re-run\n"
-                "       the suite (`make conformance-coverage` builds, runs ctest and\n"
-                "       audits in one invocation) rather than auditing this file."
+                "       would all be asserted from that other run's evidence. Restore\n"
+                "       the `conformance-coverage: test` prerequisite if it was removed,\n"
+                "       then run `make conformance-coverage`; that edge rebuilds and runs\n"
+                "       ctest before this script audits the new evidence."
                 % (manifest, found or "(empty)", wanted.strip()),
                 file=sys.stderr,
             )

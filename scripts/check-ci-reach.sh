@@ -846,7 +846,12 @@ anchors() {
 			for (j = 1; j <= m; j++) {
 				tok = parts[j]
 				if (tok == "" || tok == "\\") continue
-				if (tok ~ /^[0-9]*>>?$/ || tok == "<" || tok ~ /^[0-9]+>&[0-9]+$/) break
+				# A redirect and its target can be one shell token (`>/dev/null`),
+				# not only the two-token `> /dev/null` form. Stop before path
+				# normalization can turn the target into a fake `null` argument
+				# (#twopreexisting). This also covers fd-prefixed and input
+				# redirects; everything after a redirect is outside the anchor.
+				if (tok ~ /^[0-9]*(>>?|<)/) break
 				if (!started) {
 					if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
 					started = 1
@@ -891,6 +896,24 @@ anchors() {
 		}
 	'
 }
+
+# Test-only seam for the normalizer above. Ordinary guard invocations take no
+# arguments, so an explicit mode exercises the production awk without an
+# environment variable that could accidentally make CI skip the audit.
+if [ "${1:-}" = "--anchors-stdin" ]; then
+	[ "$#" -eq 1 ] || { echo "check-ci-reach: --anchors-stdin takes no arguments" >&2; exit 2; }
+	anchors
+	exit 0
+fi
+if [ "$#" -ne 0 ]; then
+	echo "usage: scripts/check-ci-reach.sh [--anchors-stdin]" >&2
+	exit 2
+fi
+
+# Exercise the exact normalizer and cross-file diagnostic contract before the
+# reach audit. Keeping this inside the guard means CI's direct script invocation
+# runs the regressions without adding a second Makefile recipe anchor.
+bash ./scripts/test-ci-reach-quirks.sh
 
 # --------------------------------------------------------------------- matching
 
