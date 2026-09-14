@@ -15,7 +15,8 @@
 #   ../lazily-spec/conformance/                          the canonical corpus
 #
 # Failures detected:
-#   1. a tier manifest is missing or below its floor — that tier stopped running
+#   1. a tier manifest is missing, unreadable, or below its floor — that tier
+#      stopped running or its evidence cannot be audited
 #   2. a tier built runners the conf does not assign to it, or vice versa
 #   3. a canonical family with NO wasm replay and no reason in
 #      WASM_ABSENT_REASONS — a silent gap, which is how a matrix starts lying
@@ -48,6 +49,8 @@ wasm_md="$repo_root/WASM.md"
 
 core_manifest="${CORE_MANIFEST:-$repo_root/build_wasm_core/conformance-fixtures-loaded.txt}"
 threaded_manifest="${THREADED_MANIFEST:-$repo_root/build_wasm_threaded/conformance-fixtures-loaded.txt}"
+core_build_dir="${CORE_BUILD_DIR:-$repo_root/build_wasm_core}"
+threaded_build_dir="${THREADED_BUILD_DIR:-$repo_root/build_wasm_threaded}"
 
 write_mode=0
 [[ "${1:-}" == "--write" ]] && write_mode=1
@@ -86,17 +89,25 @@ fail() { echo "ERROR: $*" >&2; status=1; }
 
 # ── read the manifests ──────────────────────────────────────────────────────
 #
-# Manifest lines beginning with @ are the per-scenario ledger; the fixture-level
-# lines are the rest. Counting the @ lines as fixtures would inflate every cell.
-# The `|| true` is load-bearing. Under `set -euo pipefail`, `grep` exits 1 when
-# it selects no lines, so on an EMPTY manifest this function would abort the
-# whole script before the floor check below could report why — the guard would
-# fail closed but silently, and "exit 1 with no message" is indistinguishable
-# from a crash. The empty case is precisely the one that needs a diagnostic.
+# Manifest lines beginning with @ are the per-scenario ledger and lines beginning
+# with # are metadata/comments; fixture-level lines are the rest. Counting either
+# control channel as fixtures inflates every cell (#lazilycppcheck).
+#
+# grep's exit 1 means "selected nothing" and is the valid empty-manifest case.
+# Any other reader error must propagate to require_manifest: folding permission
+# or I/O failure into empty evidence produces the wrong "replayed 0" diagnosis.
 fixtures_of() {
-  local manifest="$1"
-  [[ -f "$manifest" ]] || return 0
-  { grep -v '^@' "$manifest" || true; } | sed '/^$/d' | sort -u
+  local manifest="$1" selected rc
+  [[ -f "$manifest" ]] || return 1
+  [[ -r "$manifest" ]] || return 2
+  if selected="$(grep -Ev '^[#@]' "$manifest")"; then
+    :
+  else
+    rc=$?
+    (( rc == 1 )) || return "$rc"
+    selected=""
+  fi
+  printf '%s\n' "$selected" | sed '/^$/d' | sort -u
 }
 
 require_manifest() {
@@ -105,12 +116,79 @@ require_manifest() {
     fail "$label manifest not found at '$manifest'. Run 'make wasm-$label' first — an absent manifest is not an empty tier, it is an unrun one."
     return
   fi
-  local n
-  n="$(fixtures_of "$manifest" | wc -l)"
+  if [[ ! -r "$manifest" ]]; then
+    fail "$label manifest exists at '$manifest' but is not readable. Fix its permissions or rerun 'make wasm-$label'; unreadable evidence is not an empty tier."
+    return
+  fi
+  local fixtures rc n
+  if fixtures="$(fixtures_of "$manifest")"; then
+    :
+  else
+    rc=$?
+    fail "$label manifest at '$manifest' could not be read (reader exit $rc). Fix the evidence source or rerun 'make wasm-$label'; unreadable evidence is not an empty tier."
+    return
+  fi
+  n="$(printf '%s\n' "$fixtures" | sed '/^$/d' | wc -l)"
   if (( n < floor )); then
     fail "$label tier replayed $n distinct fixtures, below the floor of $floor. A drop means a replay stopped running; do not lower the floor to go green."
   fi
 }
+
+# Both halves. A runner in the conf that the tier did not build would be
+# reported as covered while contributing nothing; a runner the tier built that
+# the conf does not list would be invisible in the matrix.
+check_tier_targets() {
+  local tier="$1" build_dir="$2"
+  [[ -d "$build_dir" ]] || return 0
+  local tests_dir="$build_dir/tests"
+  if [[ ! -d "$tests_dir" ]]; then
+    fail "tier '$tier' build directory exists at '$build_dir', but its tests directory is missing. This tier is configured but not built; run 'make wasm-$tier'."
+    return
+  fi
+  local declared built rc
+  declared="$(awk -F'|' -v t="$tier" '!/^[[:space:]]*#/ && NF>=3 && $1==t {print $2}' "$tier_conf" | sort -u)"
+  if built="$(find "$tests_dir" -maxdepth 1 -name 'test_*.js' -printf '%f\n' \
+           | sed 's/\.js$//' | sort -u)"; then
+    :
+  else
+    rc=$?
+    fail "tier '$tier' tests directory at '$tests_dir' could not be enumerated (reader exit $rc); its built-runner set is unknown."
+    return
+  fi
+  local only_declared only_built
+  only_declared="$(comm -23 <(echo "$declared") <(echo "$built"))"
+  only_built="$(comm -13 <(echo "$declared") <(echo "$built"))"
+  if [[ -n "$only_declared" ]]; then
+    fail "wasm-tiers.conf assigns these to tier '$tier' but the build produced no module for them: $(echo $only_declared)"
+  fi
+  if [[ -n "$only_built" ]]; then
+    fail "tier '$tier' built these runners but wasm-tiers.conf does not list them, so the matrix cannot report them: $(echo $only_built)"
+  fi
+}
+
+# Narrow regression seams exercise production functions without requiring an
+# emsdk build. Ordinary audit/write invocations retain their original interface.
+case "${1:-}" in
+  --fixtures-of)
+    [[ "$#" -eq 2 ]] || { echo "usage: $0 --fixtures-of MANIFEST" >&2; exit 2; }
+    fixtures_of "$2"
+    exit
+    ;;
+  --require-manifest)
+    [[ "$#" -eq 4 ]] || { echo "usage: $0 --require-manifest MANIFEST LABEL FLOOR" >&2; exit 2; }
+    status=0
+    require_manifest "$2" "$3" "$4"
+    exit "$status"
+    ;;
+  --check-tier-targets)
+    [[ "$#" -eq 3 ]] || { echo "usage: $0 --check-tier-targets TIER BUILD_DIR" >&2; exit 2; }
+    status=0
+    check_tier_targets "$2" "$3"
+    exit "$status"
+    ;;
+  ""|--write) ;;
+  *) echo "usage: $0 [--write]" >&2; exit 2 ;;
+esac
 
 # The corpus is checked BEFORE the manifests, and it is a hard FAILURE rather
 # than the SKIP it used to be (#lzcppsiblingskipvsfail). Both halves matter.
@@ -138,28 +216,8 @@ require_manifest "$threaded_manifest" threaded "$MIN_THREADED_FIXTURES"
 
 # ── the conf agrees with what was actually built ────────────────────────────
 #
-# Both halves. A runner in the conf that the tier did not build would be
-# reported as covered while contributing nothing; a runner the tier built that
-# the conf does not list would be invisible in the matrix.
-check_tier_targets() {
-  local tier="$1" build_dir="$2"
-  [[ -d "$build_dir" ]] || return 0
-  local declared built
-  declared="$(awk -F'|' -v t="$tier" '!/^[[:space:]]*#/ && NF>=3 && $1==t {print $2}' "$tier_conf" | sort -u)"
-  built="$(find "$build_dir/tests" -maxdepth 1 -name 'test_*.js' -printf '%f\n' 2>/dev/null \
-           | sed 's/\.js$//' | sort -u)"
-  local only_declared only_built
-  only_declared="$(comm -23 <(echo "$declared") <(echo "$built"))"
-  only_built="$(comm -13 <(echo "$declared") <(echo "$built"))"
-  if [[ -n "$only_declared" ]]; then
-    fail "wasm-tiers.conf assigns these to tier '$tier' but the build produced no module for them: $(echo $only_declared)"
-  fi
-  if [[ -n "$only_built" ]]; then
-    fail "tier '$tier' built these runners but wasm-tiers.conf does not list them, so the matrix cannot report them: $(echo $only_built)"
-  fi
-}
-check_tier_targets core "$repo_root/build_wasm_core"
-check_tier_targets threaded "$repo_root/build_wasm_threaded"
+check_tier_targets core "$core_build_dir"
+check_tier_targets threaded "$threaded_build_dir"
 
 # ── per-family counts ───────────────────────────────────────────────────────
 family_of() { [[ "$1" == */* ]] && echo "${1%%/*}" || echo "(root)"; }

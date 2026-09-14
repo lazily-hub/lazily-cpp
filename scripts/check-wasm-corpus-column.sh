@@ -45,6 +45,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+# The full wasm audit needs emsdk-produced manifests, but its input/refusal
+# behavior does not. Keep those regression probes on this toolchain-free CI path
+# so direct workflow invocations and `make check` both exercise them.
+bash "$repo_root/scripts/test-wasm-tier-guard.sh"
+
 # shellcheck source=lib/wasm-matrix.sh
 source "$repo_root/scripts/lib/wasm-matrix.sh"
 
