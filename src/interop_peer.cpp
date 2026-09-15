@@ -420,7 +420,7 @@ private:
     logical_ = 0;
     stdlib_.clear();
     return "{\"ok\":true,\"binding\":\"lazily-cpp\","
-           "\"version\":\"0.28.0\",\"protocol_version\":1,"
+           "\"version\":\"0.29.0\",\"protocol_version\":1,"
            "\"features\":[\"distributed_crdt\",\"stdlib_timer_v1\","
            "\"stdlib_timeout_v1\",\"stdlib_revision_barrier_v1\"],"
            // Both MUST-level frame codecs are implemented and replayed through
