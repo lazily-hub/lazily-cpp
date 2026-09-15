@@ -60,7 +60,8 @@
 #   its subcommands and flag NAMES (values dropped), with path arguments reduced to
 #   basenames and bare path globs discarded. A target is reached when EVERY one of
 #   its anchors is a subsequence of some CI command's token list, or when CI runs
-#   `make <target>` directly. Every, not any: a target that runs two gates and is
+#   `make <target>` or an ancestor whose closure contains it. Every, not any: a
+#   target that runs two gates and is
 #   half-covered by CI is a gap, and "any" would report it green.
 #
 #   Keeping flag names in the anchor is what makes the guard falsifiable rather
@@ -1374,6 +1375,39 @@ make_invokes() {
 	' "$ci_anchor"
 }
 
+# CI also reaches a target by invoking any ancestor whose prerequisite closure
+# contains it. This is definitional: `make check` runs every gate in `check`'s
+# closure, so reporting those gates unreachable is a false red.
+make_invokes_ancestor() {
+	local target="$1" ancestor
+	while IFS= read -r ancestor; do
+		[ -n "$ancestor" ] || continue
+		[ "$ancestor" = "$target" ] && continue
+		if make_invokes "$ancestor" && in_closure_of "$ancestor" "$target"; then
+			return 0
+		fi
+	done <<<"$closure"
+	return 1
+}
+
+# Breadth-first over the same prereqs_of relation used by the main closure.
+in_closure_of() {
+	local ancestor="$1" descendant="$2" seen="" queue="$ancestor" current prereq
+	while [ -n "$queue" ]; do
+		current="${queue%%$'\n'*}"
+		if [ "$current" = "$queue" ]; then queue=""; else queue="${queue#*$'\n'}"; fi
+		[ -n "$current" ] || continue
+		case $'\n'"$seen" in *$'\n'"$current"$'\n'*) continue;; esac
+		seen="$seen$current"$'\n'
+		[ "$current" = "$descendant" ] && return 0
+		while IFS= read -r prereq; do
+			[ -n "$prereq" ] || continue
+			queue="$queue$prereq"$'\n'
+		done < <(prereqs_of "$current")
+	done
+	return 1
+}
+
 is_excused() {
 	local t="$1" i
 	for i in "${!excused_targets[@]}"; do
@@ -1593,7 +1627,7 @@ while IFS= read -r target; do
 		excused_members[$excused_count]="$target"
 		excused_count=$((excused_count + 1))
 		excuse_hit=1
-		if ! make_invokes "$target"; then
+		if ! make_invokes "$target" && ! make_invokes_ancestor "$target"; then
 			while IFS= read -r a; do
 				[ -n "$a" ] || continue
 				if ! anchor_reached "$a"; then
@@ -1612,7 +1646,7 @@ while IFS= read -r target; do
 		continue
 	fi
 
-	if make_invokes "$target"; then
+	if make_invokes "$target" || make_invokes_ancestor "$target"; then
 		make_invoked[$make_invoked_count]="$target"
 		make_invoked_count=$((make_invoked_count + 1))
 		# CI runs it through make, so there is no independent CI-side spelling
