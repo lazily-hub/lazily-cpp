@@ -98,6 +98,7 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `coordination` | 5 | 5 | — |  |
 | `crdt-tree` | 1 | 1 | — |  |
 | `distributed` | 2 | — | — | not on wasm — resolves ShmBlobRef through transport.hpp's ShmBackend — POSIX shm_open/mmap has no wasm implementation |
+| `durable-owner` | 4 | — | — | not on wasm — Phase 0 durable-owner contracts are not implemented in lazily-cpp on ANY target — a binding gap, not a wasm limit |
 | `egress` | 5 | — | 1 | needs -pthread |
 | `familysync` | 1 | — | 1 | needs -pthread |
 | `ingress` | 8 | — | 8 | needs -pthread |
@@ -119,7 +120,7 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **156** | **94** | **47** | |
+| **total** | **160** | **94** | **47** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits

@@ -82,6 +82,7 @@ WASM_ABSENT_REASONS=(
   "(root)|the top-level snapshot_*/delta_* frames are replayed by the ipc and reliable-sync suites, both native-only"
   "protobuf|lazily-cpp ships no protobuf codec in ANY target, native included — a binding gap, not a wasm limit"
   "agent-doc|agent-doc session fixtures are not a lazily library family and no binding replays them"
+  "durable-owner|Phase 0 durable-owner contracts are not implemented in lazily-cpp on ANY target — a binding gap, not a wasm limit"
 )
 
 status=0

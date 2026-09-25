@@ -1037,6 +1037,8 @@ EXCUSED_AREAS=(
   # IPC wire snapshots of the agent-doc state projection — an application schema
   # carried on the IPC plane, not a binding-level reactive concern.
   agent-doc
+  # Phase 0 durable-owner contracts are not implemented in this binding.
+  durable-owner
   # The experimental protobuf-v1 generator pilot is Rust/Kotlin/TypeScript.
   protobuf
 )
@@ -1054,6 +1056,11 @@ KNOWN_UNCOVERED=(
   # application schema on the IPC plane rather than a binding-level concern.
   "agent-doc/delta_agent_doc_state.json"
   "agent-doc/snapshot_agent_doc_state.json"
+  # durable-owner — Phase 0 contracts are not implemented in this binding.
+  "durable-owner/atomic_crash_boundary.json"
+  "durable-owner/inbox_outbox_deduplication.json"
+  "durable-owner/ordered_replay.json"
+  "durable-owner/projection_fingerprint.json"
   # Register CRDTs (LWW / MV / PnCounter + the CellCrdt projection bit) are
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
