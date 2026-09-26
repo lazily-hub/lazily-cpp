@@ -164,6 +164,10 @@ add_executable(test_capability_conformance test_capability_conformance.cpp)
 target_link_libraries(test_capability_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(CapabilityConformance test_capability_conformance)
 
+add_executable(test_durable_client test_durable_client.cpp)
+target_link_libraries(test_durable_client PRIVATE lazily)
+lazily_add_spec_conformance_test(DurableClient test_durable_client)
+
 # Replays ../lazily-spec/conformance/codec/nodeid_exact_range.json through BOTH
 # codecs (#lzspecdecoderbound). The clause it carries — a decoder that cannot
 # represent a received identifier exactly MUST reject the frame rather than

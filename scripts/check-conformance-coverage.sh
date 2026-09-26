@@ -1002,6 +1002,7 @@ collections
 coordination
 crdt-tree
   distributed
+  durable-client
   egress
   familysync
 ingress

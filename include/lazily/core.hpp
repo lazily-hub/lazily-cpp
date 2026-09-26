@@ -64,6 +64,7 @@
 
 #include <lazily/cell.hpp>
 #include <lazily/collections.hpp>
+#include <lazily/durable_client.hpp>
 #include <lazily/keyed_order.hpp>
 #include <lazily/latest_durable_projection_core.hpp>
 #include <lazily/statechart.hpp>

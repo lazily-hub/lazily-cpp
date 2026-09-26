@@ -1,6 +1,8 @@
 #ifndef LAZILY_IPC_HPP
 #define LAZILY_IPC_HPP
 
+#include <lazily/durable_client.hpp>
+
 #include <lazily/hlc.hpp>
 #include <lazily/types.hpp>
 
@@ -640,6 +642,7 @@ struct BindingCapabilities {
   bool permissions = true;
   bool capability_negotiation = true;
   bool async_ctx = true;
+  DurableTierDeclaration durable_tiers{};
 };
 
 struct CapabilityCheck {
