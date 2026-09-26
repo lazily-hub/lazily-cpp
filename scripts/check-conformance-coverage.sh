@@ -975,8 +975,11 @@ fi
 # emptied its three KNOWN_UNCOVERED entries. Set to what the guard REPORTED
 # after the change, not to 140+3.
 #
-# Confirmed by a local green `make check`. Verified exact: 144 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-143}"
+# 143 -> 144: durable-client/envelope_v1.json is replayed by
+# tests/test_durable_client.cpp.
+#
+# Confirmed by a local green `make check`. Verified exact: 145 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-144}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -1480,7 +1483,7 @@ fi
 # canonical corpus DIRECTORY LISTING under $conformance_dir, and (b) this
 # binding's own committed `KNOWN_UNCOVERED` ledger — the same subtraction
 # MIN_FIXTURES is checked against one rung up. Listing minus ledger is the
-# opened set (143 fixtures today, exactly what MIN_FIXTURES pins), and the walk
+# opened set (144 fixtures today, exactly what MIN_FIXTURES pins), and the walk
 # below inventories that set's assertion blocks the way
 # `declare_assertion_block` inventories them at load time.
 #
