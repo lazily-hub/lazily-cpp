@@ -544,6 +544,10 @@ held to the same behaviour by a shared conformance corpus.
 | [`lazily-dart`][dart] | Dart / Flutter |
 | [`lazily-react`][react] | React / Preact bindings layered over [`lazily-js`][js] — not a separate language binding |
 
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
 [spec]: https://github.com/lazily-hub/lazily-spec
 [formal]: https://github.com/lazily-hub/lazily-formal
 [rs]: https://github.com/lazily-hub/lazily-rs
