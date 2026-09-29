@@ -369,6 +369,17 @@ void rejection_units() {
   REQUIRE(rejected, "constructor must reject a deterministic stub");
 
   pair = valid_pair();
+  pair.adapters.front().kind = static_cast<SimConsumerAdapterKind>(99);
+  rejected = false;
+  try {
+    SimConsumerTestkit invalid({"memory", {SimConsumerAdapterKind::Postgres}, {}, pair.adapters});
+    (void)invalid;
+  } catch (const SimConsumerConformanceError&) {
+    rejected = true;
+  }
+  REQUIRE(rejected, "constructor must reject an unknown adapter kind");
+
+  pair = valid_pair();
   SimConsumerTestkit testkit({"memory", {SimConsumerAdapterKind::Postgres}, {}, pair.adapters});
   SimConsumerGeneratedScenario scenario{
       "consumer_simulation",

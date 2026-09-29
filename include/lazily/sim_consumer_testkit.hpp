@@ -199,6 +199,16 @@ inline bool is_real(SimConsumerAdapterKind kind) {
          kind == SimConsumerAdapterKind::ExternalProcess;
 }
 
+inline bool valid_adapter_kind(SimConsumerAdapterKind kind) {
+  return kind == SimConsumerAdapterKind::InMemory || kind == SimConsumerAdapterKind::Postgres ||
+         kind == SimConsumerAdapterKind::Nats || kind == SimConsumerAdapterKind::ExternalProcess;
+}
+
+inline bool valid_determinism(SimConsumerPortDeterminism determinism) {
+  return determinism == SimConsumerPortDeterminism::Deterministic ||
+         determinism == SimConsumerPortDeterminism::Nondeterministic;
+}
+
 inline bool is_legacy_real(SimConsumerAdapterKind kind) {
   return kind == SimConsumerAdapterKind::Postgres || kind == SimConsumerAdapterKind::Nats;
 }
@@ -294,6 +304,7 @@ inline std::string validate_scenario(const SimConsumerGeneratedScenario& scenari
 }
 
 inline void validate_adapter(const SimConsumerAdapter& adapter) {
+  if (!valid_adapter_kind(adapter.kind)) fail("adapter has an unknown kind");
   require_id(adapter.id, "adapter id");
   require_id(adapter.protocol_id, "adapter protocol id");
   require_id(adapter.reducer_id, "adapter reducer id");
@@ -304,6 +315,7 @@ inline void validate_adapter(const SimConsumerAdapter& adapter) {
   for (const auto& port : adapter.ports) {
     require_id(port.id, "adapter port id");
     require_id(port.kind, "adapter port kind");
+    if (!valid_determinism(port.determinism)) fail("adapter port has unknown determinism");
     if (!seen_ports.insert(port.id).second) fail("adapter has a duplicate port");
     if (port.stubbed && port.determinism != SimConsumerPortDeterminism::Nondeterministic)
       fail("adapter stubs a deterministic port");
