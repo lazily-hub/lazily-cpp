@@ -118,6 +118,13 @@ A family cell summarises 82 feature rows. For row-level marks, per-cell notes, a
 CRDT convergence and the wire protocol are pinned by the shared conformance fixtures
 and JSON Schemas in `lazily-spec` and the Lean models in `lazily-formal`.
 
+`<lazily/sim_consumer_testkit.hpp>` provides the public consumer boundary parity
+harness. It runs one materialized generated history through narrow in-memory world
+evidence and explicitly selected PostgreSQL, NATS, or external-process adapters,
+failing construction on incomplete topology and reporting the first divergent step.
+The in-memory evidence is limited to stable identity, step count, and immutable action
+trace entries; service probes and exact materialized histories stay on real adapters.
+
 ## Benchmark highlights
 
 Micro-benchmarks on `x86_64` with GCC 16, C++17 (`-O3`). Full results in
@@ -487,6 +494,7 @@ own section of [BENCHMARKS.md](BENCHMARKS.md) and are not comparable to native.
 | `queue.hpp` | QueueCell (SPSC/MPSC reactive queue) + QueueStorage adapter + VecDequeStorage |
 | `work_queue.hpp` | WorkQueueCell competing-consumer claims, leases, retries, and dead letters |
 | `relay.hpp` | RelayCell conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` (InProc/Framed) + Outbox/Inbox roles + Rate/Window/Expiry/Priority/`KeyedRelay` policies (`#relaycell`) |
+| `sim_consumer_testkit.hpp` | Consumer simulation parity harness over narrow world evidence and selected real/external boundaries |
 | `sem_tree.hpp` | Memoized semantic tree (incremental fold, memo equality guard) |
 | `thread_safe.hpp` | `BasicThreadSafeContext<Policy>` — `ThreadSafeContext` (recursive_mutex, default) + `RwThreadSafeContext` (shared_mutex) + `ScalableThreadSafeContext` (reader-scalable lock) |
 | `async_context.hpp` | AsyncContext (Empty/Computing/Resolved/Error lifecycle) |

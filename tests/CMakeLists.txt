@@ -358,6 +358,12 @@ add_executable(test_replay_conformance test_replay_conformance.cpp)
 target_link_libraries(test_replay_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(ReplayConformance test_replay_conformance)
 
+# Public consumer simulation testkit: narrow world evidence against explicitly
+# selected real or external-process boundaries. The header is wasm-core clean.
+add_executable(test_sim_consumer_testkit test_sim_consumer_testkit.cpp)
+target_link_libraries(test_sim_consumer_testkit PRIVATE lazily)
+lazily_add_spec_conformance_test(SimConsumerTestkit test_sim_consumer_testkit)
+
 add_executable(test_seqcrdt_conformance test_seqcrdt_conformance.cpp)
 target_link_libraries(test_seqcrdt_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(SeqCrdtConformance test_seqcrdt_conformance)

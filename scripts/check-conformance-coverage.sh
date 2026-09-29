@@ -978,8 +978,11 @@ fi
 # 143 -> 144: durable-client/envelope_v1.json is replayed by
 # tests/test_durable_client.cpp.
 #
-# Confirmed by a local green `make check`. Verified exact: 145 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-144}"
+# 144 -> 145: simulation/consumer_testkit.json is replayed by the public
+# SimConsumerTestkit conformance runner.
+#
+# Confirmed by a local green `make check`. Verified exact: 146 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-145}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -1023,6 +1026,7 @@ lossless-tree
   resilience
   service
   signaling
+  simulation
   statechart
   stdlib
   temporal
@@ -1230,10 +1234,12 @@ excuse_scenario() {
 # paragraph above says is a floor that has stopped guarding. Five sibling
 # bindings re-pinned during the same sweep; this one was held back for scope.
 #
-# This floor is EXACT today: 151 declared, 151 replayed, confirmed by a local
-# green `make check`, and verified by watching 152 fail it. MIN_FIXTURES was
-# re-checked in the same pass and is still exact at 143 (144 fails it).
-MIN_SCENARIOS="${MIN_SCENARIOS:-151}"
+# 151 -> 156: the five named consumer-testkit scenarios are replayed through
+# the public SimConsumerTestkit runner.
+#
+# This floor is EXACT today: 156 declared, 156 replayed, confirmed by a local
+# green `make check`, and verified by watching 157 fail it.
+MIN_SCENARIOS="${MIN_SCENARIOS:-156}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2

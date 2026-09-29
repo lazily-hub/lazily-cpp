@@ -117,11 +117,12 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `resilience` | 4 | 4 | — |  |
 | `service` | 4 | 4 | — |  |
 | `signaling` | 2 | 1 | — |  |
+| `simulation` | 1 | 1 | — |  |
 | `statechart` | 8 | 8 | — |  |
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **161** | **95** | **47** | |
+| **total** | **162** | **96** | **47** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits

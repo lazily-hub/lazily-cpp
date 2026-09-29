@@ -37,6 +37,7 @@
 #include <lazily/sem_tree.hpp>
 #include <lazily/service.hpp>
 #include <lazily/signaling.hpp>
+#include <lazily/sim_consumer_testkit.hpp>
 #include <lazily/small_any.hpp>
 #include <lazily/small_fn.hpp>
 #include <lazily/small_vec.hpp>
