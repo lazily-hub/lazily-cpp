@@ -271,9 +271,25 @@ struct DeltaOpEdgeRemove {
   NodeId dependent;
   NodeId dependency;
 };
+// QueueCell op-log delta form (protocol.md § "QueueCell op-log delta form",
+// `#queue-oplog`, `#lzdeltaqueueops`). Ordinary DeltaOp variants: QueuePush has
+// CellSet's body shape (its payload is an IpcValue, spilled/resolved like
+// CellSet's); QueuePop / QueueClose have Invalidate's shape and carry no bytes.
+// A graph-state projection cannot apply them — only a queue projection can.
+struct DeltaOpQueuePush {
+  NodeId node;
+  IpcValue payload;
+};
+struct DeltaOpQueuePop {
+  NodeId node;
+};
+struct DeltaOpQueueClose {
+  NodeId node;
+};
 
 using DeltaOp = std::variant<DeltaOpCellSet, DeltaOpSlotValue, DeltaOpInvalidate, DeltaOpNodeAdd,
-                             DeltaOpNodeRemove, DeltaOpEdgeAdd, DeltaOpEdgeRemove>;
+                             DeltaOpNodeRemove, DeltaOpEdgeAdd, DeltaOpEdgeRemove, DeltaOpQueuePush,
+                             DeltaOpQueuePop, DeltaOpQueueClose>;
 
 // -- Delta apply status --
 
@@ -447,6 +463,15 @@ inline bool operator==(const DeltaOpEdgeAdd& a, const DeltaOpEdgeAdd& b) {
 }
 inline bool operator==(const DeltaOpEdgeRemove& a, const DeltaOpEdgeRemove& b) {
   return a.dependent == b.dependent && a.dependency == b.dependency;
+}
+inline bool operator==(const DeltaOpQueuePush& a, const DeltaOpQueuePush& b) {
+  return a.node == b.node && a.payload == b.payload;
+}
+inline bool operator==(const DeltaOpQueuePop& a, const DeltaOpQueuePop& b) {
+  return a.node == b.node;
+}
+inline bool operator==(const DeltaOpQueueClose& a, const DeltaOpQueueClose& b) {
+  return a.node == b.node;
 }
 inline bool operator==(const Delta& a, const Delta& b) {
   return a.base_epoch == b.base_epoch && a.epoch == b.epoch && a.ops == b.ops;

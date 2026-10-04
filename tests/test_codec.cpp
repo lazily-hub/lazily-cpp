@@ -570,6 +570,153 @@ TEST(codec_token_is_distinct_per_variant) {
   assert(!codec_from_token("").has_value());
 }
 
+// -- QueueCell op-log DeltaOps (`#lzdeltaqueueops`, protocol.md `#queue-oplog`) --
+//
+// QueuePush / QueuePop / QueueClose are ordinary DeltaOp variants. Each must
+// round-trip through EVERY codec this binding ships: the private string-keyed
+// msgpack map form, the private positional form, the `json` reference wire and
+// the `msgpack` cross-language wire.
+static Delta queue_ops_delta() {
+  Delta d;
+  d.base_epoch = 8;
+  d.epoch = 9;
+  d.ops.push_back(DeltaOpQueuePush{6, IpcValueInline{{97}}});
+  d.ops.push_back(DeltaOpQueuePush{6, IpcValueSharedBlob{{40, 3, 1, 9, 77}}});
+  d.ops.push_back(DeltaOpQueuePop{6});
+  d.ops.push_back(DeltaOpQueueClose{6});
+  return d;
+}
+
+static void assert_queue_ops(const Delta& d) {
+  assert(d.base_epoch == 8 && d.epoch == 9);
+  assert(d.ops.size() == 4);
+  const auto* push = std::get_if<DeltaOpQueuePush>(&d.ops[0]);
+  assert(push != nullptr && push->node == 6);
+  assert(ipc_value_equal(push->payload, IpcValueInline{{97}}));
+  const auto* spilled = std::get_if<DeltaOpQueuePush>(&d.ops[1]);
+  assert(spilled != nullptr && spilled->node == 6);
+  const auto* blob = std::get_if<IpcValueSharedBlob>(&spilled->payload);
+  assert(blob != nullptr && blob->blob.offset == 40 && blob->blob.checksum == 77);
+  const auto* pop = std::get_if<DeltaOpQueuePop>(&d.ops[2]);
+  assert(pop != nullptr && pop->node == 6);
+  const auto* close = std::get_if<DeltaOpQueueClose>(&d.ops[3]);
+  assert(close != nullptr && close->node == 6);
+  assert(std::string(delta_op_variant_name(d.ops[0])) == "QueuePush");
+  assert(std::string(delta_op_variant_name(d.ops[2])) == "QueuePop");
+  assert(std::string(delta_op_variant_name(d.ops[3])) == "QueueClose");
+}
+
+TEST(queue_delta_ops_roundtrip_private_map_codec) {
+  IpcMessage m = IpcMessageDelta{queue_ops_delta()};
+  Delta d = std::get<IpcMessageDelta>(decode(encode(m))).value;
+  assert_queue_ops(d);
+  assert(d == queue_ops_delta());
+  assert(reencode_equal(m));
+}
+
+TEST(queue_delta_ops_roundtrip_private_positional_codec) {
+  IpcMessage m = IpcMessageDelta{queue_ops_delta()};
+  auto bytes = encode_positional(m);
+  Delta d = std::get<IpcMessageDelta>(decode(bytes)).value;
+  assert_queue_ops(d);
+  assert(d == queue_ops_delta());
+  assert(encode_positional(IpcMessage{IpcMessageDelta{d}}) == bytes);
+}
+
+TEST(queue_delta_ops_roundtrip_json_wire) {
+  IpcMessage m = IpcMessageDelta{queue_ops_delta()};
+  const std::string text = encode_json(m);
+  // External tags with CellSet's / Invalidate's body shapes, named per spec.
+  assert(text.find("\"QueuePush\"") != std::string::npos);
+  assert(text.find("\"QueuePop\"") != std::string::npos);
+  assert(text.find("\"QueueClose\"") != std::string::npos);
+  Delta d = std::get<IpcMessageDelta>(decode_json(text)).value;
+  assert_queue_ops(d);
+  assert(encode_json(IpcMessage{IpcMessageDelta{d}}) == text);
+}
+
+TEST(queue_delta_ops_roundtrip_msgpack_wire) {
+  IpcMessage m = IpcMessageDelta{queue_ops_delta()};
+  const auto bytes = encode_msgpack(m);
+  Delta d = std::get<IpcMessageDelta>(decode_msgpack(bytes)).value;
+  assert_queue_ops(d);
+  assert(encode_msgpack(IpcMessage{IpcMessageDelta{d}}) == bytes);
+}
+
+// The json/msgpack wire decoders require every body field, exactly as for
+// CellSet / Invalidate: a QueuePush without `node` or `payload`, and a
+// QueuePop / QueueClose without `node`, are refused rather than defaulted.
+// (Unknown body fields are tolerated for EVERY DeltaOp variant — forward
+// compatibility — so the queue variants are not stricter than the rest.)
+TEST(queue_delta_ops_json_decoder_requires_node_and_payload) {
+  auto frame = [](const std::string& op) {
+    return std::string(R"({"Delta":{"base_epoch":0,"epoch":1,"ops":[)") + op + "]}}";
+  };
+  // Well-formed control: these decode.
+  (void)decode_json(frame(R"({"QueuePush":{"node":6,"payload":{"Inline":[97]}}})"));
+  (void)decode_json(frame(R"({"QueuePop":{"node":6}})"));
+  (void)decode_json(frame(R"({"QueueClose":{"node":6}})"));
+  assert(throws_runtime_error(
+      [&] { (void)decode_json(frame(R"({"QueuePush":{"payload":{"Inline":[97]}}})")); }));
+  assert(throws_runtime_error([&] { (void)decode_json(frame(R"({"QueuePush":{"node":6}})")); }));
+  assert(throws_runtime_error([&] { (void)decode_json(frame(R"({"QueuePop":{}})")); }));
+  assert(throws_runtime_error([&] { (void)decode_json(frame(R"({"QueueClose":{}})")); }));
+  assert(throws_runtime_error([&] { (void)decode_json(frame(R"({"QueuePop":6})")); }));
+  // A near-miss tag is still an unknown variant, not a queue op.
+  assert(throws_runtime_error([&] { (void)decode_json(frame(R"({"QueueDrain":{"node":6}})")); }));
+}
+
+// The private positional form refuses a truncated queue-op field list.
+TEST(queue_delta_ops_positional_decoder_refuses_short_fields) {
+  for (int64_t kind : {7, 8, 9}) {
+    MsgPacker p;
+    p.array_header(2);
+    p.i64(kind);
+    p.array_header(0);
+    auto bytes = std::move(p).take();
+    assert(throws_runtime_error([&] {
+      MsgUnpacker u(bytes);
+      (void)unpack_delta_op_positional(u);
+    }));
+  }
+}
+
+// QueuePush's payload is an IpcValue spilled exactly like CellSet's, and the
+// spilled descriptor resolves back to the original bytes. QueuePop/QueueClose
+// carry no bytes and are left untouched.
+TEST(queue_push_payload_spills_and_resolves_like_cellset) {
+  InProcessBackend backend;
+  const std::vector<uint8_t> big(64, 0x5A);
+  Delta delta;
+  delta.base_epoch = 0;
+  delta.epoch = 1;
+  delta.ops.push_back(DeltaOpCellSet{5, IpcValueInline{big}});
+  delta.ops.push_back(DeltaOpQueuePush{6, IpcValueInline{big}});
+  delta.ops.push_back(DeltaOpQueuePush{6, IpcValueInline{{1, 2}}}); // under threshold
+  delta.ops.push_back(DeltaOpQueuePop{6});
+  delta.ops.push_back(DeltaOpQueueClose{6});
+  IpcMessage m = IpcMessageDelta{std::move(delta)};
+
+  const size_t spilled = spill(m, backend, 32);
+  assert(spilled == 2 * big.size()); // CellSet's AND QueuePush's payload
+
+  const Delta& d = std::get<IpcMessageDelta>(m).value;
+  const auto& push = std::get<DeltaOpQueuePush>(d.ops[1]);
+  assert(std::holds_alternative<IpcValueSharedBlob>(push.payload));
+  BlobView view = resolve(push.payload, backend);
+  assert(view && view.size == big.size());
+  assert(std::vector<uint8_t>(view.data, view.data + view.size) == big);
+  assert(std::holds_alternative<IpcValueInline>(std::get<DeltaOpQueuePush>(d.ops[2]).payload));
+  assert(std::get<DeltaOpQueuePop>(d.ops[3]).node == 6);
+  assert(std::get<DeltaOpQueueClose>(d.ops[4]).node == 6);
+
+  // The spilled frame still round-trips every codec with the descriptor intact.
+  assert(std::get<IpcMessageDelta>(decode_json(encode_json(m))).value == d);
+  assert(std::get<IpcMessageDelta>(decode_msgpack(encode_msgpack(m))).value == d);
+  assert(std::get<IpcMessageDelta>(decode(encode(m))).value == d);
+  assert(std::get<IpcMessageDelta>(decode(encode_positional(m))).value == d);
+}
+
 int main() {
   std::cout << "lazily-cpp codec tests: " << test_passed << "/" << test_count << " passed"
             << std::endl;

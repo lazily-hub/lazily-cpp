@@ -241,8 +241,10 @@ inline size_t spill(IpcValue& v, BlobBackend& backend, size_t threshold) {
 }
 
 // Spill large payloads across an IpcMessage's IpcValue/NodeState sites:
-// Snapshot node states, Delta CellSet/SlotValue payloads + NodeAdd states,
-// CrdtSync op states. Returns total bytes spilled.
+// Snapshot node states, Delta CellSet/SlotValue/QueuePush payloads + NodeAdd
+// states, CrdtSync op states. Returns total bytes spilled. QueuePush's payload
+// is an IpcValue exactly like CellSet's (`#lzdeltaqueueops`); QueuePop /
+// QueueClose carry no bytes.
 inline size_t spill(IpcMessage& m, BlobBackend& backend, size_t threshold) {
   size_t total = 0;
   auto spill_state = [&](NodeState& s) {
@@ -263,8 +265,12 @@ inline size_t spill(IpcMessage& m, BlobBackend& backend, size_t threshold) {
         total += spill(cs->payload, backend, threshold);
       else if (auto* sv = std::get_if<DeltaOpSlotValue>(&op))
         total += spill(sv->payload, backend, threshold);
+      else if (auto* qp = std::get_if<DeltaOpQueuePush>(&op))
+        total += spill(qp->payload, backend, threshold);
       else if (auto* na = std::get_if<DeltaOpNodeAdd>(&op))
         spill_state(na->state);
+      // Invalidate / NodeRemove / EdgeAdd / EdgeRemove / QueuePop / QueueClose
+      // carry no IpcValue or NodeState: nothing to spill.
     }
   } else if (auto* c = std::get_if<IpcMessageCrdtSync>(&m)) {
     for (auto& op : c->value.ops)

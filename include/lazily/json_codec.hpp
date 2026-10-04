@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace lazily {
@@ -33,7 +34,8 @@ namespace lazily {
 //                {"ResyncRequest": {…}} / {"OutboxAck": {…}}
 //   NodeState    {"Payload": [bytes]} / {"SharedBlob": {…}} / "Opaque"
 //   IpcValue     {"Inline": [bytes]} / {"SharedBlob": {…}}
-//   DeltaOp      {"CellSet": {…}} / … / {"EdgeRemove": {…}}
+//   DeltaOp      {"CellSet": {…}} / … / {"EdgeRemove": {…}} /
+//                {"QueuePush": {…}} / {"QueuePop": {…}} / {"QueueClose": {…}}
 //
 // Note what that is NOT: codec.hpp's msgpack envelope is INTERNALLY tagged
 // (`{"type": 0, "value": …}`) with integer discriminators. It is a good private
@@ -278,6 +280,8 @@ inline Snapshot json_to_snapshot(const JsonValue& value) {
 // -- Delta --------------------------------------------------------------------
 
 inline JsonValue json_from_delta_op(const DeltaOp& op) {
+  static_assert(std::variant_size_v<DeltaOp> == 10,
+                "a new DeltaOp variant needs an explicit json encode case");
   if (const auto* cell_set = std::get_if<DeltaOpCellSet>(&op)) {
     JsonValue body = JsonValue::empty_object();
     body.set("node", JsonValue::of_int(cell_set->node));
@@ -314,11 +318,29 @@ inline JsonValue json_from_delta_op(const DeltaOp& op) {
     body.set("dependency", JsonValue::of_int(edge_add->dependency));
     return json_tagged("EdgeAdd", std::move(body));
   }
-  const auto& edge_remove = std::get<DeltaOpEdgeRemove>(op);
+  if (const auto* edge_remove = std::get_if<DeltaOpEdgeRemove>(&op)) {
+    JsonValue body = JsonValue::empty_object();
+    body.set("dependent", JsonValue::of_int(edge_remove->dependent));
+    body.set("dependency", JsonValue::of_int(edge_remove->dependency));
+    return json_tagged("EdgeRemove", std::move(body));
+  }
+  // QueueCell op-log variants (`#queue-oplog`, `#lzdeltaqueueops`): QueuePush
+  // shares CellSet's body, QueuePop / QueueClose share Invalidate's.
+  if (const auto* queue_push = std::get_if<DeltaOpQueuePush>(&op)) {
+    JsonValue body = JsonValue::empty_object();
+    body.set("node", JsonValue::of_int(queue_push->node));
+    body.set("payload", json_from_ipc_value(queue_push->payload));
+    return json_tagged("QueuePush", std::move(body));
+  }
+  if (const auto* queue_pop = std::get_if<DeltaOpQueuePop>(&op)) {
+    JsonValue body = JsonValue::empty_object();
+    body.set("node", JsonValue::of_int(queue_pop->node));
+    return json_tagged("QueuePop", std::move(body));
+  }
+  const auto& queue_close = std::get<DeltaOpQueueClose>(op);
   JsonValue body = JsonValue::empty_object();
-  body.set("dependent", JsonValue::of_int(edge_remove.dependent));
-  body.set("dependency", JsonValue::of_int(edge_remove.dependency));
-  return json_tagged("EdgeRemove", std::move(body));
+  body.set("node", JsonValue::of_int(queue_close.node));
+  return json_tagged("QueueClose", std::move(body));
 }
 
 inline DeltaOp json_to_delta_op(const JsonValue& value) {
@@ -345,6 +367,11 @@ inline DeltaOp json_to_delta_op(const JsonValue& value) {
   if (tag == "EdgeRemove")
     return DeltaOpEdgeRemove{json_required(body, "dependent").as_int(),
                              json_required(body, "dependency").as_int()};
+  if (tag == "QueuePush")
+    return DeltaOpQueuePush{json_required(body, "node").as_int(),
+                            json_to_ipc_value(json_required(body, "payload"))};
+  if (tag == "QueuePop") return DeltaOpQueuePop{json_required(body, "node").as_int()};
+  if (tag == "QueueClose") return DeltaOpQueueClose{json_required(body, "node").as_int()};
   json_codec_fail("unknown DeltaOp variant `" + tag + "`");
 }
 
@@ -507,13 +534,21 @@ inline const char* ipc_message_variant_name(const IpcMessage& message) {
 }
 
 inline const char* delta_op_variant_name(const DeltaOp& op) {
+  static_assert(std::variant_size_v<DeltaOp> == 10,
+                "a new DeltaOp variant needs a wire name here and a case in every codec");
   if (std::holds_alternative<DeltaOpCellSet>(op)) return "CellSet";
   if (std::holds_alternative<DeltaOpSlotValue>(op)) return "SlotValue";
   if (std::holds_alternative<DeltaOpInvalidate>(op)) return "Invalidate";
   if (std::holds_alternative<DeltaOpNodeAdd>(op)) return "NodeAdd";
   if (std::holds_alternative<DeltaOpNodeRemove>(op)) return "NodeRemove";
   if (std::holds_alternative<DeltaOpEdgeAdd>(op)) return "EdgeAdd";
-  return "EdgeRemove";
+  if (std::holds_alternative<DeltaOpEdgeRemove>(op)) return "EdgeRemove";
+  if (std::holds_alternative<DeltaOpQueuePush>(op)) return "QueuePush";
+  if (std::holds_alternative<DeltaOpQueuePop>(op)) return "QueuePop";
+  if (std::holds_alternative<DeltaOpQueueClose>(op)) return "QueueClose";
+  // Unreachable while every alternative above is listed; a new DeltaOp variant
+  // must be named here rather than borrow another variant's name.
+  return "";
 }
 
 // -- public entry points ------------------------------------------------------

@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace lazily {
@@ -340,6 +341,8 @@ inline Snapshot unpack_snapshot(MsgUnpacker& u) {
 // ── Delta ────────────────────────────────────────────────────────────────────
 
 inline void pack_delta(MsgPacker& p, const Delta& d) {
+  static_assert(std::variant_size_v<DeltaOp> == 10,
+                "a new DeltaOp variant needs an explicit op kind in pack/unpack_delta");
   // DeltaOp encodings are ~24–80 B each (discriminator + node id + payload/
   // state). Reserve once at the top so push_back avoids re-growths
   // (#lzcppreservehint).
@@ -408,7 +411,7 @@ inline void pack_delta(MsgPacker& p, const Delta& d) {
         p.i64(v.dependent);
         p.str("dependency");
         p.i64(v.dependency);
-      } else {
+      } else if (std::holds_alternative<DeltaOpEdgeRemove>(op)) {
         auto& v = std::get<DeltaOpEdgeRemove>(op);
         p.map_header(3);
         p.str("op");
@@ -417,6 +420,30 @@ inline void pack_delta(MsgPacker& p, const Delta& d) {
         p.i64(v.dependent);
         p.str("dependency");
         p.i64(v.dependency);
+      } else if (std::holds_alternative<DeltaOpQueuePush>(op)) {
+        // QueueCell op-log (`#lzdeltaqueueops`): CellSet's field shape.
+        auto& v = std::get<DeltaOpQueuePush>(op);
+        p.map_header(3);
+        p.str("op");
+        p.i64(7);
+        p.str("node");
+        p.i64(v.node);
+        p.str("payload");
+        pack_ipc_value(p, v.payload);
+      } else if (std::holds_alternative<DeltaOpQueuePop>(op)) {
+        auto& v = std::get<DeltaOpQueuePop>(op);
+        p.map_header(2);
+        p.str("op");
+        p.i64(8);
+        p.str("node");
+        p.i64(v.node);
+      } else {
+        auto& v = std::get<DeltaOpQueueClose>(op);
+        p.map_header(2);
+        p.str("op");
+        p.i64(9);
+        p.str("node");
+        p.i64(v.node);
       }
     }
   }
@@ -485,6 +512,15 @@ inline Delta unpack_delta(MsgUnpacker& u) {
           break;
         case 6:
           d.ops.push_back(DeltaOpEdgeRemove{dependent, dependency});
+          break;
+        case 7:
+          d.ops.push_back(DeltaOpQueuePush{node, std::move(payload)});
+          break;
+        case 8:
+          d.ops.push_back(DeltaOpQueuePop{node});
+          break;
+        case 9:
+          d.ops.push_back(DeltaOpQueueClose{node});
           break;
         default:
           throw std::runtime_error("codec: unknown DeltaOp kind");
@@ -708,6 +744,8 @@ inline IpcMessage unpack_ipc_message(MsgUnpacker& u) {
 //                          <WireStamp-pos>; <IpcValue-pos>
 //   CrdtSync         : array(3); i64(schema); array(frontier); array(ops)
 //   DeltaOp          : array(2); i64(op_kind); <op-specific fields array>
+//                          (op_kind 0..6 graph ops; 7 QueuePush, 8 QueuePop,
+//                          9 QueueClose — `#lzdeltaqueueops`)
 //   Delta            : array(4); i64(schema); i64(base_epoch); i64(epoch);
 //                          array(DeltaOp-pos)
 //   ResyncRequest    : array(2); i64(schema); i64(from_epoch)
@@ -1069,6 +1107,8 @@ inline CrdtSync unpack_crdt_sync_positional(MsgUnpacker& u) {
 // 2-element array: [op_kind, fields-array]. The fields-array arity is
 // op-specific and documented inline below.
 inline void pack_delta_op_positional(MsgPacker& p, const DeltaOp& op) {
+  static_assert(std::variant_size_v<DeltaOp> == 10,
+                "a new DeltaOp variant needs an explicit positional op kind");
   p.array_header(2);
   if (std::holds_alternative<DeltaOpCellSet>(op)) {
     auto& v = std::get<DeltaOpCellSet>(op);
@@ -1106,12 +1146,28 @@ inline void pack_delta_op_positional(MsgPacker& p, const DeltaOp& op) {
     p.array_header(2);
     p.i64(v.dependent);
     p.i64(v.dependency);
-  } else {
+  } else if (std::holds_alternative<DeltaOpEdgeRemove>(op)) {
     auto& v = std::get<DeltaOpEdgeRemove>(op);
     p.i64(6);
     p.array_header(2);
     p.i64(v.dependent);
     p.i64(v.dependency);
+  } else if (std::holds_alternative<DeltaOpQueuePush>(op)) {
+    auto& v = std::get<DeltaOpQueuePush>(op);
+    p.i64(7);
+    p.array_header(2);
+    p.i64(v.node);
+    pack_ipc_value_positional(p, v.payload);
+  } else if (std::holds_alternative<DeltaOpQueuePop>(op)) {
+    auto& v = std::get<DeltaOpQueuePop>(op);
+    p.i64(8);
+    p.array_header(1);
+    p.i64(v.node);
+  } else {
+    auto& v = std::get<DeltaOpQueueClose>(op);
+    p.i64(9);
+    p.array_header(1);
+    p.i64(v.node);
   }
 }
 inline DeltaOp unpack_delta_op_positional(MsgUnpacker& u) {
@@ -1180,6 +1236,31 @@ inline DeltaOp unpack_delta_op_positional(MsgUnpacker& u) {
     v.dependent = u.read_i64();
     v.dependency = u.read_i64();
     for (uint32_t i = 2; i < m; ++i)
+      u.skip();
+    return v;
+  }
+  case 7: {
+    if (m < 2) throw std::runtime_error("codec: DeltaOpQueuePush fields < 2");
+    DeltaOpQueuePush v;
+    v.node = u.read_i64();
+    v.payload = unpack_ipc_value_positional(u);
+    for (uint32_t i = 2; i < m; ++i)
+      u.skip();
+    return v;
+  }
+  case 8: {
+    if (m < 1) throw std::runtime_error("codec: DeltaOpQueuePop fields < 1");
+    DeltaOpQueuePop v;
+    v.node = u.read_i64();
+    for (uint32_t i = 1; i < m; ++i)
+      u.skip();
+    return v;
+  }
+  case 9: {
+    if (m < 1) throw std::runtime_error("codec: DeltaOpQueueClose fields < 1");
+    DeltaOpQueueClose v;
+    v.node = u.read_i64();
+    for (uint32_t i = 1; i < m; ++i)
       u.skip();
     return v;
   }
