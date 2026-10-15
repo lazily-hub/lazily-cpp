@@ -12,7 +12,8 @@ SHELL := /bin/bash
 .PHONY: all configure build test test-interop-peer check fmt fmt-fix tidy clean \
 conformance conformance-coverage assertion-ordering-check bench ci-reach \
 wasm wasm-core wasm-threaded wasm-matrix wasm-bench wasm-corpus-column \
-core-api-check core-api-self-test
+core-api-check core-api-self-test \
+core-artifact-consumer-check
 
 BUILD_DIR ?= build
 
@@ -72,6 +73,9 @@ LAZILY_CONFORMANCE_RUN_ID := $(LAZILY_CONFORMANCE_RUN_ID)
 export LAZILY_CONFORMANCE_RUN_ID
 
 all: check
+
+core-artifact-consumer-check:
+	./scripts/core-artifact-consumer-check.sh
 
 configure:
 	cmake -S . -B $(BUILD_DIR) -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
@@ -226,7 +230,7 @@ core-api-check:
 core-api-self-test:
 	python3 scripts/check-core-api.py --profile "$(LAZILY_SPEC_DIR)/profiles/core-v1.json" --self-test
 
-check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check wasm-corpus-column core-api-check core-api-self-test
+check: fmt build test test-interop-peer conformance-coverage core-api-check core-api-self-test core-artifact-consumer-check ci-reach assertion-ordering-check wasm-corpus-column
 	@echo "lazily-cpp: check OK"
 
 # ── Emscripten/wasm32 (`#lzcppwasm`) ───────────────────────────────────────

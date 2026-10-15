@@ -369,3 +369,15 @@ jobs:
             echo "::error::the wasm guard exited 0 without reaching its verdict"
             exit 1
           }
+
+  core-artifact-consumer:
+    name: Core artifact consumer / C++${{ matrix.standard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        standard: [17, 23]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core artifact consumer (minimum/current)
+        run: make core-artifact-consumer-check LAZILY_CXX_STANDARD=${{ matrix.standard }}
