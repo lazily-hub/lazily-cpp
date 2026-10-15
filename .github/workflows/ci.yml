@@ -67,12 +67,15 @@ jobs:
       # profile and the package-visible header with each matrix compiler. The
       # checker compiles its probe under the profile's minimum and current C++
       # standards, and the paired mutation run proves every rejection path.
+      # The Core report self-test proves a fixture mutant is credited only for a
+      # library-divergence FINDING, never for a runner-bookkeeping abort.
       - name: Core API compatibility and negative mutation gate
         env:
           CXX: ${{ matrix.compiler }}
         run: |
           make core-api-check
           make core-api-self-test
+          make core-report-self-test
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON

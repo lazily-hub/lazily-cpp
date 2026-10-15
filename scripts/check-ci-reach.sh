@@ -183,6 +183,7 @@ EXPECTED_CLOSURE_TARGETS=(
   conformance-coverage
   core-api-check
   core-api-self-test
+  core-report-self-test
   core-artifact-consumer-check
   core-facade-check
   fmt
@@ -278,6 +279,7 @@ EXPECTED_MAKE_INVOKED_TARGETS=(
   assertion-ordering-check
   core-api-check
   core-api-self-test
+  core-report-self-test
   fmt
 )
 
