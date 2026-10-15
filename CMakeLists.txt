@@ -5,6 +5,9 @@ project(lazily-cpp
   LANGUAGES CXX
 )
 
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -19,6 +22,8 @@ option(LAZILY_BUILD_BENCHMARKS "Build lazily-cpp benchmarks" OFF)
 option(LAZILY_BUILD_FFI "Build the C-ABI FFI shared library" ON)
 
 add_library(lazily INTERFACE)
+add_library(lazily::lazily ALIAS lazily)
+target_compile_features(lazily INTERFACE cxx_std_17)
 target_include_directories(lazily
   INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -31,6 +36,42 @@ target_compile_features(lazily INTERFACE cxx_std_17)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(lazily INTERFACE _GNU_SOURCE)
 endif()
+
+# Install the same interface target consumers use from the source tree. The
+# exported package deliberately carries only include paths, language level, and
+# platform definitions: optional/native adapters remain headers a consumer
+# chooses explicitly, while <lazily/core.hpp> stays the dependency-light Core
+# contract.
+install(TARGETS lazily EXPORT lazilyTargets)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+set(LAZILY_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/lazily")
+configure_package_config_file(
+  cmake/lazilyConfig.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/lazilyConfig.cmake"
+  INSTALL_DESTINATION "${LAZILY_CMAKE_INSTALL_DIR}"
+)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/lazilyConfigVersion.cmake"
+  VERSION "${PROJECT_VERSION}"
+  COMPATIBILITY SameMajorVersion
+)
+install(
+  EXPORT lazilyTargets
+  FILE lazilyTargets.cmake
+  NAMESPACE lazily::
+  DESTINATION "${LAZILY_CMAKE_INSTALL_DIR}"
+)
+install(
+  FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/lazilyConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/lazilyConfigVersion.cmake"
+  DESTINATION "${LAZILY_CMAKE_INSTALL_DIR}"
+)
+install(
+  FILES LICENSE NOTICE README.md
+  DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/lazily"
+)
 
 # The interop peer is a native-only target (`#lzcppwasm`): it drives the POSIX
 # shm transport across a real process boundary, which wasm32 has no equivalent

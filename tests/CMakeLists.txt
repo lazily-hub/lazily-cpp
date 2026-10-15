@@ -74,6 +74,16 @@ add_executable(test_core test_core.cpp)
 target_link_libraries(test_core PRIVATE lazily)
 add_test(NAME core COMMAND test_core)
 
+# The narrow Core header is useful only if the installed package ships it along
+# with a relocatable target and the legal/readme metadata consumers need.
+add_test(
+  NAME package_content
+  COMMAND ${CMAKE_COMMAND}
+    -DLAZILY_BUILD_DIR=${CMAKE_BINARY_DIR}
+    -DLAZILY_PACKAGE_DIR=${CMAKE_BINARY_DIR}/package-content
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_package_content.cmake
+)
+
 add_executable(test_merge test_merge.cpp)
 target_link_libraries(test_merge PRIVATE lazily)
 add_test(NAME merge COMMAND test_merge)
