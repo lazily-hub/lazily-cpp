@@ -11,7 +11,8 @@ SHELL := /bin/bash
 
 .PHONY: all configure build test test-interop-peer check fmt fmt-fix tidy clean \
 conformance conformance-coverage assertion-ordering-check bench ci-reach \
-wasm wasm-core wasm-threaded wasm-matrix wasm-bench wasm-corpus-column
+wasm wasm-core wasm-threaded wasm-matrix wasm-bench wasm-corpus-column \
+core-api-check core-api-self-test
 
 BUILD_DIR ?= build
 
@@ -219,7 +220,13 @@ assertion-ordering-check:
 	  exit 1; }
 	python3 $(LAZILY_SPEC_DIR)/scripts/check-assertion-ordering.py --binding cpp --root .
 
-check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check wasm-corpus-column
+core-api-check:
+	python3 scripts/check-core-api.py --profile "$(LAZILY_SPEC_DIR)/profiles/core-v1.json"
+
+core-api-self-test:
+	python3 scripts/check-core-api.py --profile "$(LAZILY_SPEC_DIR)/profiles/core-v1.json" --self-test
+
+check: fmt build test test-interop-peer conformance-coverage ci-reach assertion-ordering-check wasm-corpus-column core-api-check core-api-self-test
 	@echo "lazily-cpp: check OK"
 
 # ── Emscripten/wasm32 (`#lzcppwasm`) ───────────────────────────────────────

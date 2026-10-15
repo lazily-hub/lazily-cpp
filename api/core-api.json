@@ -1,0 +1,17 @@
+{
+  "binding": "cpp",
+  "core_api_generation": 1,
+  "import": {
+    "kind": "header",
+    "path": "lazily/core.hpp"
+  },
+  "symbols": [
+    { "id": "context", "kind": "type", "public_names": ["lazily::Context"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null },
+    { "id": "source", "kind": "type", "public_names": ["lazily::Source"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null },
+    { "id": "computed", "kind": "type", "public_names": ["lazily::Computed"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null },
+    { "id": "effect", "kind": "type", "public_names": ["lazily::Effect"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null },
+    { "id": "batch", "kind": "operation", "public_names": ["lazily::Context::batch"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null },
+    { "id": "scope", "kind": "operation", "public_names": ["lazily::Context::scope", "lazily::TeardownScope"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null },
+    { "id": "typed_context", "kind": "type", "public_names": ["lazily::Context"], "introduced": 1, "deprecated_since": null, "replacement": null, "compatibility_window": null, "earliest_removal": null }
+  ]
+}

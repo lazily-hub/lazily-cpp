@@ -63,6 +63,16 @@ jobs:
       # the canonical fixtures rather than a copy in this repo (#lzspecconf).
       - name: Fetch canonical lazily-spec conformance fixtures (#lzspecconf)
         run: git clone --depth 1 https://github.com/lazily-hub/lazily-spec.git ../lazily-spec
+      # The normalized Core snapshot is checked against both the canonical
+      # profile and the package-visible header with each matrix compiler. The
+      # checker compiles its probe under the profile's minimum and current C++
+      # standards, and the paired mutation run proves every rejection path.
+      - name: Core API compatibility and negative mutation gate
+        env:
+          CXX: ${{ matrix.compiler }}
+        run: |
+          make core-api-check
+          make core-api-self-test
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Build

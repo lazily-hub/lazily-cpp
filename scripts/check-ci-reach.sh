@@ -181,6 +181,8 @@ EXPECTED_CLOSURE_TARGETS=(
   ci-reach
   configure
   conformance-coverage
+  core-api-check
+  core-api-self-test
   fmt
   test
   test-interop-peer
@@ -270,6 +272,8 @@ EXPECTED_GATE_STEPS=(
 # matching. So entering this mode takes a real `make <target>` in a run: body.
 EXPECTED_MAKE_INVOKED_TARGETS=(
   assertion-ordering-check
+  core-api-check
+  core-api-self-test
   fmt
 )
 
