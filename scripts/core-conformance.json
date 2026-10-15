@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "profile_id": "core-v1",
+  "binding_id": "cpp",
+  "report_command": ["python3", "scripts/generate-core-report.py"],
+  "runtime_skips": [
+    {"fixture": "reactive-graph/churn_returns_to_baseline.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/churn_returns_to_baseline.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/cross_scope_teardown_hazard.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/cross_scope_teardown_hazard.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/disarm_disposes_nothing.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/disarm_disposes_nothing.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/disposal_does_not_run_surviving_effects.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/disposal_does_not_run_surviving_effects.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/dispose_detaches_edges_both_directions.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/dispose_detaches_edges_both_directions.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/dispose_signal_reverts_to_lazy.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/dispose_signal_reverts_to_lazy.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/failed_compute_is_never_cached.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/failed_compute_is_never_cached.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {
+      "fixture": "reactive-graph/feedback_drain_bound_reports_exhaustion.json",
+      "scenario": "*",
+      "reason": "Context has no bounded effect-drain exhaustion observable; the existing runner records this fixture as unsupported rather than emulating it."
+    },
+    {"fixture": "reactive-graph/read_after_dispose_is_an_error.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/read_after_dispose_is_an_error.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/recycled_id_inherits_nothing.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/recycled_id_inherits_nothing.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/scope_teardown_equals_fold_of_disposals.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/scope_teardown_equals_fold_of_disposals.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/scoping_bounds_teardown_not_visibility.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/scoping_bounds_teardown_not_visibility.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/signal_materializes_once_per_batch.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/signal_materializes_once_per_batch.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/signal_materializes_without_a_read.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/signal_materializes_without_a_read.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/teardown_runs_members_in_reverse_creation_order.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/teardown_runs_members_in_reverse_creation_order.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/transitive_invalidation_reaches_depth.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/transitive_invalidation_reaches_depth.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."}
+  ],
+  "fixtureless_claims": [
+    {
+      "id": "c_abi_ffi_boundary",
+      "proof_classes": ["native_artifact_consumer"],
+      "command": ["python3", "scripts/core-ffi-proof.py"]
+    }
+  ]
+}
