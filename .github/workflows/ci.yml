@@ -73,6 +73,7 @@ jobs:
         run: |
           make core-api-check
           make core-api-self-test
+
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: Build
@@ -108,6 +109,9 @@ jobs:
           printf '# lazily-run-id %s\n' "$LAZILY_CONFORMANCE_RUN_ID" > "$LAZILY_CONFORMANCE_MANIFEST"
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Core facade package contract
+        run: ./scripts/check-core-package.sh
 
       # Cross-binding wire compatibility. `make check` builds and runs this peer;
       # no binding's CI ran it anywhere (#lzinteroppeerci). It is the gate that
@@ -380,4 +384,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Core artifact consumer (minimum/current)
-        run: make core-artifact-consumer-check LAZILY_CXX_STANDARD=${{ matrix.standard }}
+        run: LAZILY_CXX_STANDARD=${{ matrix.standard }} ./scripts/core-artifact-consumer-check.sh

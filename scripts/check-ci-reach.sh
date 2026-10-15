@@ -184,6 +184,7 @@ EXPECTED_CLOSURE_TARGETS=(
   core-api-check
   core-api-self-test
   core-artifact-consumer-check
+  core-facade-check
   fmt
   test
   test-interop-peer
@@ -241,6 +242,7 @@ EXPECTED_GATE_STEPS=(
   "configure|test|Configure"
   "conformance-coverage|test|Assert canonical fixtures and scenarios were replayed (#lzguardsnotinci)"
   "core-artifact-consumer-check|core-artifact-consumer|Core artifact consumer (minimum/current)"
+  "core-facade-check|test|Core facade package contract"
   "test|test|Test"
   "test-interop-peer|test|Interop peer self-check (#lzinteroppeerci)"
   "wasm-corpus-column|test|WASM.md corpus column + row set (#lzcppwasmguardlocal)"
