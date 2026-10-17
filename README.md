@@ -425,24 +425,10 @@ assert(work.ack(ctx, "worker-a", delivery.delivery_id));
 - **C-ABI FFI** — `lazily_ffi` shared library exports the `extern "C"` boundary
   (channel send/recv, message validate/kind/clone).
 
-## Build
+## Build and integration
 
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-### Benchmarks
-
-```bash
-cmake -S . -B build -DLAZILY_BUILD_BENCHMARKS=ON
-cmake --build build --target lazily_bench
-./build/benches/lazily_bench
-```
-
-See [BENCHMARKS.md](BENCHMARKS.md) for full results, scale benchmarks (≥1M
-cells), and a cross-language comparison with lazily-rs and lazily-zig.
+For local build, test, and benchmark commands, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### CMake integration
 
