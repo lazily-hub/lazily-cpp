@@ -1194,11 +1194,12 @@ excuse_scenario() {
 # that takes it to 144 is corpus growth this binding already replays with no
 # runner change.
 #
-# The floor tracks the corpus CI ACTUALLY GETS: CI clones lazily-spec at its
-# published main, so a scenario that exists only in a local sibling checkout
-# cannot be part of the floor. A tree carrying unpublished spec work replays
-# MORE than the floor and still passes — the check is a minimum. Raise this once
-# the scenarios land upstream, never to match a working tree.
+# The floor tracks the corpus CI ACTUALLY GETS: CI clones the immutable
+# lazily-spec release pinned in .github/workflows/ci.yml, so a scenario that
+# exists only in a local sibling checkout cannot be part of the floor. A tree
+# carrying unpublished spec work replays MORE than the floor and still passes —
+# the check is a minimum. Raise this once the scenarios land in the pinned
+# release, never merely to match a working tree.
 #
 # 144 -> 146: the two SeqCrdt fork-clock scenarios this floor was deliberately
 # held back for are now published (lazily-spec f3246a1, #lzspecforkclockfixture),
