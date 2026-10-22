@@ -93,6 +93,21 @@ add_executable(test_cell_kernel test_cell_kernel.cpp)
 target_link_libraries(test_cell_kernel PRIVATE lazily)
 add_test(NAME cell_kernel COMMAND test_cell_kernel)
 
+# Generation/identity-fenced disposal, including the RAII scope path and effect
+# cleanup ownership. The paired mutation test compiles this same probe against a
+# header with all three generation guards removed and requires it to reject the
+# mutant; both run under the ordinary ctest invocation used by CI.
+add_executable(test_stale_handle_disposal test_stale_handle_disposal.cpp)
+target_link_libraries(test_stale_handle_disposal PRIVATE lazily)
+add_test(NAME stale_handle_disposal COMMAND test_stale_handle_disposal)
+add_test(
+  NAME stale_handle_generation_mutation
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/check-stale-handle-mutation.py
+    --compiler ${CMAKE_CXX_COMPILER}
+    --source-root ${CMAKE_SOURCE_DIR}
+    --build-root ${CMAKE_BINARY_DIR}
+)
+
 add_executable(test_computed_ripple_when test_computed_ripple_when.cpp)
 target_link_libraries(test_computed_ripple_when PRIVATE lazily)
 add_test(NAME computed_ripple_when COMMAND test_computed_ripple_when)

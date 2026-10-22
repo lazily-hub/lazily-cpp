@@ -981,8 +981,11 @@ fi
 # 144 -> 145: simulation/consumer_testkit.json is replayed by the public
 # SimConsumerTestkit conformance runner.
 #
-# Confirmed by a local green `make check`. Verified exact: 146 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-145}"
+# 145 -> 146: the nine-scenario stale-handle disposal matrix is replayed by the
+# reactive-graph conformance runner.
+#
+# Confirmed by a local green `make check`. Verified exact: 147 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-146}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -1237,9 +1240,12 @@ excuse_scenario() {
 # 151 -> 156: the five named consumer-testkit scenarios are replayed through
 # the public SimConsumerTestkit runner.
 #
-# This floor is EXACT today: 156 declared, 156 replayed, confirmed by a local
-# green `make check`, and verified by watching 157 fail it.
-MIN_SCENARIOS="${MIN_SCENARIOS:-156}"
+# 156 -> 165: stale_effect_handle_cannot_remove_recycled_source.json adds the
+# full stale-kind x successor-kind disposal matrix.
+#
+# This floor is EXACT today: 165 declared, 165 replayed, confirmed by a local
+# green `make check`, and verified by watching 166 fail it.
+MIN_SCENARIOS="${MIN_SCENARIOS:-165}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
@@ -1489,7 +1495,7 @@ fi
 # canonical corpus DIRECTORY LISTING under $conformance_dir, and (b) this
 # binding's own committed `KNOWN_UNCOVERED` ledger — the same subtraction
 # MIN_FIXTURES is checked against one rung up. Listing minus ledger is the
-# opened set (144 fixtures today, exactly what MIN_FIXTURES pins), and the walk
+# opened set (146 fixtures today, exactly what MIN_FIXTURES pins), and the walk
 # below inventories that set's assertion blocks the way
 # `declare_assertion_block` inventories them at load time.
 #
@@ -1506,8 +1512,8 @@ fi
 #   * DISTINCT DIGESTS. A digest is lost when a content edit collapses two
 #     distinct claims into one spelling, which leaves every site in place.
 #
-# 722 sites carry 619 distinct digests today, so 103 sites share their bytes with
-# another site and 52 digests recur. The two dimensions are therefore genuinely
+# 762 sites carry 643 distinct digests today, so 119 sites share their bytes
+# with another site. The two dimensions are therefore genuinely
 # independent here, which they were NOT under the narrow walk: at 15 and 15 no
 # two blocks were spelled alike, and the deletion form of the site probe did not
 # exist because no digest recurred.
@@ -1515,13 +1521,13 @@ fi
 # SCOPE: this walk reads all five block names at EVERY depth, one site for an
 # OBJECT-valued tracked key and one per plain-OBJECT ELEMENT of an ARRAY-valued
 # one (#lzcppblockwalk, widened by #lzarrayelementsites). It replaced one that
-# read the TOP-LEVEL `assertions` object and nothing else — 15 of 722 sites, with
-# 128 of the 143 opened fixtures carrying no top-level `assertions` at all, so
-# rung 0 reported nothing whatsoever about them. The array clause is the last 12:
+# read the TOP-LEVEL `assertions` object and nothing else — only 15 of the 762
+# current sites — so rung 0 reported nothing whatsoever about nearly all of the
+# corpus. The array clause is the last 12:
 # `signaling/anti_spoof_session.json` spells its expected outbound frames as
 # array-valued `expect` keys, 12 elements across 8 steps, and every one was read
 # and asserted by test_signaling_conformance.cpp while being evidenced nowhere.
-# 722/619 is also the "all five names, + array elements" row of lazily-spec's
+# 762/643 is also the "all five names, + array elements" row of lazily-spec's
 # `make corpus-blocks-report` for this binding's opened set, which is
 # corroboration and not the source: the expectation is derived from the rule THIS
 # repo implements.

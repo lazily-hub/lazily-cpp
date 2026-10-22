@@ -468,7 +468,7 @@ private:
   std::unique_ptr<std::unordered_map<uint64_t, uint64_t>> index_;
 };
 
-// ── Handle types (Traits-independent — just SlotId wrappers) ──
+// ── Handle types (Traits-independent occupant identities) ──
 //
 // `#lzcellkernel`: the former engine handle structs `SlotHandle<T>` and
 // `CellHandle<T>` are DELETED and everything is collapsed onto the two public
@@ -477,8 +477,10 @@ private:
 
 struct Effect {
   SlotId id;
+  uint64_t generation = 0;
   Effect() = default;
   explicit Effect(SlotId id_) : id(id_) {}
+  Effect(SlotId id_, uint64_t generation_) : id(id_), generation(generation_) {}
   void dispose(Context& ctx) const;
   // Liveness is `ctx.is_effect_active(eff)` — the former `Effect::is_active`
   // member (and the whole `SignalHandle` type) are retired (`#lzcellkernel`).
@@ -745,7 +747,7 @@ public:
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
     flush_effects();
-    return Effect(id);
+    return Effect(id, node_generation(id));
   }
 
   template <typename F> Effect effect_void(F&& run) {
@@ -764,7 +766,7 @@ public:
     insert_node(id, Node(std::move(node)));
     schedule_effect(id, false);
     flush_effects();
-    return Effect(id);
+    return Effect(id, node_generation(id));
   }
 
   void dispose_effect(const Effect& handle) {
@@ -773,6 +775,7 @@ public:
     {
       auto idx = node_index(handle.id);
       if (!idx || *idx >= nodes_.size() || std::holds_alternative<EmptyNode>(nodes_[*idx])) return;
+      if (node_generation(handle.id) != handle.generation) return;
       auto& node = nodes_[*idx];
       // Read the kind from the arena BEFORE touching anything. A stale handle
       // whose id has since been recycled onto a node of another kind must be a
@@ -792,15 +795,17 @@ public:
   }
 
   bool is_effect_active(const Effect& handle) {
+    if (node_generation(handle.id) != handle.generation) return false;
     auto* node = get_node(handle.id);
     return node && std::holds_alternative<EffectNode>(*node);
   }
 
   // ── Node disposal (#lzspecedgeindex) ──────────────────────────────────────
   //
-  // Without these a Slot or Cell is permanent. Handles are copyable ids, not
-  // owners, so dropping every handle to a node reclaims nothing: the node and
-  // its edge on each dependency live as long as the context. Under
+  // Without these a Slot or Cell is permanent. Handles are copyable occupant
+  // identities, not owners, so dropping every handle to a node reclaims
+  // nothing: the node and its edge on each dependency live as long as the
+  // context. Under
   // subscribe/unsubscribe churn that is unbounded growth in both memory and
   // propagation cost — a source's dependent list keeps lengthening even though
   // the live subscriber count is constant, and every publish walks the whole
@@ -809,8 +814,9 @@ public:
   /// Tear down a derived slot: detach both edge directions, dirty the surviving
   /// dependent cone, clear the node, and recycle its id.
   ///
-  /// A no-op if `handle` names no node, or names one of another kind — a stale
-  /// handle whose id has been recycled must not destroy the new occupant.
+  /// A no-op if `handle` names no node, has a stale generation, or names one of
+  /// another kind — a stale handle whose id has been recycled must not destroy
+  /// the new occupant.
   /// Disposing twice is therefore a no-op too, which keeps teardown paths
   /// idempotent.
   ///
@@ -818,6 +824,7 @@ public:
   /// reading a disposed node throws `DisposedError`, and so does a surviving
   /// reader's next recompute if it still names one.
   template <typename T> void dispose_slot(const Computed<T>& handle) {
+    if (node_generation(handle.id()) != handle.generation()) return;
     dispose_slot_id(handle.id());
   }
 
@@ -827,15 +834,16 @@ public:
   /// Cells are pure sources with no dependencies, so only downstream edges need
   /// detaching. Same contract as `dispose_slot` in every other respect.
   template <typename T, typename M> void dispose_cell(const Source<T, M>& handle) {
+    if (node_generation(handle.id()) != handle.generation()) return;
     dispose_cell_id(handle.id());
   }
 
-  /// Tear down whatever node `id` names, dispatching on the kind recorded in
-  /// the arena.
+  /// Tear down the current occupant of `id`, dispatching on the kind recorded
+  /// in the arena. This raw-id helper deliberately snapshots the current
+  /// generation; handle-based disposal must use the typed overloads above so a
+  /// stale occupant identity remains fenced.
   ///
-  /// The kind is read from the arena rather than remembered by the caller, so a
-  /// teardown scope stores 8 bytes per node and no tag. A no-op for an id that
-  /// names nothing.
+  /// A no-op for an id that names nothing.
   void dispose_id(SlotId id) {
     auto* node = get_node(id);
     if (!node) return;
@@ -844,7 +852,7 @@ public:
     } else if (std::holds_alternative<CellNode>(*node)) {
       dispose_cell_id(id);
     } else if (std::holds_alternative<EffectNode>(*node)) {
-      dispose_effect(Effect(id));
+      dispose_effect(Effect(id, node_generation(id)));
     }
   }
 
@@ -927,14 +935,16 @@ public:
   /// Create a `Source<T>` (a plain keep-latest input cell) holding `value`. The
   /// default-policy form of `source`; use `source_with<M>` for a folding policy.
   template <typename T> Source<T, KeepLatest> source(T value) {
-    return Source<T, KeepLatest>(make_cell_node<T>(std::move(value)));
+    const SlotId id = make_cell_node<T>(std::move(value));
+    return Source<T, KeepLatest>(id, node_generation(id));
   }
 
   /// Create a `Source<T, M>` whose writes fold under policy `M`
   /// (`source_with<Sum>(v)` is the former `merge_cell<Sum>(v)`). `M` cannot be
   /// defaulted on a function template, so this is a distinct name from `source`.
   template <typename M, typename T> Source<T, M> source_with(T value) {
-    return Source<T, M>(make_cell_node<T>(std::move(value)));
+    const SlotId id = make_cell_node<T>(std::move(value));
+    return Source<T, M>(id, node_generation(id));
   }
 
   /// Deprecated alias for `source` (`#lzcellkernel`) — the former `cell(v)`.
@@ -1002,10 +1012,10 @@ public:
     }
     // Attach the puller. `effect_void` may reallocate `nodes_`, so set the bit
     // AFTER, re-fetching the node.
-    auto slot_handle = Computed<T>(id);
+    auto slot_handle = Computed<T>(id, node_generation(id));
     Effect eff = effect_void([slot_handle](Compute& ctx) { ctx.template get_rc<T>(slot_handle); });
     if (auto* slot = get_slot_node(id)) slot->eager = true;
-    eager_by_[id.value] = eff.id.value;
+    eager_by_[id.value] = eff;
   }
 
   /// Make the computed cell named by `id` lazy: dispose its puller, clear the
@@ -1013,7 +1023,7 @@ public:
   void make_lazy(SlotId id) {
     auto it = eager_by_.find(id.value);
     if (it == eager_by_.end()) return;
-    Effect eff(SlotId(it->second));
+    Effect eff = it->second;
     eager_by_.erase(it);
     if (auto* slot = get_slot_node(id)) slot->eager = false;
     dispose_effect(eff);
@@ -1074,11 +1084,11 @@ private:
   uint64_t next_id_ = 0;
   std::vector<uint64_t> free_ids_;
   // Eager-computed side table (`#lzcellkernel` §9.3.3): an eager computed cell's
-  // slot id -> its puller effect's id. One entry per EAGER computed, zero per
-  // lazy one. Owner-keyed, so it MUST be cleared on disposal / `make_lazy` (done
-  // in `dispose_slot_id`/`make_lazy`) or a recycled id would alias the disposed
-  // computed cell's puller.
-  std::unordered_map<uint64_t, uint64_t> eager_by_;
+  // slot id -> its puller effect's occupant identity. One entry per EAGER
+  // computed, zero per lazy one. Owner-keyed, so it MUST be cleared on disposal
+  // / `make_lazy` (done in `dispose_slot_id`/`make_lazy`) or a recycled id would
+  // alias the disposed computed cell's puller.
+  std::unordered_map<uint64_t, Effect> eager_by_;
   // Ripple-guard side table (`#lzcellkernel`): a `computed_ripple_when` cell's
   // slot id -> its stored equality guard (`!changed(old, new)`; true = suppress).
   // One entry per ripple-guarded computed, zero for plain `computed`/`slot` (which
@@ -1114,8 +1124,9 @@ private:
   BatchSet batched_cell_clears_;
   BatchSet batched_slots_;
   // Per-node generation stamp (see `node_generation`/`bump_generation`). Grows
-  // lazily; only ever touched by a dispose or by a `Compute`'s tracked read.
-  std::vector<uint32_t> generations_;
+  // lazily; stamped into handles on construction, checked before handle-based
+  // disposal, and captured by a `Compute` for tracked reads.
+  std::vector<uint64_t> generations_;
 
   static std::optional<size_t> node_index(SlotId id) {
     if (id.value > static_cast<uint64_t>(SIZE_MAX)) return std::nullopt;
@@ -1173,7 +1184,7 @@ private:
   void dispose_slot_id(SlotId id) {
     EdgeSet deps;
     EdgeSet dependents;
-    std::optional<SlotId> puller;
+    std::optional<Effect> puller;
     {
       auto idx = node_index(id);
       if (!idx || *idx >= nodes_.size()) return;
@@ -1189,7 +1200,7 @@ private:
       if (slot->eager) {
         auto it = eager_by_.find(id.value);
         if (it != eager_by_.end()) {
-          puller = SlotId(it->second);
+          puller = it->second;
           eager_by_.erase(it);
         }
         slot->eager = false;
@@ -1197,7 +1208,7 @@ private:
       // Clear any ripple guard so a recycled id never inherits it.
       if (!ripple_by_.empty()) ripple_by_.erase(id.value);
     }
-    if (puller) dispose_effect(Effect(*puller));
+    if (puller) dispose_effect(*puller);
     // Detach both directions before the node goes away.
     for (auto dep_id : deps)
       remove_dependent_edge(dep_id, id);
@@ -1242,12 +1253,14 @@ private:
 
   // ── Node generation stamps (#lzcellkernel fortification) ──
   //
-  // A `Compute` captures the recomputing node's generation at construction and
-  // refuses to register an edge once it changes — the node was disposed (and its
-  // id perhaps recycled) mid-recompute, so an edge against it would misattribute
-  // to an unrelated node. `generations_` is grown lazily and bumped on every
-  // dispose; a never-disposed node stays at generation 0 and pays nothing.
-  uint32_t node_generation(SlotId id) const {
+  // Every public handle captures its occupant generation. Disposal checks that
+  // generation before consulting kind or mutating graph, scheduling, or cleanup
+  // state. A `Compute` also captures the recomputing node's generation and
+  // refuses to register an edge once it changes: the node was disposed (and its
+  // id perhaps recycled) mid-recompute, so an edge against it would
+  // misattribute to an unrelated node. `generations_` is grown lazily and
+  // bumped on every dispose; a never-disposed node stays at generation 0.
+  uint64_t node_generation(SlotId id) const {
     auto idx = node_index(id);
     if (!idx || *idx >= generations_.size()) return 0;
     return generations_[*idx];
@@ -1351,7 +1364,7 @@ private:
         ComputeFnPtr(new RcBox<ComputeFn>(std::move(compute_fn)), typename ComputeFnPtr::adopt_t{});
     node.equals = eq;
     insert_node(id, Node(std::move(node)));
-    return Computed<T>(id);
+    return Computed<T>(id, node_generation(id));
   }
 
   /// Create a source-cell node holding `value`; returns its id. Backs `source`
@@ -1772,7 +1785,7 @@ public:
   using ContextType = ContextImpl<Traits>;
 
   // Constructed by the engine (`recompute_slot_now` / `run_effect`) only.
-  ComputeImpl(ContextType& ctx, SlotId node, uint32_t generation)
+  ComputeImpl(ContextType& ctx, SlotId node, uint64_t generation)
       : ctx_(&ctx), node_(node), gen_(generation) {}
 
   // Non-escapable by construction — see the fortification note above.
@@ -1860,7 +1873,7 @@ private:
 
   ContextType* ctx_;
   SlotId node_;
-  uint32_t gen_;
+  uint64_t gen_;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1880,11 +1893,10 @@ private:
 //
 // ## Move-only, deliberately
 //
-// Copying is deleted. A copyable teardown scope would hold two owned-id lists
-// naming the same nodes, and the second destructor to run would dispose ids
-// that are gone or — worse, since disposal recycles ids — ids that now name
-// unrelated nodes. That is the same stale-handle hazard the corpus pins in
-// recycled_id_inherits_nothing.json, manufactured by the ownership type itself.
+// Copying is deleted. A copyable teardown scope would hold two owned-identity
+// lists naming the same nodes and would attempt every disposal twice. Identity
+// checks make the second attempt inert, but duplicating ownership remains a
+// misleading and unnecessary lifetime model.
 // Moving is allowed and is what makes `Context::scope()` returnable by value:
 // the moved-from scope is left owning nothing, so its destructor is a no-op and
 // exactly one teardown happens.
@@ -1933,33 +1945,33 @@ public:
   /// Create a **guarded** `Computed<T>` (`#lzcellkernel`) owned by this scope.
   template <typename T, typename F> Computed<T> computed(F&& compute) {
     auto handle = ctx_->template computed<T>(std::forward<F>(compute));
-    owned_.push_back(handle.id());
+    owned_.push_back({handle.id(), handle.generation(), OwnedKind::Computed});
     return handle;
   }
 
   /// Unguarded pass-through derived cell owned by this scope (`#lzcellkernel`).
   template <typename T, typename F> Computed<T> slot(F&& compute) {
     auto handle = ctx_->template slot<T>(std::forward<F>(compute));
-    owned_.push_back(handle.id());
+    owned_.push_back({handle.id(), handle.generation(), OwnedKind::Computed});
     return handle;
   }
 
   /// Create a `Source<T>` owned by this scope (the canonical source cell).
   template <typename T> Source<T, KeepLatest> source(T value) {
     auto handle = ctx_->template source<T>(std::move(value));
-    owned_.push_back(handle.id());
+    owned_.push_back({handle.id(), handle.generation(), OwnedKind::Source});
     return handle;
   }
 
   template <typename F> Effect effect(F&& run) {
     auto handle = ctx_->effect(std::forward<F>(run));
-    owned_.push_back(handle.id);
+    owned_.push_back({handle.id, handle.generation, OwnedKind::Effect});
     return handle;
   }
 
   template <typename F> Effect effect_void(F&& run) {
     auto handle = ctx_->effect_void(std::forward<F>(run));
-    owned_.push_back(handle.id);
+    owned_.push_back({handle.id, handle.generation, OwnedKind::Effect});
     return handle;
   }
 
@@ -1984,7 +1996,7 @@ public:
   /// so an explicit call is only needed to end a scope before its block does.
   void end() {
     if (owned_.empty()) return;
-    std::vector<SlotId> owned;
+    std::vector<Owned> owned;
     owned.swap(owned_);
     // Reverse creation order: dependents before what they read, so the scope
     // never transiently dangles inside itself while tearing down. This ordering
@@ -1992,16 +2004,35 @@ public:
     // cleanup callback — which is exactly what the corpus pins as
     // `cleanup_order`, and it is why disposing forward would still leave every
     // edge and readability assertion in the corpus green.
-    for (auto it = owned.rbegin(); it != owned.rend(); ++it)
-      ctx_->dispose_id(*it);
+    for (auto it = owned.rbegin(); it != owned.rend(); ++it) {
+      switch (it->kind) {
+      case OwnedKind::Source:
+        ctx_->dispose_cell(Source<unsigned char>(it->id, it->generation));
+        break;
+      case OwnedKind::Computed:
+        ctx_->dispose_slot(Computed<unsigned char>(it->id, it->generation));
+        break;
+      case OwnedKind::Effect:
+        ctx_->dispose_effect(Effect(it->id, it->generation));
+        break;
+      }
+    }
   }
 
 private:
+  enum class OwnedKind : uint8_t { Source, Computed, Effect };
+  struct Owned {
+    SlotId id;
+    uint64_t generation;
+    OwnedKind kind;
+  };
+
   ContextType* ctx_;
-  // Ids only — 8 bytes per node, no boxing and no kind tag. The kind is read
-  // back from the arena at teardown, which is also what makes a scope safe
-  // against a member that was already disposed individually.
-  std::vector<SlotId> owned_;
+  // Retain the complete occupant identity. A member disposed individually and
+  // replaced before scope teardown is skipped even if its slot and kind match
+  // the successor; an effect successor's cleanup cannot run through stale scope
+  // membership.
+  std::vector<Owned> owned_;
 };
 
 template <typename Traits> inline TeardownScopeImpl<Traits> ContextImpl<Traits>::scope() {

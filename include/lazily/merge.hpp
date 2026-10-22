@@ -90,26 +90,30 @@ public:
   // which includes this header — storing the id keeps merge.hpp free of that
   // cycle; the `Source<T>` handle is materialized inside each template method,
   // which is only instantiated where cell.hpp is already complete).
-  MergeCell(Context& ctx, T initial) : ctx_(&ctx), cell_(ctx.source(std::move(initial)).id()) {}
+  MergeCell(Context& ctx, T initial) : ctx_(&ctx) {
+    const auto handle = ctx.source(std::move(initial));
+    cell_ = handle.id();
+    generation_ = handle.generation();
+  }
 
   /// The underlying reactive cell (for wiring derived readers).
-  Source<T> cell() const { return Source<T>(cell_); }
+  Source<T> cell() const { return Source<T>(cell_, generation_); }
 
   /// Read the current converged value through a compute-time surface — a
   /// `Compute&` (value-threaded tracking, registers a dependency) or a
   /// `Context&` (untracked). This is the tracking read for use inside a
   /// compute/effect closure (`#lzcellkernel`).
-  template <typename Cx> T get(Cx& cx) const { return cx.get(Source<T>(cell_)); }
+  template <typename Cx> T get(Cx& cx) const { return cx.get(Source<T>(cell_, generation_)); }
 
   /// Read the current converged value untracked (outside any computation).
-  T get() const { return ctx_->get(Source<T>(cell_)); }
+  T get() const { return ctx_->get(Source<T>(cell_, generation_)); }
 
   /// Replace the value outright (the keep-latest write), bypassing the policy.
-  void set(T value) { ctx_->set(Source<T>(cell_), std::move(value)); }
+  void set(T value) { ctx_->set(Source<T>(cell_, generation_), std::move(value)); }
 
   /// Fold `op` into the current value under `Policy`. Reads untracked via peek.
   void merge(T op) {
-    Source<T> h(cell_);
+    Source<T> h(cell_, generation_);
     T old = ctx_->peek_cell(h).value();
     ctx_->set(h, Policy::template merge<T>(old, std::move(op)));
   }
@@ -117,6 +121,7 @@ public:
 private:
   Context* ctx_;
   SlotId cell_;
+  uint64_t generation_ = 0;
 };
 
 } // namespace lazily

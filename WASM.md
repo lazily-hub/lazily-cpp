@@ -110,7 +110,7 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `presence` | 3 | 3 | — |  |
 | `protobuf` | 1 | — | — | not on wasm — lazily-cpp ships no protobuf codec in ANY target, native included — a binding gap, not a wasm limit |
 | `rateshape` | 6 | 6 | — |  |
-| `reactive-graph` | 21 | — | 21 | needs -pthread |
+| `reactive-graph` | 22 | — | 22 | needs -pthread |
 | `receipts` | 1 | 1 | — |  |
 | `reliable-sync` | 9 | — | — | not on wasm — the durable outbox is file-backed (unistd.h/fcntl.h); reliable_sync.hpp refuses to compile under __EMSCRIPTEN__ |
 | `replay` | 3 | 3 | — |  |
@@ -122,7 +122,7 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **162** | **96** | **47** | |
+| **total** | **163** | **96** | **48** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits

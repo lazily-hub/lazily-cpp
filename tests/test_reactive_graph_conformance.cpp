@@ -132,6 +132,7 @@ const std::vector<std::string> FIXTURES = {
     "scoping_bounds_teardown_not_visibility.json",
     "signal_materializes_once_per_batch.json",
     "signal_materializes_without_a_read.json",
+    "stale_effect_handle_cannot_remove_recycled_source.json",
     "teardown_runs_members_in_reverse_creation_order.json",
     "transitive_invalidation_reaches_depth.json",
 };
@@ -229,10 +230,13 @@ enum class Kind { Cell, Slot, Effect, Signal };
 struct Ref {
   Kind kind = Kind::Cell;
   SlotId id;
+  uint64_t generation = 0;
   SlotId effect_id;
+  uint64_t effect_generation = 0;
   Ref() = default;
-  Ref(Kind k, SlotId i) : kind(k), id(i) {}
-  Ref(Kind k, SlotId i, SlotId e) : kind(k), id(i), effect_id(e) {}
+  Ref(Kind k, SlotId i, uint64_t g) : kind(k), id(i), generation(g) {}
+  Ref(Kind k, SlotId i, uint64_t g, SlotId e, uint64_t eg)
+      : kind(k), id(i), generation(g), effect_id(e), effect_generation(eg) {}
 };
 
 // `handle_kind` (dispose_stale_handle) names the kind a recycled handle must
@@ -333,7 +337,7 @@ struct World {
   template <typename Cx> long long read_ref(Cx& c, const Ref& ref) {
     switch (ref.kind) {
     case Kind::Cell:
-      return c.get(Source<long long>(ref.id));
+      return c.get(Source<long long>(ref.id, ref.generation));
     case Kind::Slot:
     // A signal reads through its backing slot — `get_signal` is defined as
     // exactly that. Reading the slot directly is not a shortcut around the
@@ -341,7 +345,7 @@ struct World {
     // what makes a de-eagered signal indistinguishable from a memo at the
     // read site, which is clause 4's whole claim.
     case Kind::Signal:
-      return c.get(Computed<long long>(ref.id));
+      return c.get(Computed<long long>(ref.id, ref.generation));
     case Kind::Effect:
       REQUIRE(false, "fixture read of an effect — effects are pure sinks");
     }
@@ -390,7 +394,8 @@ bool readable(World& w, const std::string& id) {
   REQUIRE(it != w.nodes.end(), "fixture asserts readable." + id +
                                    " for an id the replay never created, so non-existence would "
                                    "satisfy the claim instead of disposal (#lzflagcoercion)");
-  if (it->second.kind == Kind::Effect) return w.ctx.is_effect_active(Effect(it->second.id));
+  if (it->second.kind == Kind::Effect)
+    return w.ctx.is_effect_active(Effect(it->second.id, it->second.generation));
   return try_read(w, id).ok;
 }
 
@@ -400,12 +405,12 @@ std::size_t dependents_of(World& w, const std::string& id) {
   const Ref ref = w.lookup(id);
   switch (ref.kind) {
   case Kind::Cell:
-    return w.ctx.dependent_count(Source<long long>(ref.id));
+    return w.ctx.dependent_count(Source<long long>(ref.id, ref.generation));
   case Kind::Slot:
   case Kind::Signal:
-    return w.ctx.dependent_count(Computed<long long>(ref.id));
+    return w.ctx.dependent_count(Computed<long long>(ref.id, ref.generation));
   case Kind::Effect:
-    return w.ctx.dependent_count(Effect(ref.id));
+    return w.ctx.dependent_count(Effect(ref.id, ref.generation));
   }
   return 0;
 }
@@ -414,12 +419,12 @@ std::size_t dependencies_of(World& w, const std::string& id) {
   const Ref ref = w.lookup(id);
   switch (ref.kind) {
   case Kind::Cell:
-    return w.ctx.dependency_count(Source<long long>(ref.id));
+    return w.ctx.dependency_count(Source<long long>(ref.id, ref.generation));
   case Kind::Slot:
   case Kind::Signal:
-    return w.ctx.dependency_count(Computed<long long>(ref.id));
+    return w.ctx.dependency_count(Computed<long long>(ref.id, ref.generation));
   case Kind::Effect:
-    return w.ctx.dependency_count(Effect(ref.id));
+    return w.ctx.dependency_count(Effect(ref.id, ref.generation));
   }
   return 0;
 }
@@ -427,21 +432,21 @@ std::size_t dependencies_of(World& w, const std::string& id) {
 void dispose_ref(World& w, const Ref& ref) {
   switch (ref.kind) {
   case Kind::Cell:
-    w.ctx.dispose_cell(Source<long long>(ref.id));
+    w.ctx.dispose_cell(Source<long long>(ref.id, ref.generation));
     return;
   case Kind::Slot:
-    w.ctx.dispose_slot(Computed<long long>(ref.id));
+    w.ctx.dispose_slot(Computed<long long>(ref.id, ref.generation));
     return;
   case Kind::Effect:
-    w.ctx.dispose_effect(Effect(ref.id));
+    w.ctx.dispose_effect(Effect(ref.id, ref.generation));
     return;
   case Kind::Signal:
     // The generic `dispose` op means node teardown, so a signal loses BOTH
     // halves here. This is deliberately not what `dispose_signal` does — see
     // the op below, which drops only the puller. Conflating the two is
     // failure (a) in dispose_signal_reverts_to_lazy.json.
-    w.ctx.dispose_effect(Effect(ref.effect_id));
-    w.ctx.dispose_slot(Computed<long long>(ref.id));
+    w.ctx.dispose_effect(Effect(ref.effect_id, ref.effect_generation));
+    w.ctx.dispose_slot(Computed<long long>(ref.id, ref.generation));
     return;
   }
 }
@@ -633,6 +638,7 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
     bool op_error = false;
     bool have_value = false;
     long long op_value = 0;
+    bool recycled_id_confirmed = false;
     ++report.ops;
 
     auto op_id = [&]() -> std::string {
@@ -645,13 +651,13 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
       const Json* value = op->find("value");
       REQUIRE(value != nullptr, "cell op has no value");
       auto h = make_cell(w, value->as_int(), scope_of(w, op));
-      bind_node(w, op_id(), Ref(Kind::Cell, h.id()));
+      bind_node(w, op_id(), Ref(Kind::Cell, h.id(), h.generation()));
     } else if (kind == "computed") {
       const Json* offset = op->find("offset");
       const std::string id = op_id();
       auto h =
           make_computed(w, id, reads_of(w, op), offset ? offset->as_int() : 0, scope_of(w, op));
-      bind_node(w, id, Ref(Kind::Slot, h.id()));
+      bind_node(w, id, Ref(Kind::Slot, h.id(), h.generation()));
     } else if (kind == "signal" || kind == "eager") {
       // The eager construction (`#lzcellkernel` §9.3.1): a guarded `computed`
       // whose `.eager()` attaches the puller effect. The retired `Signal` is
@@ -663,7 +669,7 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
       const Json* offset = op->find("offset");
       const std::string id = op_id();
       auto h = make_eager(w, id, reads_of(w, op), offset ? offset->as_int() : 0);
-      bind_node(w, id, Ref(Kind::Slot, h.id()));
+      bind_node(w, id, Ref(Kind::Slot, h.id(), h.generation()));
     } else if (kind == "dispose_signal" || kind == "lazy") {
       // De-eager: dispose the puller only. The backing computed cell keeps its
       // value, its edges, and its readability — the op makes the cell lazy
@@ -684,13 +690,13 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
           REQUIRE(wid && wvalue, "batch write needs an id and a value");
           const Ref ref = w.lookup(wid->str);
           REQUIRE(ref.kind == Kind::Cell, "batch write to a node that is not a cell");
-          c.set(Source<long long>(ref.id), wvalue->as_int());
+          c.set(Source<long long>(ref.id, ref.generation), wvalue->as_int());
         }
       });
     } else if (kind == "effect") {
       const std::string id = op_id();
       auto h = make_effect(w, id, reads_of(w, op), scope_of(w, op));
-      bind_node(w, id, Ref(Kind::Effect, h.id));
+      bind_node(w, id, Ref(Kind::Effect, h.id, h.generation));
     } else if (kind == "read") {
       const ReadOut out = try_read(w, op_id());
       op_error = !out.ok;
@@ -706,7 +712,7 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
       REQUIRE(value != nullptr, "set_cell op has no value");
       const Ref ref = w.lookup(op_id());
       REQUIRE(ref.kind == Kind::Cell, "set_cell on a node that is not a cell");
-      w.ctx.set(Source<long long>(ref.id), value->as_int());
+      w.ctx.set(Source<long long>(ref.id, ref.generation), value->as_int());
     } else if (kind == "dispose") {
       // The binding is deliberately NOT erased: a disposed id stays
       // readable-as-an-error, and disposing it again must be a no-op.
@@ -721,7 +727,8 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
         // Subscribers are effects, not derived slots: the corpus asserts
         // `observed_count` on a publish, and in a lazy binding only an eager
         // reader observes a publish without being pulled.
-        bind_node(w, id, Ref(Kind::Effect, make_effect(w, id, base, nullptr).id));
+        const Effect handle = make_effect(w, id, base, nullptr);
+        bind_node(w, id, Ref(Kind::Effect, handle.id, handle.generation));
       }
     } else if (kind == "dispose_fanout") {
       const Json* prefix = op->find("id_prefix");
@@ -746,7 +753,8 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
           const std::string id = prefix->str + "_" + std::to_string(c % width->as_int());
           auto it = w.nodes.find(id);
           if (it != w.nodes.end()) dispose_ref(w, it->second);
-          bind_node(w, id, Ref(Kind::Effect, make_effect(w, id, {src}, nullptr).id));
+          const Effect handle = make_effect(w, id, {src}, nullptr);
+          bind_node(w, id, Ref(Kind::Effect, handle.id, handle.generation));
         }
       } else if (mode->str == "scope_per_cycle") {
         // One teardown scope per cycle; its subscriber is gone by the end of
@@ -791,6 +799,19 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
       REQUIRE(it != w.stale.end(), "no recorded handle for handle_of");
       REQUIRE(it->second.kind == handle_kind_of(want_kind->str),
               "handle_kind does not match the recorded handle");
+
+      const Json* successor_name = op->find("successor");
+      const Json* successor_kind = op->find("successor_kind");
+      REQUIRE(successor_name && successor_kind,
+              "dispose_stale_handle op needs successor and successor_kind");
+      const Ref successor = w.lookup(successor_name->str);
+      REQUIRE(successor.kind == handle_kind_of(successor_kind->str),
+              "successor_kind does not match the current successor");
+      REQUIRE(it->second.id == successor.id,
+              "stale handle and successor did not reuse one allocator slot");
+      REQUIRE(it->second.generation != successor.generation,
+              "stale handle and successor share one occupant generation");
+      recycled_id_confirmed = true;
       dispose_ref(w, it->second);
     } else {
       REQUIRE(false, "unsupported op reached the replay engine");
@@ -915,6 +936,36 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
               return true;
             });
         });
+      } else if (key == "recycled_id_confirmed") {
+        expected.assert_key_with("recycled_id_confirmed", [&](const lazily_test::Json& value) {
+          check(fixture, i, "recycled_id_confirmed", recycled_id_confirmed,
+                lazily_test::fixture_flag(value, "recycled_id_confirmed"), report);
+          return true;
+        });
+      } else if (key == "writable") {
+        expected.with_sub("writable", [&](lazily_test::AssertionKeys& writable_nodes) {
+          for (const auto& id : writable_nodes.keys()) {
+            writable_nodes.assert_key_with(id, [&](const lazily_test::Json& value) {
+              const bool writable = w.lookup(id).kind == Kind::Cell;
+              check(fixture, i, "writable." + id, writable,
+                    lazily_test::fixture_flag(value, "writable." + id), report);
+              return true;
+            });
+          }
+        });
+      } else if (key == "cleanups_of") {
+        expected.with_sub("cleanups_of", [&](lazily_test::AssertionKeys& cleanups) {
+          for (const auto& id : cleanups.keys()) {
+            cleanups.assert_key_with(id, [&](const lazily_test::Json& value) {
+              std::size_t count = 0;
+              for (const auto& cleaned : w.cleanup_log)
+                if (cleaned == id) ++count;
+              check(fixture, i, "cleanups_of." + id, count,
+                    static_cast<std::size_t>(value.as_int()), report);
+              return true;
+            });
+          }
+        });
       } else if (key == "observed_by") {
         expected.assert_key_with("observed_by", [&](const lazily_test::Json& value) {
           std::vector<std::string> names;
@@ -1018,7 +1069,7 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
     const Ref ref = w.lookup(pid->str);
     REQUIRE(ref.kind == Kind::Cell, "after_publish set_cell on a non-cell");
     const std::size_t before = w.run_log.size();
-    w.ctx.set(Source<long long>(ref.id), pvalue->as_int());
+    w.ctx.set(Source<long long>(ref.id, ref.generation), pvalue->as_int());
     report.observation.after_publish_observed.assign(w.run_log.begin() + before, w.run_log.end());
     after_publish.assert_key_with("observed_by", [&](const lazily_test::Json& value) {
       std::vector<std::string> names;
@@ -1343,7 +1394,7 @@ int main() {
             << std::endl;
 
   // All canonical fixtures were actually opened and parsed.
-  REQUIRE_FIXTURES_LOADED(21);
+  REQUIRE_FIXTURES_LOADED(22);
 
   std::cout << "reactive-graph conformance: " << replayed << "/" << FIXTURES.size()
             << " fixtures replayed against Context (" << total_ops << " ops, " << total_checks

@@ -78,9 +78,15 @@ public:
 
   Source() = default;
   explicit Source(SlotId id) : id_(id) {}
+  Source(SlotId id, uint64_t generation) : id_(id), generation_(generation) {}
 
   // The underlying storage-slot id (STORAGE sense of "slot", §5.0).
   SlotId id() const { return id_; }
+
+  // Occupant identity within the recyclable storage slot. A new occupant of
+  // the same slot receives a different generation, so stale disposal cannot
+  // alias it (#lzstalehandlespec).
+  uint64_t generation() const { return generation_; }
 
   // Read the current converged value, registering a dependency in a computation.
   // Genericized over the `ComputeOps` surface (`#lzcellkernel`): `cx` may be a
@@ -113,21 +119,23 @@ public:
 
   // The policy-erased keep-latest view of this cell, for wiring derived readers
   // that want a plain handle. Same underlying node.
-  Source<T, KeepLatest> as_keep_latest() const { return Source<T, KeepLatest>(id_); }
+  Source<T, KeepLatest> as_keep_latest() const { return Source<T, KeepLatest>(id_, generation_); }
 
   // Clear all dependent computed cells without changing this cell's value.
   void clear_dependents(Context& ctx) const { ctx.clear_cell_dependents(id_); }
 
-  // Tear this source down (detaches dependents, recycles the id). Kind-checked.
+  // Tear this source down (detaches dependents, recycles the id). Occupant
+  // generation and kind are checked before any mutation.
   template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0> void dispose(C& cx) const {
     cx.dispose_cell(*this);
   }
 
-  bool operator==(const Source& o) const { return id_ == o.id_; }
+  bool operator==(const Source& o) const { return id_ == o.id_ && generation_ == o.generation_; }
   bool operator!=(const Source& o) const { return !(*this == o); }
 
 private:
   SlotId id_{};
+  uint64_t generation_ = 0;
 };
 
 // ── Computed — the computed-cell handle ─────────────────────────────────────
@@ -141,9 +149,11 @@ public:
 
   Computed() = default;
   explicit Computed(SlotId id) : id_(id) {}
+  Computed(SlotId id, uint64_t generation) : id_(id), generation_(generation) {}
 
   // The underlying storage-slot id (STORAGE sense of "slot", §5.0).
   SlotId id() const { return id_; }
+  uint64_t generation() const { return generation_; }
 
   // Read the current value, registering a dependency inside a computation.
   // Genericized over the `ComputeOps` surface (`#lzcellkernel`): tracked through
@@ -182,16 +192,18 @@ public:
   }
 
   // Tear this computed cell down (detaches edges, tears down its puller if
-  // eager, recycles the id). Kind-checked: a stale/recycled id is a no-op.
+  // eager, recycles the id). Generation- and kind-checked: a stale/recycled
+  // occupant identity is a no-op.
   template <typename C, std::enable_if_t<is_compute_ops_v<C>, int> = 0> void dispose(C& cx) const {
     cx.dispose_slot(*this);
   }
 
-  bool operator==(const Computed& o) const { return id_ == o.id_; }
+  bool operator==(const Computed& o) const { return id_ == o.id_ && generation_ == o.generation_; }
   bool operator!=(const Computed& o) const { return !(*this == o); }
 
 private:
   SlotId id_{};
+  uint64_t generation_ = 0;
 };
 
 } // namespace lazily
