@@ -14,7 +14,8 @@ conformance conformance-coverage assertion-ordering-check bench ci-reach \
 wasm wasm-core wasm-threaded wasm-matrix wasm-bench wasm-corpus-column \
 core-facade-check \
 core-api-check core-api-self-test core-report-self-test \
-core-artifact-consumer-check
+core-artifact-consumer-check \
+core-evidence-check
 
 BUILD_DIR ?= build
 
@@ -77,6 +78,16 @@ all: check
 
 core-artifact-consumer-check:
 	./scripts/core-artifact-consumer-check.sh
+
+# Per-binding Core evidence gate (#lzbindingevidenceci). Runs lazily-spec's
+# verifier for this binding alone: it regenerates the Core report through
+# scripts/core-conformance.json's report_command, then checks it against the
+# canonical profile, so stale evidence handles, unreported skips and a missing
+# report are red on push instead of only at cohort qualification.
+# --require-all turns an absent ../lazily-spec layout or declaration into a
+# failure, never a skip.
+core-evidence-check:
+	node ../lazily-spec/scripts/check-core-evidence.mjs --bindings-root .. --binding cpp --reports build/core-evidence --generate-reports --require-all
 
 core-facade-check:
 	./scripts/check-core-package.sh
@@ -240,7 +251,7 @@ core-api-self-test:
 core-report-self-test:
 	python3 scripts/generate-core-report.py --self-test
 
-check: fmt build test test-interop-peer conformance-coverage core-facade-check core-api-check core-api-self-test core-report-self-test core-artifact-consumer-check ci-reach assertion-ordering-check wasm-corpus-column
+check: fmt build test test-interop-peer conformance-coverage core-facade-check core-api-check core-api-self-test core-report-self-test core-artifact-consumer-check core-evidence-check ci-reach assertion-ordering-check wasm-corpus-column
 	@echo "lazily-cpp: check OK"
 
 # ── Emscripten/wasm32 (`#lzcppwasm`) ───────────────────────────────────────
