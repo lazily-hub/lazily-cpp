@@ -136,13 +136,16 @@ template <typename T> struct EgressClaim {
   bool operator!=(const EgressClaim& o) const { return !(*this == o); }
 };
 
-enum class EgressAckKind { Advanced, Unchanged, StaleGeneration };
+enum class EgressAckKind { Advanced, Unchanged, StaleGeneration, BeyondSent };
 
 struct EgressAck {
   EgressAckKind kind = EgressAckKind::Unchanged;
   /// `Advanced`: the new watermark. `Unchanged`: the retained watermark.
   std::optional<std::uint64_t> through;
   std::uint64_t current = 0;
+  /// `BeyondSent`: the first sequence never assigned. An ACK at or past it
+  /// names a record that was never sent and is refused.
+  std::uint64_t next_sequence = 0;
 
   static EgressAck advanced(std::uint64_t through) {
     EgressAck a;
@@ -162,8 +165,15 @@ struct EgressAck {
     a.current = current;
     return a;
   }
+  static EgressAck beyond_sent(std::uint64_t next_sequence) {
+    EgressAck a;
+    a.kind = EgressAckKind::BeyondSent;
+    a.next_sequence = next_sequence;
+    return a;
+  }
   bool operator==(const EgressAck& o) const {
-    return kind == o.kind && through == o.through && current == o.current;
+    return kind == o.kind && through == o.through && current == o.current &&
+           next_sequence == o.next_sequence;
   }
   bool operator!=(const EgressAck& o) const { return !(*this == o); }
 };
@@ -341,9 +351,15 @@ public:
   }
 
   /// Advance the cumulative acknowledgement watermark and prune every record at
-  /// or below it.
+  /// or below it. A `through` at or past `next_sequence` is refused as
+  /// `BeyondSent` and changes nothing.
   std::pair<EgressChange, EgressAck> ack(std::uint64_t generation, std::uint64_t through) {
     if (generation != generation_) return {{}, EgressAck::stale_generation(generation_)};
+    // An ACK may only cover sequences this core has assigned. One at or past
+    // `next_sequence` acknowledges records that were never sent: refuse it
+    // before the watermark moves, so it can neither advance the frontier nor
+    // prune records enqueued later under those sequence numbers.
+    if (through >= next_sequence_) return {{}, EgressAck::beyond_sent(next_sequence_)};
     if (acked_through_.has_value() && through <= *acked_through_)
       return {{}, EgressAck::unchanged(acked_through_)};
     const std::size_t inflight_before = inflight_.size();
@@ -430,7 +446,11 @@ public:
     const bool retry_changed = retry_.has_value();
     retry_.reset();
     EgressChange change;
-    change.pending = replayed > 0;
+    // Pending changes when records were replayed into it AND when records
+    // already pending were re-stamped with the new generation: a reader holding
+    // the old projection would otherwise report envelopes from a fenced
+    // incarnation.
+    change.pending = replayed > 0 || !pending_.empty();
     change.inflight = replayed > 0;
     change.retry = retry_changed;
     return {change, EgressReconnect::advanced(generation, replayed)};

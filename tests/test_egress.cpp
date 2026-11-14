@@ -147,6 +147,68 @@ void backoff_saturates_at_the_ceiling() {
           "backoff doubles and clamps at the ceiling");
 }
 
+void an_ack_beyond_next_sequence_is_refused_and_changes_nothing() {
+  EgressCore<int> core(1, small_policy());
+  core.enqueue(10);
+  core.enqueue(20);
+  REQUIRE(core.claim(1).second.kind == EgressClaimKind::Claimed, "claim");
+  // next_sequence is 2: sequence 2 was never assigned, so it was never sent.
+  for (const std::uint64_t through : {std::uint64_t{2}, std::uint64_t{9}}) {
+    const auto result = core.ack(1, through);
+    REQUIRE(result.second.kind == EgressAckKind::BeyondSent && result.second.next_sequence == 2,
+            "an ACK at or past next_sequence is refused as beyond_sent");
+    REQUIRE(result.first.empty(), "a refused ACK invalidates nothing");
+  }
+  REQUIRE(!core.acked_through().has_value(), "the watermark did not move");
+  REQUIRE(core.inflight().size() == 1 && core.pending().size() == 1, "nothing was pruned");
+  // The boundary below the refusal still advances.
+  const auto edge = core.ack(1, 1);
+  REQUIRE(edge.second.kind == EgressAckKind::Advanced && edge.second.through == 1u,
+          "an ACK of the last assigned sequence advances");
+
+  // Through the shell: a refused ACK leaves every reader's cache warm.
+  Context ctx;
+  EgressCell<int> egress(ctx, 1);
+  egress.enqueue(ctx, 1);
+  (void)egress.pending(ctx);
+  (void)egress.inflight(ctx);
+  (void)egress.acked_through(ctx);
+  (void)egress.retry(ctx);
+  REQUIRE(egress.ack(ctx, 1, 1).kind == EgressAckKind::BeyondSent, "shell refuses too");
+  REQUIRE(lazily::egress_detail::is_valid(ctx, egress.pending_handle()) &&
+              lazily::egress_detail::is_valid(ctx, egress.inflight_handle()) &&
+              lazily::egress_detail::is_valid(ctx, egress.acked_through_handle()) &&
+              lazily::egress_detail::is_valid(ctx, egress.retry_handle()),
+          "a refused ACK invalidates no reader");
+}
+
+void reconnect_restamps_pending_and_invalidates_its_reader() {
+  // Nothing in flight, nothing parked: replayed == 0, but the pending records
+  // are re-stamped with the new generation, so the pending reader must refresh.
+  EgressCore<int> core(3, small_policy());
+  core.enqueue(10);
+  const auto result = core.reconnect(4);
+  REQUIRE(result.second.kind == EgressReconnectKind::Advanced && result.second.replayed == 0,
+          "a reconnect with nothing in flight replays nothing");
+  REQUIRE(result.first.pending, "but it still invalidates pending, whose generation moved");
+  REQUIRE(!result.first.inflight, "and not inflight, which did not change");
+  REQUIRE(core.pending().front().generation == 4, "pending carries the new generation");
+
+  Context ctx;
+  EgressCell<int> egress(ctx, 3);
+  egress.enqueue(ctx, 10);
+  REQUIRE(egress.pending(ctx).front().generation == 3, "warm read at the old generation");
+  egress.reconnect(ctx, 4);
+  REQUIRE(!lazily::egress_detail::is_valid(ctx, egress.pending_handle()),
+          "the pending reader was invalidated");
+  REQUIRE(egress.pending(ctx).front().generation == 4,
+          "a reader never reports an envelope from the fenced incarnation");
+
+  // An empty reconnect still dirties nothing.
+  EgressCore<int> idle(1, small_policy());
+  REQUIRE(idle.reconnect(2).first.empty(), "an empty reconnect invalidates nothing");
+}
+
 void unsound_policies_are_refused() {
   const auto refuses = [](EgressPolicy policy, EgressConfigError want) {
     try {
@@ -349,6 +411,8 @@ int main() {
   retry_budget_is_bounded();
   backoff_saturates_at_the_ceiling();
   unsound_policies_are_refused();
+  an_ack_beyond_next_sequence_is_refused_and_changes_nothing();
+  reconnect_restamps_pending_and_invalidates_its_reader();
 
   one_effect_projects_pending_to_transport_and_inflight();
   reconnect_makes_old_attachment_inert();

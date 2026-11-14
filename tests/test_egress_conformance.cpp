@@ -225,6 +225,10 @@ Rendered render(const EgressAck& ack) {
     r.scalars["ack"] = quoted("stale_generation");
     r.scalars["current"] = u64_text(ack.current);
     break;
+  case EgressAckKind::BeyondSent:
+    r.scalars["ack"] = quoted("beyond_sent");
+    r.scalars["next_sequence"] = u64_text(ack.next_sequence);
+    break;
   }
   return r;
 }
