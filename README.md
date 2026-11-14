@@ -66,6 +66,25 @@ frontier. `LatestDurableProjection`, `ThreadSafeLatestDurableProjection`, and
 `AsyncLatestDurableProjection` add reactive entry and generation handles for
 their corresponding execution models.
 
+### Reactive egress and generic effect CAS
+
+`EgressCore<T>` (`egress_core.hpp`, core tier) is the transport-agnostic
+delivery authority for an ordered outbound stream: monotone sequence
+assignment, a bounded unacknowledged window, a cumulative ACK watermark,
+bounded retry with doubling backoff and terminal exhaustion, and a
+producer-generation fence (`#lzegress`). `EgressCell`, `ThreadSafeEgressCell`,
+and `AsyncEgressCell` (`egress.hpp`) expose `pending` / `inflight` /
+`acked_through` / `retry` as memoized `Computed`s and attach exactly one
+transport Effect per producer incarnation; the async flavor keeps its readers
+synchronous and runs only the claim/send loop on the attachment's worker.
+
+`EffectCasCore<K, A, P, R, E>` (`effect_cas_core.hpp`, core tier) is the generic
+keyed compare-and-swap effect authority (`#lzeffectcas`): stable effect
+identity, opaque expected authority, keyed single-flight, latest-wins
+supersession, logical-clock retry, reconnect fencing, exact terminal receipts,
+and resumable ordered plans. Backends stay application-owned behind one atomic
+compare-and-apply (`EffectApply`).
+
 ## Feature Set
 
 Coverage by feature family across every binding, generated from
@@ -510,6 +529,9 @@ own section of [BENCHMARKS.md](BENCHMARKS.md) and are not comparable to native.
 | `resilience.hpp` | Fault tolerance — `CircuitBreakerCell` / `RetryPolicyCell` / `BulkheadCell` / `TimeoutCell` (`#lzresilience`) |
 | `service.hpp` | Embedded-service plane — `HealthCell` / `ReadinessCell` / `DiscoveryCell` / `ServiceRegistry` (`#lzservice`) |
 | `ingress.hpp` | Transport-agnostic reactive ingress — `IngressCore` admission algebra + `IngressCell` / `ThreadSafeIngressCell` / `AsyncIngressCell` shells; keyed lifecycle scopes, generation fence, reorder buffer, freshness horizon, three receipt channels, and the `IngressTransportSeam` / `InProcIngress` delivery seam (`#designimplementtransport`) |
+| `egress_core.hpp` | Reactive egress delivery authority — `EgressCore` (sequence, window, cumulative ACK, retry budget, generation fence); std-only, core tier (`#lzegress`) |
+| `egress.hpp` | Reactive egress shells — `EgressCell` / `ThreadSafeEgressCell` / `AsyncEgressCell` + `EgressTransport` attachment, one transport Effect per incarnation (`#lzegress`) |
+| `effect_cas_core.hpp` | Generic keyed effect compare-and-swap — `EffectCasCore` / `EffectIntent` / `EffectPlan` / `EffectApply`; std-only, core tier (`#lzeffectcas`) |
 | `ffi.hpp` | C-ABI FFI boundary (LazilyFfiChannel, extern "C" exports) |
 
 ## The lazily family

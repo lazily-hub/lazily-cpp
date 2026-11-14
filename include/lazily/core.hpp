@@ -24,6 +24,9 @@
 //   collections.hpp   ReactiveMap and friends
 //   keyed_order.hpp   KeyedOrder<K, H> — present set + authoritative key order
 //   statechart.hpp    hierarchical statecharts over the kernel
+//   egress_core.hpp / effect_cas_core.hpp / latest_durable_projection_core.hpp
+//                     pure delivery authorities (no graph, no I/O); their
+//                     reactive shells live in the threaded-tier headers
 //
 // Twelve headers transitively (the four above plus `context`, `merge`,
 // `rc_ptr`, `reactive_family`, `small_any`, `small_fn`, `small_vec`, `types`).
@@ -65,6 +68,8 @@
 #include <lazily/cell.hpp>
 #include <lazily/collections.hpp>
 #include <lazily/durable_client.hpp>
+#include <lazily/effect_cas_core.hpp>
+#include <lazily/egress_core.hpp>
 #include <lazily/keyed_order.hpp>
 #include <lazily/latest_durable_projection_core.hpp>
 #include <lazily/statechart.hpp>

@@ -327,6 +327,23 @@ add_executable(test_latest_durable_projection test_latest_durable_projection.cpp
 target_link_libraries(test_latest_durable_projection PRIVATE lazily)
 lazily_add_spec_conformance_test(LatestDurableProjection test_latest_durable_projection)
 
+# Reactive egress (`#lzegress`). Core invariants + transport-attachment
+# reactivity live in test_egress; the canonical corpus replay against all three
+# flavours (with the enforced flavour ledger) lives in test_egress_conformance.
+add_executable(test_egress test_egress.cpp)
+target_link_libraries(test_egress PRIVATE lazily)
+add_test(NAME egress COMMAND test_egress)
+
+add_executable(test_egress_conformance test_egress_conformance.cpp)
+target_link_libraries(test_egress_conformance PRIVATE lazily)
+lazily_add_spec_conformance_test(EgressConformance test_egress_conformance)
+
+# Generic keyed effect compare-and-swap (`#lzeffectcas`): the pure core's
+# invariants plus the canonical effect_cas.json scenario replay.
+add_executable(test_effect_cas_conformance test_effect_cas_conformance.cpp)
+target_link_libraries(test_effect_cas_conformance PRIVATE lazily)
+lazily_add_spec_conformance_test(EffectCasConformance test_effect_cas_conformance)
+
 add_executable(test_family_sync test_family_sync.cpp)
 target_link_libraries(test_family_sync PRIVATE lazily)
 lazily_add_spec_conformance_test(family_sync test_family_sync)

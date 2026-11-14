@@ -124,6 +124,26 @@ int main() {
     check(leaves.size() == 1 && leaves[0] == "b", "statechart moved to the target leaf");
   }
 
+  // ── pure delivery authorities: egress + effect CAS ───────────────────────
+  {
+    EgressCore<int> egress(1, EgressPolicy{});
+    egress.enqueue(10);
+    const auto claimed = egress.claim(1).second;
+    check(claimed.kind == EgressClaimKind::Claimed && claimed.envelope->sequence == 0,
+          "egress core claims in sequence order");
+    check(egress.ack(1, 0).second.kind == EgressAckKind::Advanced,
+          "egress core advances the ack watermark");
+
+    EffectCasCore<std::string, int, std::string, std::string, std::string> cas(1);
+    cas.upsert_desired(EffectIntent<std::string, int, std::string>{
+        EffectIdentity("effect"), 1, "doc", 0, EffectPlan<std::string>::single("write")});
+    const auto attempt = cas.claim("doc", 1, 0).second;
+    check(attempt.kind == EffectCasClaimKind::Claimed, "effect CAS claims the desired effect");
+    check(cas.record_applied("doc", attempt.attempt->identity, "receipt", 1).second.kind ==
+              EffectCasAppliedKind::Completed,
+          "effect CAS completes on an exact receipt");
+  }
+
   if (failures != 0) {
     std::printf("wasm_core_include_check: %d failure(s)\n", failures);
     return 1;

@@ -984,8 +984,15 @@ fi
 # 145 -> 146: the nine-scenario stale-handle disposal matrix is replayed by the
 # reactive-graph conformance runner.
 #
-# Confirmed by a local green `make check`. Verified exact: 147 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-146}"
+# 146 -> 151: the reactive egress family (`#lzegress`) and the generic effect
+# CAS (`#lzeffectcas`) landed. tests/test_egress_conformance.cpp replays the four
+# egress_*.json fixtures through all three shells (they left KNOWN_UNCOVERED in
+# the same change), and tests/test_effect_cas_conformance.cpp replays
+# egress/effect_cas.json (lazily-spec 7240cc3). Set to what the guard REPORTED
+# after the change, not to 146+5.
+#
+# Confirmed by a local green `make check`. Verified exact: 152 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-151}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -1076,12 +1083,6 @@ KNOWN_UNCOVERED=(
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
   "collections/registers_convergence.json"
-  # egress — the legacy FIFO stream contract remains distinct from the
-  # latest-durable per-key projection implemented by this binding.
-  "egress/egress_generation_fence.json"
-  "egress/egress_inflight_window.json"
-  "egress/egress_ordered_ack.json"
-  "egress/egress_retry_budget.json"
 # ipc — the C++ arena is an in-process host and does not implement the
 # canonical mapped 40-byte LZSH header asserted by this fixture.
 "arena_blob.json"
@@ -1244,9 +1245,14 @@ excuse_scenario() {
 # 156 -> 165: stale_effect_handle_cannot_remove_recycled_source.json adds the
 # full stale-kind x successor-kind disposal matrix.
 #
-# This floor is EXACT today: 165 declared, 165 replayed, confirmed by a local
-# green `make check`, and verified by watching 166 fail it.
-MIN_SCENARIOS="${MIN_SCENARIOS:-165}"
+# 165 -> 174: egress/effect_cas.json's nine named scenarios (lazily-spec
+# 7240cc3, `#lzeffectcas`) are replayed by tests/test_effect_cas_conformance.cpp.
+# The four egress_*.json fixtures are step-shaped and declare no scenarios, so
+# they move MIN_FIXTURES above and not this floor.
+#
+# This floor is EXACT today: 174 declared, 174 replayed, confirmed by a local
+# green `make check`, and verified by watching 175 fail it.
+MIN_SCENARIOS="${MIN_SCENARIOS:-174}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "ERROR: no conformance manifest at '$manifest' — the fixture replays did not run at all." >&2
