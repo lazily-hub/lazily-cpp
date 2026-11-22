@@ -13,8 +13,8 @@ permissions:
 # fixture and normative contract. The tag makes the dependency readable; the
 # commit check below makes a moved/replaced tag fail closed.
 env:
-  LAZILY_SPEC_REF: v0.46.0
-  LAZILY_SPEC_COMMIT: ca676a1a7173525066e90bca48b2ead230a9cd88
+  LAZILY_SPEC_REF: v0.47.0
+  LAZILY_SPEC_COMMIT: e3bd642ea955325a4f27b73c454fa5a2c9496b15
 
 jobs:
   test:
