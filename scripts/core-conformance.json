@@ -16,6 +16,8 @@
     {"fixture": "reactive-graph/dispose_detaches_edges_both_directions.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
     {"fixture": "reactive-graph/dispose_signal_reverts_to_lazy.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
     {"fixture": "reactive-graph/dispose_signal_reverts_to_lazy.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
+    {"fixture": "reactive-graph/effect_cleanup_is_optional.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
+    {"fixture": "reactive-graph/effect_cleanup_is_optional.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
     {"fixture": "reactive-graph/failed_compute_is_never_cached.json", "scenario": "*", "execution_flavor": "thread_safe", "reason": "Core JSON replay currently exercises Context only; ThreadSafeContext has no fixture-runner adapter."},
     {"fixture": "reactive-graph/failed_compute_is_never_cached.json", "scenario": "*", "execution_flavor": "async", "reason": "AsyncContext is a dependency-graph stub; the runner probe demonstrates stale cached reads and unconditional async recomputation."},
     {

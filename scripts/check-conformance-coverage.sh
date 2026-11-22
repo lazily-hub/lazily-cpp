@@ -992,7 +992,11 @@ fi
 # after the change, not to 146+5.
 #
 # Confirmed by a local green `make check`. Verified exact: 152 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-151}"
+#
+# 151 -> 152: reactive-graph/effect_cleanup_is_optional.json (#lzeffectvoid)
+# is replayed by tests/test_reactive_graph_conformance.cpp. Set to what the
+# guard REPORTED; verified exact: 153 fails this floor.
+MIN_FIXTURES="${MIN_FIXTURES:-152}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding

@@ -119,6 +119,7 @@ const std::vector<std::string> FIXTURES = {
     "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
     "dispose_signal_reverts_to_lazy.json",
+    "effect_cleanup_is_optional.json",
     "failed_compute_is_never_cached.json",
     "exact_fold_paths_stay_exact.json",
     "feedback_drain_bound_reports_exhaustion.json",
@@ -498,12 +499,33 @@ Computed<long long> make_eager(World& w, const std::string& id, std::vector<Ref>
   return f;
 }
 
+// The `effect` op's `cleanup` field (#lzeffectvoid): which runs of the body
+// return a cleanup. Absent or `every_run` returns one from every run, `none`
+// from no run, `alternate` from odd runs only (the creation run is run 1).
+enum class CleanupShape { EveryRun, None, Alternate };
+
+CleanupShape cleanup_shape_of(const Json* op) {
+  const Json* cleanup = op->find("cleanup");
+  if (!cleanup) return CleanupShape::EveryRun;
+  if (cleanup->str == "every_run") return CleanupShape::EveryRun;
+  if (cleanup->str == "none") return CleanupShape::None;
+  if (cleanup->str == "alternate") return CleanupShape::Alternate;
+  // Never a silent default: an unknown shape is a corpus the runner cannot
+  // honour, and replaying it as every_run would pass a fixture it never ran.
+  REQUIRE(false, "unknown effect cleanup shape: " + cleanup->str);
+  return CleanupShape::EveryRun;
+}
+
 Effect make_effect(World& w, const std::string& name, std::vector<Ref> sources,
-                   TeardownScope* scope) {
+                   TeardownScope* scope, CleanupShape shape = CleanupShape::EveryRun) {
   World* wp = &w;
   w.names.push_back(name);
   const std::string* np = &w.names.back();
-  auto body = [wp, sources, np](Compute& c) -> CleanupFn {
+  // Per-effect run counter. Shared, not a `mutable` capture: Context::effect
+  // invokes the body through a const wrapper.
+  auto runs = std::make_shared<int>(0);
+  auto body = [wp, sources, np, shape, runs](Compute& c) -> CleanupFn {
+    const int run = ++*runs;
     for (const auto& source : sources) {
       // A publish that reaches an effect whose source is gone is not what any
       // fixture asserts on, and it must not abort the replay.
@@ -513,6 +535,11 @@ Effect make_effect(World& w, const std::string& name, std::vector<Ref> sources,
       }
     }
     wp->run_log.push_back(*np);
+    // "No cleanup" is the API's own spelling, an explicit nullptr CleanupFn —
+    // never a no-op closure, which would be observationally identical and
+    // exercise nothing.
+    if (shape == CleanupShape::None) return nullptr;
+    if (shape == CleanupShape::Alternate && run % 2 == 0) return nullptr;
     return CleanupFn([wp, np]() { wp->cleanup_log.push_back(*np); });
   };
   return scope ? scope->effect(body) : w.ctx.effect(body);
@@ -695,7 +722,7 @@ void replay(const std::string& fixture, World& w, const std::vector<JsonPtr>& st
       });
     } else if (kind == "effect") {
       const std::string id = op_id();
-      auto h = make_effect(w, id, reads_of(w, op), scope_of(w, op));
+      auto h = make_effect(w, id, reads_of(w, op), scope_of(w, op), cleanup_shape_of(op));
       bind_node(w, id, Ref(Kind::Effect, h.id, h.generation));
     } else if (kind == "read") {
       const ReadOut out = try_read(w, op_id());
@@ -1394,7 +1421,7 @@ int main() {
             << std::endl;
 
   // All canonical fixtures were actually opened and parsed.
-  REQUIRE_FIXTURES_LOADED(22);
+  REQUIRE_FIXTURES_LOADED(23);
 
   std::cout << "reactive-graph conformance: " << replayed << "/" << FIXTURES.size()
             << " fixtures replayed against Context (" << total_ops << " ops, " << total_checks
