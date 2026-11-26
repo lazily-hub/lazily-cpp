@@ -59,6 +59,10 @@ add_executable(test_smoke test_smoke.cpp)
 target_link_libraries(test_smoke PRIVATE lazily)
 add_test(NAME smoke COMMAND test_smoke)
 
+add_executable(test_graph_ir test_graph_ir.cpp)
+target_link_libraries(test_graph_ir PRIVATE lazily)
+add_test(NAME graph_ir COMMAND test_graph_ir)
+
 add_executable(test_stdlib_conformance test_stdlib_conformance.cpp)
 target_link_libraries(test_stdlib_conformance PRIVATE lazily)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
