@@ -12,40 +12,43 @@ namespace {
 
 bool same(const lazily::JsonValue& a, const lazily::JsonValue& b) {
   using Type = lazily::JsonValue::Type;
-  if (a.type == Type::Int && b.type == Type::Double) return static_cast<double>(a.integer) == b.real;
-  if (a.type == Type::Double && b.type == Type::Int) return a.real == static_cast<double>(b.integer);
+  if (a.type == Type::Int && b.type == Type::Double)
+    return static_cast<double>(a.integer) == b.real;
+  if (a.type == Type::Double && b.type == Type::Int)
+    return a.real == static_cast<double>(b.integer);
   if (a.type != b.type) return false;
   switch (a.type) {
-    case Type::Null:
-      return true;
-    case Type::Bool:
-      return a.boolean == b.boolean;
-    case Type::Int:
-      return a.integer == b.integer;
-    case Type::Double:
-      return a.real == b.real;
-    case Type::String:
-      return a.string == b.string;
-    case Type::Array:
-      if (a.array.size() != b.array.size()) return false;
-      for (size_t i = 0; i < a.array.size(); ++i)
-        if (!same(a.array[i], b.array[i])) return false;
-      return true;
-    case Type::Object:
-      if (a.object.size() != b.object.size()) return false;
-      for (const auto& kv : a.object) {
-        const lazily::JsonValue* other = b.find(kv.first);
-        if (other == nullptr || !same(kv.second, *other)) return false;
-      }
-      return true;
+  case Type::Null:
+    return true;
+  case Type::Bool:
+    return a.boolean == b.boolean;
+  case Type::Int:
+    return a.integer == b.integer;
+  case Type::Double:
+    return a.real == b.real;
+  case Type::String:
+    return a.string == b.string;
+  case Type::Array:
+    if (a.array.size() != b.array.size()) return false;
+    for (size_t i = 0; i < a.array.size(); ++i)
+      if (!same(a.array[i], b.array[i])) return false;
+    return true;
+  case Type::Object:
+    if (a.object.size() != b.object.size()) return false;
+    for (const auto& kv : a.object) {
+      const lazily::JsonValue* other = b.find(kv.first);
+      if (other == nullptr || !same(kv.second, *other)) return false;
+    }
+    return true;
   }
   return false;
 }
 
-void expect_same(const std::string& label, const lazily::JsonValue& got, const lazily::JsonValue& want) {
+void expect_same(const std::string& label, const lazily::JsonValue& got,
+                 const lazily::JsonValue& want) {
   if (same(got, want)) return;
-  std::cerr << label << " mismatch\n got  " << lazily::json_write(got) << "\n want " << lazily::json_write(want)
-            << std::endl;
+  std::cerr << label << " mismatch\n got  " << lazily::json_write(got) << "\n want "
+            << lazily::json_write(want) << std::endl;
   std::exit(1);
 }
 
@@ -75,7 +78,7 @@ void replay(const std::string& name, const lazily::JsonValue& fixture) {
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   const auto dir = lazily_test::spec_conformance_dir() / "view";
@@ -88,8 +91,8 @@ int main() {
     if (entry.path().extension() == ".json") found.push_back(entry.path().filename().string());
   }
   std::sort(found.begin(), found.end());
-  const std::vector<std::string> want = {
-      "batch_send.json", "counter.json", "field_change.json", "malformed_rejected.json"};
+  const std::vector<std::string> want = {"batch_send.json", "counter.json", "field_change.json",
+                                         "malformed_rejected.json"};
   if (found != want) {
     std::cerr << "view fixture set drifted\n";
     return 1;

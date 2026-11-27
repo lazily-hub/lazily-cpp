@@ -20,7 +20,7 @@ namespace lazily {
 // Host-neutral view compute document. Signals are sources, standing expressions
 // are guarded computeds, and the optional chart is one statechart cell.
 class View {
- public:
+public:
   struct Value {
     enum class Kind { Null, Bool, Int, Str };
     Kind kind = Kind::Null;
@@ -50,28 +50,28 @@ class View {
     bool operator==(const Value& o) const {
       if (kind != o.kind) return false;
       switch (kind) {
-        case Kind::Bool:
-          return b == o.b;
-        case Kind::Int:
-          return n == o.n;
-        case Kind::Str:
-          return s == o.s;
-        case Kind::Null:
-          return true;
+      case Kind::Bool:
+        return b == o.b;
+      case Kind::Int:
+        return n == o.n;
+      case Kind::Str:
+        return s == o.s;
+      case Kind::Null:
+        return true;
       }
       return false;
     }
     bool operator!=(const Value& o) const { return !(*this == o); }
     JsonValue json() const {
       switch (kind) {
-        case Kind::Bool:
-          return JsonValue::of_bool(b);
-        case Kind::Int:
-          return JsonValue::of_int(n);
-        case Kind::Str:
-          return JsonValue::of_string(s);
-        case Kind::Null:
-          return JsonValue::null();
+      case Kind::Bool:
+        return JsonValue::of_bool(b);
+      case Kind::Int:
+        return JsonValue::of_int(n);
+      case Kind::Str:
+        return JsonValue::of_string(s);
+      case Kind::Null:
+        return JsonValue::null();
       }
       return JsonValue::null();
     }
@@ -143,34 +143,34 @@ inline const std::string& as_string(const JsonValue& value, const char* what) {
 
 inline View::Value literal(const JsonValue& value) {
   switch (value.type) {
-    case JsonValue::Type::Null:
-      return View::Value::nul();
-    case JsonValue::Type::Bool:
-      return View::Value::boolean(value.boolean);
-    case JsonValue::Type::Int:
-      return View::Value::integer(value.integer);
-    case JsonValue::Type::String:
-      return View::Value::str(value.string);
-    case JsonValue::Type::Double:
-      if (value.real != static_cast<double>(static_cast<int64_t>(value.real)))
-        reject("non-integer number");
-      return View::Value::integer(static_cast<int64_t>(value.real));
-    default:
-      reject("value must be null, boolean, integer, or string");
+  case JsonValue::Type::Null:
+    return View::Value::nul();
+  case JsonValue::Type::Bool:
+    return View::Value::boolean(value.boolean);
+  case JsonValue::Type::Int:
+    return View::Value::integer(value.integer);
+  case JsonValue::Type::String:
+    return View::Value::str(value.string);
+  case JsonValue::Type::Double:
+    if (value.real != static_cast<double>(static_cast<int64_t>(value.real)))
+      reject("non-integer number");
+    return View::Value::integer(static_cast<int64_t>(value.real));
+  default:
+    reject("value must be null, boolean, integer, or string");
   }
   return {};
 }
 
 inline std::string stringify(const View::Value& value) {
   switch (value.kind) {
-    case View::Value::Kind::Bool:
-      return value.b ? "true" : "false";
-    case View::Value::Kind::Int:
-      return std::to_string(value.n);
-    case View::Value::Kind::Str:
-      return value.s;
-    case View::Value::Kind::Null:
-      return "";
+  case View::Value::Kind::Bool:
+    return value.b ? "true" : "false";
+  case View::Value::Kind::Int:
+    return std::to_string(value.n);
+  case View::Value::Kind::Str:
+    return value.s;
+  case View::Value::Kind::Null:
+    return "";
   }
   return "";
 }
@@ -181,9 +181,11 @@ inline bool is_space(unsigned char c) {
 
 inline std::string trim_copy(const std::string& text) {
   size_t begin = 0;
-  while (begin < text.size() && is_space(static_cast<unsigned char>(text[begin]))) ++begin;
+  while (begin < text.size() && is_space(static_cast<unsigned char>(text[begin])))
+    ++begin;
   size_t end = text.size();
-  while (end > begin && is_space(static_cast<unsigned char>(text[end - 1]))) --end;
+  while (end > begin && is_space(static_cast<unsigned char>(text[end - 1])))
+    --end;
   return text.substr(begin, end - begin);
 }
 
@@ -195,14 +197,18 @@ inline int64_t utf8_len(const std::string& text) {
   return count;
 }
 
-inline void validate_arg(const JsonValue& value, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_arg(const JsonValue& value,
+                         const std::unordered_map<std::string, View::Value>& signals,
                          bool in_effect);
-inline void validate_expr(const JsonValue& expr, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_expr(const JsonValue& expr,
+                          const std::unordered_map<std::string, View::Value>& signals,
                           bool in_effect);
-inline void validate_effect(const JsonValue& effect, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_effect(const JsonValue& effect,
+                            const std::unordered_map<std::string, View::Value>& signals,
                             bool has_chart);
 
-inline void validate_call(const JsonArray& args, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_call(const JsonArray& args,
+                          const std::unordered_map<std::string, View::Value>& signals,
                           bool in_effect) {
   if (args.empty() || !args[0].is_string()) reject("call takes a name");
   const std::string& name = args[0].string;
@@ -215,14 +221,17 @@ inline void validate_call(const JsonArray& args, const std::unordered_map<std::s
   if (name == "not" && rest != 1) reject("not takes one boolean");
   if (name == "add" && rest < 2) reject("add takes two or more integers");
   if (name == "len" && rest != 1) reject("len takes one string");
-  for (size_t i = 1; i < args.size(); ++i) validate_arg(args[i], signals, in_effect);
+  for (size_t i = 1; i < args.size(); ++i)
+    validate_arg(args[i], signals, in_effect);
 }
 
-inline void validate_expr(const JsonValue& expr, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_expr(const JsonValue& expr,
+                          const std::unordered_map<std::string, View::Value>& signals,
                           bool in_effect) {
   allow(expr, {"op", "args"});
   const std::string op = as_string(need(expr, "op"), "op");
-  if (!one_of(op, {"lit", "ref", "call", "if", "eq", "concat", "trim"})) reject("unknown expression op " + op);
+  if (!one_of(op, {"lit", "ref", "call", "if", "eq", "concat", "trim"}))
+    reject("unknown expression op " + op);
   if (!need(expr, "args").is_array()) reject("expression args must be an array");
   const auto& args = expr.find("args")->array;
   if (op == "lit") {
@@ -239,16 +248,19 @@ inline void validate_expr(const JsonValue& expr, const std::unordered_map<std::s
   if (op == "if" && args.size() != 3) reject("if takes three arguments");
   if (op == "eq" && args.size() != 2) reject("eq takes two arguments");
   if (op == "trim" && args.size() != 1) reject("trim takes one value");
-  for (const auto& arg : args) validate_arg(arg, signals, in_effect);
+  for (const auto& arg : args)
+    validate_arg(arg, signals, in_effect);
 }
 
-inline void validate_arg(const JsonValue& value, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_arg(const JsonValue& value,
+                         const std::unordered_map<std::string, View::Value>& signals,
                          bool in_effect) {
   if (value.is_object()) return validate_expr(value, signals, in_effect);
   (void)literal(value);
 }
 
-inline void validate_effect(const JsonValue& effect, const std::unordered_map<std::string, View::Value>& signals,
+inline void validate_effect(const JsonValue& effect,
+                            const std::unordered_map<std::string, View::Value>& signals,
                             bool has_chart) {
   allow(effect, {"op", "args"});
   const std::string op = as_string(need(effect, "op"), "op");
@@ -268,14 +280,16 @@ inline void validate_effect(const JsonValue& effect, const std::unordered_map<st
     return;
   }
   if (args.empty()) reject("batch takes one or more effects");
-  for (const auto& nested : args) validate_effect(nested, signals, has_chart);
+  for (const auto& nested : args)
+    validate_effect(nested, signals, has_chart);
 }
 
 inline std::vector<std::string> children_of(const std::string& id, const JsonValue& raw) {
   if (!raw.is_array()) reject("node " + id + " children must be an array");
   std::vector<std::string> out;
   for (const auto& child : raw.array) {
-    if (!child.is_string() || child.string.empty()) reject("node " + id + " children must be non-empty strings");
+    if (!child.is_string() || child.string.empty())
+      reject("node " + id + " children must be non-empty strings");
     for (const auto& prev : out)
       if (prev == child.string) reject("node " + id + " repeats child " + child.string);
     out.push_back(child.string);
@@ -297,12 +311,14 @@ inline std::optional<std::string> layout_of(const std::string& id, const JsonVal
   }
   if (const JsonValue* value = raw.find("grow")) {
     const View::Value grow = literal(*value);
-    if (grow.kind != View::Value::Kind::Int || grow.n < 0) reject("node " + id + " layout.grow must be an integer >= 0");
+    if (grow.kind != View::Value::Kind::Int || grow.n < 0)
+      reject("node " + id + " layout.grow must be an integer >= 0");
   }
   return flow;
 }
 
-inline void check_tree(const std::unordered_map<std::string, View::Node>& nodes, const std::string& root) {
+inline void check_tree(const std::unordered_map<std::string, View::Node>& nodes,
+                       const std::string& root) {
   std::unordered_map<std::string, int> state;
   const auto walk = [&](auto&& self, const std::string& id) -> void {
     const int mark = state[id];
@@ -359,7 +375,8 @@ inline void add_transition(StateBuilder& sb, const std::string& event, const Jso
 
 inline StateBuilder build_state(const std::string& id, const JsonValue& def) {
   if (!def.is_object()) reject("state definition is not an object");
-  const bool parallel = def.find("parallel") && def.find("parallel")->is_bool() && def.find("parallel")->boolean;
+  const bool parallel =
+      def.find("parallel") && def.find("parallel")->is_bool() && def.find("parallel")->boolean;
   const JsonValue* history = def.find("history");
   const JsonValue* initial = def.find("initial");
   StateBuilder sb = StateBuilder::atomic(id);
@@ -367,9 +384,11 @@ inline StateBuilder build_state(const std::string& id, const JsonValue& def) {
     sb = StateBuilder::parallel(id);
   } else if (history != nullptr) {
     if (!history->is_string()) reject("`history` must be a spelling");
-    sb = history->string == "deep" ? StateBuilder::history_deep(id) : StateBuilder::history_shallow(id);
+    sb = history->string == "deep" ? StateBuilder::history_deep(id)
+                                   : StateBuilder::history_shallow(id);
     const JsonValue* fallback = def.find("default");
-    if (fallback == nullptr || !fallback->is_string()) reject("a history pseudo-state needs a default target");
+    if (fallback == nullptr || !fallback->is_string())
+      reject("a history pseudo-state needs a default target");
     sb.default_child(fallback->string);
   } else if (initial != nullptr) {
     if (!initial->is_string()) reject("`initial` must be a state id");
@@ -378,7 +397,8 @@ inline StateBuilder build_state(const std::string& id, const JsonValue& def) {
   if (const JsonValue* parent = def.find("parent")) sb.parent(as_string(*parent, "parent"));
   if (const JsonValue* on = def.find("on")) {
     if (!on->is_object()) reject("`on` must be an event map");
-    for (const auto& kv : on->object) add_transition(sb, kv.first, kv.second);
+    for (const auto& kv : on->object)
+      add_transition(sb, kv.first, kv.second);
   }
   return sb;
 }
@@ -388,13 +408,14 @@ inline ChartDef build_chart(const JsonValue& chart) {
   const JsonValue* states = chart.find("states");
   if (states == nullptr || !states->is_object()) reject("chart has no states object");
   ChartBuilder builder;
-  for (const auto& kv : states->object) builder.state(build_state(kv.first, kv.second));
+  for (const auto& kv : states->object)
+    builder.state(build_state(kv.first, kv.second));
   auto def = builder.build();
   if (!def) reject("the chart does not build");
   return std::move(*def);
 }
 
-}  // namespace view_detail
+} // namespace view_detail
 
 inline void View::Impl::populate(Context& context, const JsonValue& doc) {
   using namespace view_detail;
@@ -407,7 +428,8 @@ inline void View::Impl::populate(Context& context, const JsonValue& doc) {
   const JsonValue& signals_doc = need(doc, "signals");
   if (!signals_doc.is_object()) reject("view signals must be an object");
   const JsonValue& nodes_doc = need(doc, "nodes");
-  if (!nodes_doc.is_object() || nodes_doc.object.empty()) reject("view nodes must contain at least one node");
+  if (!nodes_doc.is_object() || nodes_doc.object.empty())
+    reject("view nodes must contain at least one node");
   const bool has_chart = doc.find("chart") != nullptr;
   if (has_chart && !doc.find("chart")->is_object()) reject("chart must be a statechart document");
 
@@ -427,10 +449,12 @@ inline void View::Impl::populate(Context& context, const JsonValue& doc) {
     const JsonValue& node = kv.second;
     allow(node, {"role", "children", "layout", "text", "bind", "hidden", "disabled", "effects"});
     const std::string role = as_string(need(node, "role"), "role");
-    if (!one_of(role, {"text", "button", "field", "list", "region"})) reject("unknown role " + role);
+    if (!one_of(role, {"text", "button", "field", "list", "region"}))
+      reject("unknown role " + role);
     Node stored;
     stored.role = role;
-    if (const JsonValue* children = node.find("children")) stored.children = children_of(kv.first, *children);
+    if (const JsonValue* children = node.find("children"))
+      stored.children = children_of(kv.first, *children);
     if (const JsonValue* layout = node.find("layout")) stored.flow = layout_of(kv.first, *layout);
     if (const JsonValue* bind = node.find("bind")) {
       const std::string name = as_string(*bind, "bind");
@@ -438,8 +462,10 @@ inline void View::Impl::populate(Context& context, const JsonValue& doc) {
     }
     auto standing = [&](const char* field, const JsonValue& raw, bool text) {
       JsonValue expr;
-      if (text && raw.is_string()) expr = lit_expr(raw);
-      else if (!text && raw.is_bool()) expr = lit_expr(raw);
+      if (text && raw.is_string())
+        expr = lit_expr(raw);
+      else if (!text && raw.is_bool())
+        expr = lit_expr(raw);
       else if (raw.is_object()) {
         validate_expr(raw, initials, false);
         expr = raw;
@@ -453,7 +479,8 @@ inline void View::Impl::populate(Context& context, const JsonValue& doc) {
     if (const JsonValue* disabled = node.find("disabled")) standing("disabled", *disabled, false);
     if (const JsonValue* effects_doc = node.find("effects")) {
       allow(*effects_doc, {"activate", "change", "submit"});
-      for (const auto& ev : effects_doc->object) validate_effect(ev.second, initials, has_chart);
+      for (const auto& ev : effects_doc->object)
+        validate_effect(ev.second, initials, has_chart);
       if (!effects_doc->object.empty()) effects.emplace(kv.first, *effects_doc);
     }
     nodes.emplace(kv.first, std::move(stored));
@@ -461,21 +488,25 @@ inline void View::Impl::populate(Context& context, const JsonValue& doc) {
   if (!nodes.count(root)) reject("root " + root + " is not a node");
   check_tree(nodes, root);
 
-  for (const auto& kv : initials) signals.emplace(kv.first, context.source(kv.second));
-  for (const auto& doc_expr : expr_docs) (void)eval_expr(doc_expr.expr, nullptr, false);
+  for (const auto& kv : initials)
+    signals.emplace(kv.first, context.source(kv.second));
+  for (const auto& doc_expr : expr_docs)
+    (void)eval_expr(doc_expr.expr, nullptr, false);
   auto self = shared_from_this();
   for (const auto& doc_expr : expr_docs) {
     JsonValue expr = doc_expr.expr;
     exprs.emplace(doc_expr.key, context.computed<Value>([self, expr](Compute& cv) {
-                    return self->eval_expr(expr, &cv, false);
-                  }));
+      return self->eval_expr(expr, &cv, false);
+    }));
   }
   if (has_chart) chart.emplace(context, build_chart(*doc.find("chart")));
   context.effect_void([self](Compute& cv) {
     if (!self->exprs.empty()) {
-      for (const auto& kv : self->exprs) (void)cv.get(kv.second);
+      for (const auto& kv : self->exprs)
+        (void)cv.get(kv.second);
     } else {
-      for (const auto& kv : self->signals) (void)cv.get(kv.second);
+      for (const auto& kv : self->signals)
+        (void)cv.get(kv.second);
     }
   });
 }
@@ -553,7 +584,8 @@ inline View::Value View::Impl::eval_expr(const JsonValue& expr, Compute* cx, boo
   }
   if (op == "concat") {
     std::string out;
-    for (const auto& arg : args) out += stringify(eval_arg(arg, cx, in_effect_now));
+    for (const auto& arg : args)
+      out += stringify(eval_arg(arg, cx, in_effect_now));
     return Value::str(std::move(out));
   }
   if (op == "trim") {
@@ -596,7 +628,8 @@ inline void View::Impl::exec(const JsonValue& effect, JsonValue& trace) {
   }
   if (op == "batch") {
     if (args.empty()) reject("batch takes one or more effects");
-    for (const auto& nested : args) exec(nested, trace);
+    for (const auto& nested : args)
+      exec(nested, trace);
     return;
   }
   reject("unknown effect op " + op);
@@ -605,14 +638,16 @@ inline void View::Impl::exec(const JsonValue& effect, JsonValue& trace) {
 inline void View::Impl::walk(JsonValue& out, const std::string& id) const {
   const Node& node = nodes.at(id);
   JsonValue kids = JsonValue::empty_array();
-  for (const auto& child : node.children) kids.push(JsonValue::of_string(child));
+  for (const auto& child : node.children)
+    kids.push(JsonValue::of_string(child));
   JsonValue row = JsonValue::empty_object();
   row.set("id", JsonValue::of_string(id));
   row.set("role", JsonValue::of_string(node.role));
   row.set("children", std::move(kids));
   row.set("flow", node.flow ? JsonValue::of_string(*node.flow) : JsonValue::null());
   out.push(std::move(row));
-  for (const auto& child : node.children) walk(out, child);
+  for (const auto& child : node.children)
+    walk(out, child);
 }
 
 inline View View::install(Context& ctx, const JsonValue& doc) {
@@ -623,13 +658,15 @@ inline View View::install(Context& ctx, const JsonValue& doc) {
 
 inline JsonValue View::signals_json() const {
   JsonValue out = JsonValue::empty_object();
-  for (const auto& kv : impl_->signals) out.set(kv.first, impl_->ctx->get(kv.second).json());
+  for (const auto& kv : impl_->signals)
+    out.set(kv.first, impl_->ctx->get(kv.second).json());
   return out;
 }
 
 inline JsonValue View::expressions_json() const {
   JsonValue out = JsonValue::empty_object();
-  for (const auto& kv : impl_->exprs) out.set(kv.first, impl_->ctx->get(kv.second).json());
+  for (const auto& kv : impl_->exprs)
+    out.set(kv.first, impl_->ctx->get(kv.second).json());
   return out;
 }
 
@@ -642,11 +679,13 @@ inline JsonValue View::layout_json() const {
 inline JsonValue View::chart_json() const {
   if (!impl_->chart) return JsonValue::null();
   JsonValue out = JsonValue::empty_array();
-  for (const auto& leaf : impl_->chart->active_leaves(*impl_->ctx)) out.push(JsonValue::of_string(leaf));
+  for (const auto& leaf : impl_->chart->active_leaves(*impl_->ctx))
+    out.push(JsonValue::of_string(leaf));
   return out;
 }
 
-inline JsonValue View::dispatch(const std::string& node, const std::string& event, const JsonValue& value) {
+inline JsonValue View::dispatch(const std::string& node, const std::string& event,
+                                const JsonValue& value) {
   using namespace view_detail;
   if (!one_of(event, {"activate", "change", "submit"})) reject("unknown event " + event);
   if (!impl_->nodes.count(node)) reject("unknown node " + node);
@@ -660,6 +699,6 @@ inline JsonValue View::dispatch(const std::string& node, const std::string& even
   return trace;
 }
 
-}  // namespace lazily
+} // namespace lazily
 
 #endif

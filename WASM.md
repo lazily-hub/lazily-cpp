@@ -121,8 +121,9 @@ so its OK can never be mistaken for a whole-matrix verdict.
 | `statechart` | 8 | 8 | — |  |
 | `stdlib` | 3 | 3 | — |  |
 | `temporal` | 4 | 4 | — |  |
+| `view` | 4 | 4 | — |  |
 | `windowing` | 4 | 4 | — |  |
-| **total** | **165** | **97** | **53** | |
+| **total** | **169** | **101** | **53** | |
 <!-- wasm-matrix:end -->
 
 ## Known limits
