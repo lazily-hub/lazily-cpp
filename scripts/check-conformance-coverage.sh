@@ -996,7 +996,7 @@ fi
 # 151 -> 152: reactive-graph/effect_cleanup_is_optional.json (#lzeffectvoid)
 # is replayed by tests/test_reactive_graph_conformance.cpp. Set to what the
 # guard REPORTED; verified exact: 153 fails this floor.
-MIN_FIXTURES="${MIN_FIXTURES:-152}"
+MIN_FIXTURES="${MIN_FIXTURES:-156}"
 
 # Areas lazily-cpp is expected to replay. An area belongs here once a runner
 # opens its fixtures through `spec_fixture_text`; listing an area the binding
@@ -1043,6 +1043,7 @@ lossless-tree
   simulation
   statechart
   stdlib
+  view
   temporal
   windowing
 )

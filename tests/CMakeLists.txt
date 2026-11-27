@@ -152,6 +152,10 @@ add_executable(test_statechart_conformance test_statechart_conformance.cpp)
 target_link_libraries(test_statechart_conformance PRIVATE lazily)
 lazily_add_spec_conformance_test(StatechartConformance test_statechart_conformance)
 
+add_executable(test_view_conformance test_view_conformance.cpp)
+target_link_libraries(test_view_conformance PRIVATE lazily)
+lazily_add_spec_conformance_test(ViewConformance test_view_conformance)
+
 add_executable(test_collections test_collections.cpp)
 target_link_libraries(test_collections PRIVATE lazily)
 add_test(NAME collections COMMAND test_collections)
